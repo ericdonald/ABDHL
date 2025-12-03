@@ -231,7 +231,7 @@ class Processor:
         BLS_Crosswalk_df['NAICS_2022'] = BLS_Crosswalk_df['NAICS_2022'].apply(clean_naics_str)
         
         naics2012_6_universe = sorted(NAICS_2012_2017_df['NAICS_2012'].dropna().unique())
-        naics2017_6_universe = sorted(NAICS_2012_2017_df['NAICS_2017'].dropna().unique())
+        #naics2017_6_universe = sorted(NAICS_2012_2017_df['NAICS_2017'].dropna().unique())
         naics2022_6_universe = sorted(NAICS_2017_2022_df['NAICS_2022'].dropna().unique())
         
         
