@@ -7,6 +7,8 @@ Notes: This file defines a class for processing the workflow of "Transition to G
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
 import io, sys
 from pathlib import Path
 import requests as api
@@ -304,10 +306,13 @@ class Processor:
         
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df["dlog_CO2e_inten"] = np.log(IO_wide_df[Year_end]) - np.log(IO_wide_df[Year_start])
+        IO_wide_df = IO_wide_df.reset_index()
+        IO_wide_df = IO_wide_df.dropna()
         
         reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance']].drop_duplicates(),
                           IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten']].drop_duplicates(),
-                          on='BLS_Industry')
+                          on='BLS_Industry',
+                          how='inner')
         
 
         # ----------------------------------------------------------------
@@ -315,8 +320,39 @@ class Processor:
         # Run regressions and graph.
 
         # ----------------------------------------------------------------
- 
         
+        
+        # ---------- #
+        # Regression #
+        # ---------- #
+        x = -reg_df['dlog_CO2e_inten'].to_numpy()
+        y = reg_df['TV_distance'].to_numpy()
+ 
+        X = np.column_stack([np.ones_like(x), x])
+        
+        beta = np.linalg.inv(X.T @ X) @ (X.T @ y)
+        
+        beta0, beta1 = beta
+        print(beta0, beta1)
+        
+        y_hat = beta0 + beta1 * x
+        
+        # ---------- #
+        # Plot Graph #
+        # ---------- #
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.show()
+    
+ 
+    
+    
     def write_package_versions(self, packages):
         """""
         Table of Package Versions
