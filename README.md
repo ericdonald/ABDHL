@@ -13,7 +13,6 @@ Below is the list of all data sources required for replication. The first group 
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
 
-
 ## Software Requirements:
 
 ### Python
