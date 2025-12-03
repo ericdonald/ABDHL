@@ -325,16 +325,17 @@ class Processor:
         # ---------- #
         # Regression #
         # ---------- #
+        X = sm.add_constant(reg_df['dlog_CO2e_inten'])
+        y = reg_df['TV_distance']
+        
+        model = sm.OLS(y, X).fit()
+        print(model.summary())
+        
+        beta0 = model.params['const']
+        beta1 = -model.params['dlog_CO2e_inten']
+        
         x = -reg_df['dlog_CO2e_inten'].to_numpy()
         y = reg_df['TV_distance'].to_numpy()
- 
-        X = np.column_stack([np.ones_like(x), x])
-        
-        beta = np.linalg.inv(X.T @ X) @ (X.T @ y)
-        
-        beta0, beta1 = beta
-        print(beta0, beta1)
-        
         y_hat = beta0 + beta1 * x
         
         # ---------- #
