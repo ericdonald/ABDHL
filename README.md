@@ -6,8 +6,9 @@ Below is the list of all data sources required for replication. The first group 
 
 ### API/Web Acessible:
 
-- EPA
-- Census
+- EPA [Emissions by Sector](https://catalog.data.gov/dataset/2012-2020-greenhouse-gas-national-and-state-level-emission-totals-by-industry)
+- Census [NAICS Concordances](https://www.census.gov/naics/?68967)
+
 ### Contained in Raw Data:
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
