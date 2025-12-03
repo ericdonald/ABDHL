@@ -26,16 +26,14 @@ P = p.Processor()
 # --------------- #
 # IO Change Graph #
 # --------------- #
-P.Cleaner()
-
-
+P.IO_Change(2010, 2020)
 
 
 
 # ----------------------- #
 # Record Package Versions #
 # ----------------------- #
-packages = ["openpyxl", "pandas", "statsmodels"]
+packages = ["openpyxl", "pandas"]
 P.write_package_versions(packages)
 
 

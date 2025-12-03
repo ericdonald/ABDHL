@@ -36,6 +36,7 @@ class Processor:
                      }
 
         
+        
     def IO_Change(self, Year_start, Year_end):
         """""
         Plot of Changes in IO Network from Decarbonization
@@ -52,6 +53,16 @@ class Processor:
         # ------------ #
         # BLS IO Table #
         # ------------ #
+        USE_start_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{Year_start}")
+        MAKE_start_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{Year_start}")
+        
+        USE_end_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{Year_end}")
+        MAKE_end_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{Year_end}")
+        
+        
+        BLS_Crosswalk_df = pd.read_excel(f'{self.Directory}/Raw Data/BLS_Crosswalk.xlsx', sheet_name="Stubs")
+        
+        
         # ----------------------- #
         # EPA Emissions by Sector #
         # ----------------------- #
