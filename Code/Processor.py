@@ -6,8 +6,9 @@ Notes: This file defines a class for processing the workflow of "Transition to G
 """""""""""
 
 import pandas as pd
-import sys
+import io, sys
 from pathlib import Path
+import requests as api
 import importlib.metadata as md
 
 
@@ -66,12 +67,22 @@ class Processor:
         # ----------------------- #
         # EPA Emissions by Sector #
         # ----------------------- #
-        
+        EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1529805/GHGs_by_Detailed_Sector_US_2012-2020.xlsx"
+
+        EPA_df = pd.read_excel(EPA_url, sheet_name="Main")    
 
 
         # ---------------- #
         # NAICS Crosswalks #
         # ---------------- #
+        NAICS_2012_2017_url = "https://www.census.gov/naics/concordances/2012_to_2017_NAICS.xlsx"
+        NAICS_2017_2022_url = "https://www.census.gov/naics/concordances/2017_to_2022_NAICS.xlsx"
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        r = api.get(NAICS_2012_2017_url, headers=headers)
+        NAICS_2012_2017_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
+        r = api.get(NAICS_2017_2022_url, headers=headers)
+        NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
 
 
         # ----------------------------------------------------------------
