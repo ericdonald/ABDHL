@@ -321,7 +321,6 @@ class Processor:
 
         # ----------------------------------------------------------------
         
-        
         # ---------- #
         # Regression #
         # ---------- #
@@ -335,8 +334,21 @@ class Processor:
         beta1 = -model.params['dlog_CO2e_inten']
         
         x = -reg_df['dlog_CO2e_inten'].to_numpy()
-        y = reg_df['TV_distance'].to_numpy()
+        y = y.to_numpy()
         y_hat = beta0 + beta1 * x
+        
+        # Square Root Metric
+        y_sqrt = reg_df['TV_distance']**(1/2)
+        
+        model_sqrt = sm.OLS(y_sqrt, X).fit()
+        print(model_sqrt.summary())
+        
+        beta0_sqrt = model_sqrt.params['const']
+        beta1_sqrt = -model_sqrt.params['dlog_CO2e_inten']
+        
+        y_sqrt = y_sqrt.to_numpy()
+        y_hat_sqrt = beta0_sqrt + beta1_sqrt * x
+        
         
         # ---------- #
         # Plot Graph #
@@ -350,6 +362,18 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.legend()
         plt.show()
+        
+        # Square Root Metric
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y_sqrt, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat_sqrt, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("1/2 Norm distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.show()
+
     
  
     
