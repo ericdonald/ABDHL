@@ -139,12 +139,24 @@ class Processor:
         IO_end = B_end @ A_end
         J = IO_start.shape[0]
         
+        I = np.eye(J)
+        LI_start = np.linalg.inv(I - IO_start)
+        LI_end = np.linalg.inv(I - IO_end)
+        
         diff = np.abs(IO_end - IO_start)
         tv_by_industry = 0.5 * diff.sum(axis=1)
+        tv_sqrt_by_industry = 0.5 * (diff**(1/2)).sum(axis=1)
+        
+        diff_LI = np.abs(LI_end - LI_start)
+        tv_by_industry_LI = 0.5 * diff_LI.sum(axis=1)
+        tv_sqrt_by_industry_LI = 0.5 * (diff_LI**(1/2)).sum(axis=1)
         
         IO_df = pd.DataFrame({
             "BLS_Industry": np.arange(1, J+1),
-            "TV_distance": tv_by_industry})
+            "TV_distance": tv_by_industry,
+            "TV_sqrt_distance": tv_sqrt_by_industry,
+            "TV_distance_LI": tv_by_industry_LI,
+            "TV_sqrt_distance_LI": tv_sqrt_by_industry_LI})
         
         df_VA_start = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
                                     "Value_Added": ind_Y_start,
@@ -278,9 +290,9 @@ class Processor:
         epa_naics2022_6 = epa_naics2022_6.drop_duplicates()
         
         
-        # ------------------------------ #
-        # Crosswalk & Allocate Emissions #
-        # ------------------------------ #
+        # --------- #
+        # Crosswalk #
+        # --------- #
         EPA_BLS_Crosswalk = (epa_naics2022_6
                                 .merge(bls_naics2022_6, on='naics2022_6', how='inner')
                                 .drop_duplicates())
@@ -297,20 +309,36 @@ class Processor:
                             on=['BLS_Industry', 'Year'],
                             how='inner')
         
+        
+        # ------------------ #
+        # Allocate Emissions #
+        # ------------------ #
+        
         IO_df['CO2e_denom'] = IO_df.groupby(['EPA_Sector', 'Year'])['Value_Added'].transform("sum")
         IO_df['CO2e_integrand'] = IO_df['Value_Added'] * IO_df['CO2e'] / IO_df['CO2e_denom']
         IO_df['CO2e_Industry'] = IO_df.groupby(['BLS_Industry', 'Year'])['CO2e_integrand'].transform("sum")
         IO_df['CO2e_intensity_Industry'] = IO_df['CO2e_Industry'] / IO_df['Value_Added']
         
-        IO_df = IO_df[['BLS_Industry', 'Year', 'TV_distance', 'CO2e_intensity_Industry']].drop_duplicates()
+        IO_df = IO_df[['BLS_Industry', 'Year', 'TV_distance', 'TV_sqrt_distance', 'TV_distance_LI', 'TV_sqrt_distance_LI', 'CO2e_intensity_Industry']].drop_duplicates()
         
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
-        IO_wide_df["dlog_CO2e_inten"] = np.log(IO_wide_df[Year_end]) - np.log(IO_wide_df[Year_start])
-        IO_wide_df = IO_wide_df.reset_index()
         IO_wide_df = IO_wide_df.dropna()
         
-        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance']].drop_duplicates(),
-                          IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten']].drop_duplicates(),
+        idx1 = IO_wide_df.index.to_numpy(dtype=int)
+        idx0 = idx1 - 1
+        
+        LI_start_sub = LI_start[np.ix_(idx0, idx0)]
+        LI_end_sub = LI_end[np.ix_(idx0, idx0)]
+        
+        CO2e_intensity_Industry_LI_start = LI_start_sub @ IO_wide_df[Year_start].to_numpy()
+        CO2e_intensity_Industry_LI_end = LI_end_sub @ IO_wide_df[Year_end].to_numpy()
+        
+        IO_wide_df["dlog_CO2e_inten"] = np.log(IO_wide_df[Year_end]) - np.log(IO_wide_df[Year_start])
+        IO_wide_df["dlog_CO2e_inten_LI"] = np.log(CO2e_intensity_Industry_LI_end) - np.log(CO2e_intensity_Industry_LI_start)
+        IO_wide_df = IO_wide_df.reset_index()
+        
+        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance', 'TV_sqrt_distance', 'TV_distance_LI', 'TV_sqrt_distance_LI']].drop_duplicates(),
+                          IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']].drop_duplicates(),
                           on='BLS_Industry',
                           how='inner')
         
@@ -338,7 +366,7 @@ class Processor:
         y_hat = beta0 + beta1 * x
         
         # Square Root Metric
-        y_sqrt = reg_df['TV_distance']**(1/2)
+        y_sqrt = reg_df['TV_sqrt_distance']
         
         model_sqrt = sm.OLS(y_sqrt, X).fit()
         print(model_sqrt.summary())
@@ -374,6 +402,65 @@ class Processor:
         plt.legend()
         plt.show()
 
+
+        # ----------------------------------------------------------------
+    
+        # Leontief inverse.
+    
+        # ----------------------------------------------------------------
+        
+        # ---------- #
+        # Regression #
+        # ---------- #
+        X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
+        y = reg_df['TV_distance_LI']
+        
+        model = sm.OLS(y, X).fit()
+        print(model.summary())
+        
+        beta0 = model.params['const']
+        beta1 = -model.params['dlog_CO2e_inten_LI']
+        
+        x = -reg_df['dlog_CO2e_inten_LI'].to_numpy()
+        y = y.to_numpy()
+        y_hat = beta0 + beta1 * x
+        
+        # Square Root Metric
+        y_sqrt = reg_df['TV_sqrt_distance_LI']
+        
+        model_sqrt = sm.OLS(y_sqrt, X).fit()
+        print(model_sqrt.summary())
+        
+        beta0_sqrt = model_sqrt.params['const']
+        beta1_sqrt = -model_sqrt.params['dlog_CO2e_inten_LI']
+        
+        y_sqrt = y_sqrt.to_numpy()
+        y_hat_sqrt = beta0_sqrt + beta1_sqrt * x
+        
+        
+        # ---------- #
+        # Plot Graph #
+        # ---------- #
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.show()
+        
+        # Square Root Metric
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y_sqrt, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat_sqrt, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("1/2 Norm distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.show()
     
  
     
