@@ -388,6 +388,7 @@ class Processor:
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
+        plt.title("IO Table - 1 Norm")
         plt.legend()
         plt.show()
         
@@ -399,6 +400,7 @@ class Processor:
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("1/2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
+        plt.title("IO Table - 1/2 Norm")
         plt.legend()
         plt.show()
 
@@ -449,6 +451,7 @@ class Processor:
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend()
+        plt.title("Leontief Inverse - 1 Norm")
         plt.show()
         
         # Square Root Metric
@@ -460,6 +463,7 @@ class Processor:
         plt.ylabel("1/2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend()
+        plt.title("Leontief Inverse - 1/2 Norm")
         plt.show()
     
  
