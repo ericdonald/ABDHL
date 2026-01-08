@@ -2,7 +2,7 @@
 
 ## Data Sources:
 
-Below is the list of all data sources required for replication. The first group are those programmatically retrieved via APIs or direct download, the second group are those contained in the Raw Data folder, and the third group are those that require the user to have a license. The links below are for reference only; a user does not need to visit these sites to extract the data.
+Below is the list of all data sources required for replication. The first group are those programmatically retrieved via APIs or direct download, and the second group are those contained in the Raw Data folder. The links below are for reference only; a user does not need to visit these sites to extract the data.
 
 ### API/Web Acessible:
 
@@ -18,6 +18,7 @@ Below is the list of all data sources required for replication. The first group 
 ### Python
 
 All of the replication codes run on Python `3.11.13`. Prior to running the codes, install the following packages:
+
 | Package | Version |
 |---------|---------|
 
