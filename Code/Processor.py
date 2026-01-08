@@ -46,7 +46,7 @@ class Processor:
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output: Results/core_versions.txt
+        Output:
         """""
         
         # ----------------------------------------------------------------
@@ -143,6 +143,14 @@ class Processor:
         LI_start = np.linalg.inv(I - IO_start)
         LI_end = np.linalg.inv(I - IO_end)
         
+        #Cut oil and gas extraction as well as coal mining, then normalize
+        IO_start_reduced = np.delete(np.delete(IO_start, [6, 7], axis=0), [6, 7], axis=1)
+        IO_start_reduced = IO_start_reduced / IO_start_reduced.sum(axis=1, keepdims=True)
+        
+        IO_end_reduced = np.delete(np.delete(IO_end, [6, 7], axis=0), [6, 7], axis=1)
+        IO_end_reduced = IO_end_reduced / IO_end_reduced.sum(axis=1, keepdims=True)
+
+        
         diff = np.abs(IO_end - IO_start)
         tv_by_industry = 0.5 * diff.sum(axis=1)
         tv_sq_by_industry = 0.5 * (diff**(2)).sum(axis=1)
@@ -151,12 +159,25 @@ class Processor:
         tv_by_industry_LI = 0.5 * diff_LI.sum(axis=1)
         tv_sq_by_industry_LI = 0.5 * (diff_LI**(2)).sum(axis=1)
         
+        diff_reduced = np.abs(IO_end_reduced - IO_start_reduced)
+        tv_by_industry_reduced = 0.5 * diff_reduced.sum(axis=1)
+        tv_sq_by_industry_reduced = 0.5 * (diff_reduced**(2)).sum(axis=1)
+        
         IO_df = pd.DataFrame({
             "BLS_Industry": np.arange(1, J+1),
             "TV_distance": tv_by_industry,
             "TV_sq_distance": tv_sq_by_industry,
             "TV_distance_LI": tv_by_industry_LI,
             "TV_sq_distance_LI": tv_sq_by_industry_LI})
+        
+        IO_reduced_df = pd.DataFrame({
+            "BLS_Industry": np.concatenate([np.arange(1, 7), np.arange(9, J+1)]),
+            "TV_distance_reduced": tv_by_industry_reduced,
+            "TV_sq_distance_reduced": tv_sq_by_industry_reduced})
+        
+        IO_df = IO_df.merge(IO_reduced_df,
+                                    on='BLS_Industry',
+                                    how='left')
         
         df_VA_start = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
                                     "Value_Added": ind_Y_start,
@@ -319,7 +340,7 @@ class Processor:
         IO_df['CO2e_Industry'] = IO_df.groupby(['BLS_Industry', 'Year'])['CO2e_integrand'].transform("sum")
         IO_df['CO2e_intensity_Industry'] = IO_df['CO2e_Industry'] / IO_df['Value_Added']
         
-        IO_df = IO_df[['BLS_Industry', 'Year', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_intensity_Industry']].drop_duplicates()
+        IO_df = IO_df[['BLS_Industry', 'Year', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_intensity_Industry']].drop_duplicates()
         
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
@@ -337,7 +358,7 @@ class Processor:
         IO_wide_df["dlog_CO2e_inten_LI"] = np.log(CO2e_intensity_Industry_LI_end) - np.log(CO2e_intensity_Industry_LI_start)
         IO_wide_df = IO_wide_df.reset_index()
         
-        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI']].drop_duplicates(),
+        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'TV_distance_reduced', 'TV_sq_distance_reduced']].drop_duplicates(),
                           IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']].drop_duplicates(),
                           on='BLS_Industry',
                           how='inner')
@@ -465,7 +486,68 @@ class Processor:
         plt.legend()
         plt.title("Leontief Inverse - 2 Norm")
         plt.show()
+        
+        
+        # ----------------------------------------------------------------
     
+        # Reduced and normalized IO table.
+    
+        # ----------------------------------------------------------------
+        
+        # ---------- #
+        # Regression #
+        # ---------- #
+        X = sm.add_constant(reg_df['dlog_CO2e_inten'])
+        y = reg_df['TV_distance_reduced']
+        
+        model = sm.OLS(y, X, missing='drop').fit()
+        print(model.summary())
+        
+        beta0 = model.params['const']
+        beta1 = -model.params['dlog_CO2e_inten']
+        
+        x = -reg_df['dlog_CO2e_inten'].to_numpy()
+        y = y.to_numpy()
+        y_hat = beta0 + beta1 * x
+        
+        # Two Metric
+        y_sq = reg_df['TV_sq_distance_reduced']
+        
+        model_sq = sm.OLS(y_sq, X, missing='drop').fit()
+        print(model_sq.summary())
+        
+        beta0_sq = model_sq.params['const']
+        beta1_sq = -model_sq.params['dlog_CO2e_inten']
+        
+        y_sq = y_sq.to_numpy()
+        y_hat_sq = beta0_sq + beta1_sq * x
+        
+        
+        # ---------- #
+        # Plot Graph #
+        # ---------- #
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.title("Reduced IO Table - 1 Norm")
+        plt.legend()
+        plt.show()
+        
+        # Square Root Metric
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y_sq, alpha=0.7, label="Industries")
+        plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
+        
+        plt.xlabel("-Δ log(emissions intensity)")
+        plt.ylabel("2 Norm distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.title("Reduced IO Table - 2 Norm")
+        plt.legend()
+        plt.show()
  
     
     
