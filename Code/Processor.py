@@ -153,15 +153,15 @@ class Processor:
         
         diff = np.abs(IO_end - IO_start)
         tv_by_industry = 0.5 * diff.sum(axis=1)
-        tv_sq_by_industry = 0.5 * (diff**(2)).sum(axis=1)
+        tv_sq_by_industry = 0.5 * ((diff**(2)).sum(axis=1))**(1/2)
         
         diff_LI = np.abs(LI_end - LI_start)
         tv_by_industry_LI = 0.5 * diff_LI.sum(axis=1)
-        tv_sq_by_industry_LI = 0.5 * (diff_LI**(2)).sum(axis=1)
+        tv_sq_by_industry_LI = 0.5 * ((diff_LI**(2)).sum(axis=1))**(1/2)
         
         diff_reduced = np.abs(IO_end_reduced - IO_start_reduced)
         tv_by_industry_reduced = 0.5 * diff_reduced.sum(axis=1)
-        tv_sq_by_industry_reduced = 0.5 * (diff_reduced**(2)).sum(axis=1)
+        tv_sq_by_industry_reduced = 0.5 * ((diff_reduced**(2)).sum(axis=1))**(1/2)
         
         IO_df = pd.DataFrame({
             "BLS_Industry": np.arange(1, J+1),
