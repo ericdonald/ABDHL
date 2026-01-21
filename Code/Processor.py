@@ -425,13 +425,11 @@ class Processor:
             right += [""] * (m - len(right))
             return "\n".join([f"{left[i]} & {right[i]} \\\\" for i in range(m)])
         
-        # Extract sector names
         largest_dlog_names   = get_sector_names(smallest_dlog_CO2e)
         smallest_dlog_names  = get_sector_names(largest_dlog_CO2e)
         largest_tv_names     = get_sector_names(largest_tv)
         smallest_tv_names    = get_sector_names(smallest_tv)
         
-        # Build LaTeX table
         latex_table = rf"""
         \begin{{table}}[ht]
         \centering
@@ -452,6 +450,7 @@ class Processor:
         \end{{tabular}}
         \end{{table}}
         """
+
 
         # ----------------------------------------------------------------
 
