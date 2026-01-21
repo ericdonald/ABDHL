@@ -363,6 +363,38 @@ class Processor:
                           on='BLS_Industry',
                           how='inner')
         
+        
+        # ------------- #
+        # List Extremes #
+        # ------------- #
+        reg_df = reg_df.merge(BLS_Crosswalk_df[["BLS_Industry", "Sector Title"]].drop_duplicates(),
+                                on="BLS_Industry",
+                                how="left"
+                            )
+    
+        largest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=False)
+              .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
+              .apply(tuple, axis=1)
+              .tolist()
+            )
+        
+        smallest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=True)
+              .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
+              .apply(tuple, axis=1)
+              .tolist()
+            )
+        
+        largest_tv = (reg_df.sort_values("TV_distance", ascending=False)
+              .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
+              .apply(tuple, axis=1)
+              .tolist()
+            )
+        
+        smallest_tv = (reg_df.sort_values("TV_distance", ascending=True)
+              .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
+              .apply(tuple, axis=1)
+              .tolist()
+            )
 
         # ----------------------------------------------------------------
 
