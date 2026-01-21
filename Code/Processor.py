@@ -46,7 +46,8 @@ class Processor:
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output: Results/Figures/Baseline_L1.png
+        Output: Results/Tables/sector_extremes_table.tex
+                Results/Figures/Baseline_L1.png
                 Results/Figures/Baseline_L2.png
                 Results/Figures/Leontief_L1.png
                 Results/Figures/Leontief_L2.png
@@ -450,7 +451,11 @@ class Processor:
         \end{{tabular}}
         \end{{table}}
         """
+        
+        output_path = f'{self.Directory}/Results/Tables/sector_extremes_table.tex'
 
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(latex_table)
 
         # ----------------------------------------------------------------
 
