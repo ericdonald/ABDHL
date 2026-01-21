@@ -46,7 +46,12 @@ class Processor:
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output:
+        Output: Results/Figures/Baseline_L1.png
+                Results/Figures/Baseline_L2.png
+                Results/Figures/Leontief_L1.png
+                Results/Figures/Leontief_L2.png
+                Results/Figures/Reduced_L1.png
+                Results/Figures/Reduced_L2.png
         """""
         
         # ----------------------------------------------------------------
@@ -377,28 +382,76 @@ class Processor:
               .apply(tuple, axis=1)
               .tolist()
             )
-        print(largest_dlog_CO2e)
         
         smallest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=True)
               .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
               .apply(tuple, axis=1)
               .tolist()
             )
-        print(smallest_dlog_CO2e)
         
         largest_tv = (reg_df.sort_values("TV_distance", ascending=False)
               .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
               .apply(tuple, axis=1)
               .tolist()
             )
-        print(largest_tv)
         
         smallest_tv = (reg_df.sort_values("TV_distance", ascending=True)
               .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
               .apply(tuple, axis=1)
               .tolist()
             )
-        print(smallest_tv)
+        
+        def get_sector_names(extreme_list):
+            return [x[1] for x in extreme_list]
+        
+        def latex_escape(s):
+            return (s.replace("\\", r"\textbackslash ")
+                     .replace("&", r"\&")
+                     .replace("%", r"\%")
+                     .replace("$", r"\$")
+                     .replace("#", r"\#")
+                     .replace("_", r"\_")
+                     .replace("{", r"\{")
+                     .replace("}", r"\}")
+                     .replace("~", r"\textasciitilde ")
+                     .replace("^", r"\textasciicircum "))
+        
+        def make_two_col_rows(left_list, right_list, n=5):
+            left = [latex_escape(x) for x in left_list[:n]]
+            right = [latex_escape(x) for x in right_list[:n]]
+            # If one side is shorter for any reason, pad with blanks
+            m = max(len(left), len(right))
+            left += [""] * (m - len(left))
+            right += [""] * (m - len(right))
+            return "\n".join([f"{left[i]} & {right[i]} \\\\" for i in range(m)])
+        
+        # Extract sector names
+        largest_dlog_names   = get_sector_names(smallest_dlog_CO2e)
+        smallest_dlog_names  = get_sector_names(largest_dlog_CO2e)
+        largest_tv_names     = get_sector_names(largest_tv)
+        smallest_tv_names    = get_sector_names(smallest_tv)
+        
+        # Build LaTeX table
+        latex_table = rf"""
+        \begin{{table}}[ht]
+        \centering
+        \begin{{tabular}}{{p{{6cm}} p{{6cm}}}}
+        \toprule
+        \multicolumn{{2}}{{c}}{{\textbf{{Emission Intensity Reduction}}}} \\
+        \midrule
+        \textbf{{Largest}} & \textbf{{Smallest}} \\
+        \midrule
+        {make_two_col_rows(largest_dlog_names, smallest_dlog_names, n=5)}
+        \midrule
+        \multicolumn{{2}}{{c}}{{\textbf{{Input Share Change}}}} \\
+        \midrule
+        \textbf{{Largest}} & \textbf{{Smallest}} \\
+        \midrule
+        {make_two_col_rows(largest_tv_names, smallest_tv_names, n=5)}
+        \bottomrule
+        \end{{tabular}}
+        \end{{table}}
+        """
 
         # ----------------------------------------------------------------
 
@@ -447,6 +500,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.title("IO Table - 1 Norm")
         plt.legend()
+        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L1.png')
         plt.show()
         
         # Square Root Metric
@@ -459,6 +513,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.title("IO Table - 2 Norm")
         plt.legend()
+        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
         plt.show()
 
 
@@ -509,6 +564,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.legend()
         plt.title("Leontief Inverse - 1 Norm")
+        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L1.png')
         plt.show()
         
         # Square Root Metric
@@ -521,6 +577,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.legend()
         plt.title("Leontief Inverse - 2 Norm")
+        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
         plt.show()
         
         
@@ -571,6 +628,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.title("Reduced IO Table - 1 Norm")
         plt.legend()
+        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
         plt.show()
         
         # Square Root Metric
@@ -583,6 +641,7 @@ class Processor:
         plt.grid(alpha=0.3)
         plt.title("Reduced IO Table - 2 Norm")
         plt.legend()
+        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
  
     
