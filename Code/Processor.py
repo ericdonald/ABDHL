@@ -377,24 +377,28 @@ class Processor:
               .apply(tuple, axis=1)
               .tolist()
             )
+        print(largest_dlog_CO2e)
         
         smallest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=True)
               .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
               .apply(tuple, axis=1)
               .tolist()
             )
+        print(smallest_dlog_CO2e)
         
         largest_tv = (reg_df.sort_values("TV_distance", ascending=False)
               .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
               .apply(tuple, axis=1)
               .tolist()
             )
+        print(largest_tv)
         
         smallest_tv = (reg_df.sort_values("TV_distance", ascending=True)
               .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
               .apply(tuple, axis=1)
               .tolist()
             )
+        print(smallest_tv)
 
         # ----------------------------------------------------------------
 
