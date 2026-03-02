@@ -670,10 +670,10 @@ class Processor:
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
         
-        ΙΟ = self.IO_end[np.ix_(idx0, idx0)]
+        IO = self.IO_end[np.ix_(idx0, idx0)]
         
-        IO_wide_df["up_dlog_CO2e_inten"] = ΙΟ @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        IO_wide_df["down_dlog_CO2e_inten"] = ΙΟ.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["up_dlog_CO2e_inten"] = IO @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["down_dlog_CO2e_inten"] = IO.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
         
         IO_wide_df = IO_wide_df.reset_index()
         reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']].drop_duplicates()
