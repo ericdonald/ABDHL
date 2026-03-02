@@ -13,6 +13,7 @@ import io, sys
 from pathlib import Path
 import requests as api
 import importlib.metadata as md
+import Processing_Functions as gpf
 
 
 
@@ -42,17 +43,14 @@ class Processor:
 
         
         
-    def IO_Change(self, Year_start, Year_end):
+    def Cleaner(self, Year_start, Year_end):
         """""
-        Plot of Changes in IO Network from Decarbonization
-    
-        Output: Results/Tables/sector_extremes_table.tex
-                Results/Figures/Baseline_L1.png
-                Results/Figures/Baseline_L2.png
-                Results/Figures/Leontief_L1.png
-                Results/Figures/Leontief_L2.png
-                Results/Figures/Reduced_L1.png
-                Results/Figures/Reduced_L2.png
+        Clean Data
+        
+        Output: Clean Data/VA_panel.pkl
+                Clean Data/BLS_Crosswalk.pkl
+                Clean Data/EPA.pkl
+                Clean Data/EPA_BLS_Crosswalk.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -73,6 +71,7 @@ class Processor:
         
         BLS_Crosswalk_df = pd.read_excel(f'{self.Directory}/Raw Data/BLS_Crosswalk.xlsx', sheet_name="Stubs")
         BLS_Crosswalk_df['BLS_Industry'] = BLS_Crosswalk_df['Sector Number']
+        
         
         # ----------------------- #
         # EPA Emissions by Sector #
@@ -103,8 +102,8 @@ class Processor:
         
         r = api.get(NAICS_2017_2022_url, headers=headers)
         NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
-
-
+        
+        
         # ----------------------------------------------------------------
 
         # Build industry IO matrix.
@@ -141,23 +140,145 @@ class Processor:
         # Input-Output Matrix #
         # ------------------- #
         
-        IO_start = B_start @ A_start
-        IO_end = B_end @ A_end
-        J = IO_start.shape[0]
+        self.IO_start = B_start @ A_start
+        self.IO_end = B_end @ A_end
+        J = self.IO_start.shape[0]
+        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
         
-        I = np.eye(J)
-        LI_start = np.linalg.inv(I - IO_start)
-        LI_end = np.linalg.inv(I - IO_end)
+        df_VA_start = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
+                                    "Value_Added": ind_Y_start,
+                                    "Year": Year_start})
+
+        df_VA_end = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
+                                  "Value_Added": ind_Y_end,
+                                  "Year": Year_end})
+
+        VA_panel = pd.concat([df_VA_start, df_VA_end], ignore_index=True)
+        VA_panel.to_pickle(f'{self.Directory}/Clean Data/VA_panel.pkl')
         
-        #Cut oil and gas extraction as well as coal mining, then normalize
-        IO_start_reduced = np.delete(np.delete(IO_start, [6, 7], axis=0), [6, 7], axis=1)
-        IO_start_reduced = IO_start_reduced / IO_start_reduced.sum(axis=1, keepdims=True)
         
-        IO_end_reduced = np.delete(np.delete(IO_end, [6, 7], axis=0), [6, 7], axis=1)
-        IO_end_reduced = IO_end_reduced / IO_end_reduced.sum(axis=1, keepdims=True)
+        # ----------------------------------------------------------------
+
+        # Make unified NAICS mapping.
+
+        # ----------------------------------------------------------------
+        
+        # -------------------- #
+        # Clean for Comparison #
+        # -------------------- #
+        EPA_df['EPA_Sector'] = EPA_df['Sector'].apply(gpf.clean_naics_str)
+        
+        NAICS_2012_2017_df['NAICS_2012'] = NAICS_2012_2017_df['2012 NAICS Code'].apply(gpf.clean_naics_str)
+        NAICS_2012_2017_df['NAICS_2017'] = NAICS_2012_2017_df['2017 NAICS Code'].apply(gpf.clean_naics_str)
+        
+        NAICS_2017_2022_df['NAICS_2017'] = NAICS_2017_2022_df['2017 NAICS Code'].apply(gpf.clean_naics_str)
+        NAICS_2017_2022_df['NAICS_2022'] = NAICS_2017_2022_df['2022 NAICS Code'].apply(gpf.clean_naics_str)
+
+        BLS_Crosswalk_df['NAICS_2022'] = BLS_Crosswalk_df['NAICS_2022'].apply(gpf.clean_naics_str)
+        
+        naics2012_6_universe = sorted(NAICS_2012_2017_df['NAICS_2012'].dropna().unique())
+        #naics2017_6_universe = sorted(NAICS_2012_2017_df['NAICS_2017'].dropna().unique())
+        naics2022_6_universe = sorted(NAICS_2017_2022_df['NAICS_2022'].dropna().unique())
+        
+        
+        # ---------- #
+        # Expand BLS #
+        # ---------- #
+        BLS_long = (BLS_Crosswalk_df
+                    .assign(naics_code_list=lambda x: x['NAICS_2022'].apply(gpf.split_comma_list))
+                    .explode('naics_code_list')
+                    .rename(columns={'naics_code_list': 'naics_prefix'}))
+        
+        BLS_long['naics_prefix'] = BLS_long['naics_prefix'].apply(gpf.clean_naics_str)
+        
+       
+        bls_expanded_rows = []
+        for _, row in BLS_long.iterrows():
+            bls_id = row['BLS_Industry']  # adjust column name
+            children = gpf.expand_bls_row_to_6(row, naics2022_6_universe)
+            for c in children:
+                bls_expanded_rows.append((bls_id, c))
+        
+        bls_naics2022_6 = pd.DataFrame(bls_expanded_rows,
+                                       columns=['BLS_Industry', 'naics2022_6'])
+        
+        bls_naics2022_6 = (bls_naics2022_6
+                                .merge(IO_df['BLS_Industry'], on='BLS_Industry', how='inner')
+                                .drop_duplicates())
+        
+        
+        # ---------- #
+        # Expand EPA #
+        # ---------- #
+        EPA_Sectors = EPA_df['EPA_Sector'].dropna().unique()
+
+        epa_mapping_rows = []
+        for s in EPA_Sectors:
+            mapped_2022_6 = gpf.map_naics2012_to_2022_6(s, naics2012_6_universe, NAICS_2012_2017_df, NAICS_2017_2022_df)
+            for c in mapped_2022_6:
+                epa_mapping_rows.append((s, c))
+        
+        epa_naics2022_6 = pd.DataFrame(epa_mapping_rows,
+                                       columns=['EPA_Sector', 'naics2022_6'])
+        
+        epa_naics2022_6 = epa_naics2022_6.drop_duplicates()
+        
+        
+        # --------- #
+        # Crosswalk #
+        # --------- #
+        EPA_BLS_Crosswalk = (epa_naics2022_6
+                                .merge(bls_naics2022_6, on='naics2022_6', how='inner')
+                                .drop_duplicates())
+        
+        BLS_Crosswalk_df.to_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
+        EPA_df.to_pickle(f'{self.Directory}/Clean Data/EPA.pkl')
+        EPA_BLS_Crosswalk.to_pickle(f'{self.Directory}/Clean Data/EPA_BLS_Crosswalk.pkl')
+
 
         
-        diff = np.abs(IO_end - IO_start)
+    def IO_Change(self, Year_start, Year_end):
+        """""
+        Plot of Changes in IO Network from Decarbonization
+    
+        Output: Results/Tables/sector_extremes_table.tex
+                Results/Figures/Baseline_L1.png
+                Results/Figures/Baseline_L2.png
+                Results/Figures/Leontief_L1.png
+                Results/Figures/Leontief_L2.png
+                Results/Figures/Reduced_L1.png
+                Results/Figures/Reduced_L2.png
+        """""
+        
+        # ----------------------------------------------------------------
+
+        # Build regression dataframes.
+
+        # ----------------------------------------------------------------
+        
+        BLS_Crosswalk_df = pd.read_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
+        EPA_df = pd.read_pickle(f'{self.Directory}/Clean Data/EPA.pkl')
+        VA_panel = pd.read_pickle(f'{self.Directory}/Clean Data/VA_panel.pkl')
+        EPA_BLS_Crosswalk = pd.read_pickle(f'{self.Directory}/Clean Data/EPA_BLS_Crosswalk.pkl')
+        
+        
+        # ------------------- #
+        # Input-Output Matrix #
+        # ------------------- #
+        J = self.IO_start.shape[0]
+        
+        I = np.eye(J)
+        LI_start = np.linalg.inv(I - self.IO_start)
+        LI_end = np.linalg.inv(I - self.IO_end)
+        
+        #Cut oil and gas extraction as well as coal mining, then normalize
+        IO_start_reduced = np.delete(np.delete(self.IO_start, [6, 7], axis=0), [6, 7], axis=1)
+        IO_start_reduced = IO_start_reduced / IO_start_reduced.sum(axis=1, keepdims=True)
+        
+        IO_end_reduced = np.delete(np.delete(self.IO_end, [6, 7], axis=0), [6, 7], axis=1)
+        IO_end_reduced = IO_end_reduced / IO_end_reduced.sum(axis=1, keepdims=True)
+
+        diff = np.abs(self.IO_end - self.IO_start)
         tv_by_industry = 0.5 * diff.sum(axis=1)
         tv_sq_by_industry = 0.5 * ((diff**(2)).sum(axis=1))**(1/2)
         
@@ -185,145 +306,6 @@ class Processor:
                                     on='BLS_Industry',
                                     how='left')
         
-        df_VA_start = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
-                                    "Value_Added": ind_Y_start,
-                                    "Year": Year_start})
-
-        df_VA_end = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
-                                  "Value_Added": ind_Y_end,
-                                  "Year": Year_end})
-
-        VA_panel = pd.concat([df_VA_start, df_VA_end], ignore_index=True)
-        
-        
-        # ----------------------------------------------------------------
-
-        # Make unified NAICS mapping.
-
-        # ----------------------------------------------------------------
-        
-        # ---------------- #
-        # Helper Functions #
-        # ---------------- #
-        def clean_naics_str(x):
-            if pd.isna(x):
-                return np.nan
-            s = str(x).strip()
-            if s.endswith('.0'):
-                s = s[:-2]
-            return s
-        
-        
-        def split_comma_list(s):
-            if pd.isna(s):
-                return []
-            parts = [p.strip() for p in str(s).split(',')]
-            return [p for p in parts if p]
-        
-        
-        def children_in_universe(prefix, universe):
-            if pd.isna(prefix):
-                return []
-            prefix = str(prefix)
-            return [code for code in universe if code.startswith(prefix)]
-        
-        
-        def expand_bls_row_to_6(row):
-            prefix = row['naics_prefix']
-            return children_in_universe(prefix, naics2022_6_universe)
-        
-        
-        def map_naics2012_to_2022_6(code2012):
-            code2012 = clean_naics_str(code2012)
-            if pd.isna(code2012):
-                return set()
-        
-            # Step 1: find 2012 6-digit children
-            children_2012 = children_in_universe(code2012, naics2012_6_universe)
-            if not children_2012:
-                return set()
-        
-            # Step 2: 2012 → 2017 (6-digit)
-            cw_12_subset = NAICS_2012_2017_df[NAICS_2012_2017_df['NAICS_2012'].isin(children_2012)]
-            naics2017_6 = cw_12_subset['NAICS_2017'].dropna().unique()
-        
-            if len(naics2017_6) == 0:
-                return set()
-        
-            # Step 3: 2017 → 2022 (6-digit)
-            cw_17_subset = NAICS_2017_2022_df[NAICS_2017_2022_df['NAICS_2017'].isin(naics2017_6)]
-            naics2022_6 = cw_17_subset['NAICS_2022'].dropna().unique()
-        
-            return set(naics2022_6)
-        
-        # -------------------- #
-        # Clean for Comparison #
-        # -------------------- #
-        EPA_df['EPA_Sector'] = EPA_df['Sector'].apply(clean_naics_str)
-        
-        NAICS_2012_2017_df['NAICS_2012'] = NAICS_2012_2017_df['2012 NAICS Code'].apply(clean_naics_str)
-        NAICS_2012_2017_df['NAICS_2017'] = NAICS_2012_2017_df['2017 NAICS Code'].apply(clean_naics_str)
-        
-        NAICS_2017_2022_df['NAICS_2017'] = NAICS_2017_2022_df['2017 NAICS Code'].apply(clean_naics_str)
-        NAICS_2017_2022_df['NAICS_2022'] = NAICS_2017_2022_df['2022 NAICS Code'].apply(clean_naics_str)
-
-        BLS_Crosswalk_df['NAICS_2022'] = BLS_Crosswalk_df['NAICS_2022'].apply(clean_naics_str)
-        
-        naics2012_6_universe = sorted(NAICS_2012_2017_df['NAICS_2012'].dropna().unique())
-        #naics2017_6_universe = sorted(NAICS_2012_2017_df['NAICS_2017'].dropna().unique())
-        naics2022_6_universe = sorted(NAICS_2017_2022_df['NAICS_2022'].dropna().unique())
-        
-        
-        # ---------- #
-        # Expand BLS #
-        # ---------- #
-        BLS_long = (BLS_Crosswalk_df
-                    .assign(naics_code_list=lambda x: x['NAICS_2022'].apply(split_comma_list))
-                    .explode('naics_code_list')
-                    .rename(columns={'naics_code_list': 'naics_prefix'}))
-        
-        BLS_long['naics_prefix'] = BLS_long['naics_prefix'].apply(clean_naics_str)
-        
-       
-        bls_expanded_rows = []
-        for _, row in BLS_long.iterrows():
-            bls_id = row['BLS_Industry']  # adjust column name
-            children = expand_bls_row_to_6(row)
-            for c in children:
-                bls_expanded_rows.append((bls_id, c))
-        
-        bls_naics2022_6 = pd.DataFrame(bls_expanded_rows,
-                                       columns=['BLS_Industry', 'naics2022_6'])
-        
-        bls_naics2022_6 = (bls_naics2022_6
-                                .merge(IO_df['BLS_Industry'], on='BLS_Industry', how='inner')
-                                .drop_duplicates())
-        
-        
-        # ---------- #
-        # Expand EPA #
-        # ---------- #
-        EPA_Sectors = EPA_df['EPA_Sector'].dropna().unique()
-
-        epa_mapping_rows = []
-        for s in EPA_Sectors:
-            mapped_2022_6 = map_naics2012_to_2022_6(s)
-            for c in mapped_2022_6:
-                epa_mapping_rows.append((s, c))
-        
-        epa_naics2022_6 = pd.DataFrame(epa_mapping_rows,
-                                       columns=['EPA_Sector', 'naics2022_6'])
-        
-        epa_naics2022_6 = epa_naics2022_6.drop_duplicates()
-        
-        
-        # --------- #
-        # Crosswalk #
-        # --------- #
-        EPA_BLS_Crosswalk = (epa_naics2022_6
-                                .merge(bls_naics2022_6, on='naics2022_6', how='inner')
-                                .drop_duplicates())
-
         IO_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']],
                                     on='BLS_Industry',
                                     how='inner')
@@ -368,7 +350,7 @@ class Processor:
                           IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']].drop_duplicates(),
                           on='BLS_Industry',
                           how='inner')
-        
+
         
         # ------------- #
         # List Extremes #
