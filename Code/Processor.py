@@ -47,10 +47,8 @@ class Processor:
         """""
         Clean Data
         
-        Output: Clean Data/VA_panel.pkl
-                Clean Data/BLS_Crosswalk.pkl
-                Clean Data/EPA.pkl
-                Clean Data/EPA_BLS_Crosswalk.pkl
+        Output: Clean Data/BLS_Crosswalk.pkl
+                Clean Data/Ind_CO2.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -154,7 +152,6 @@ class Processor:
                                   "Year": Year_end})
 
         VA_panel = pd.concat([df_VA_start, df_VA_end], ignore_index=True)
-        VA_panel.to_pickle(f'{self.Directory}/Clean Data/VA_panel.pkl')
         
         
         # ----------------------------------------------------------------
@@ -232,8 +229,33 @@ class Processor:
                                 .drop_duplicates())
         
         BLS_Crosswalk_df.to_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
-        EPA_df.to_pickle(f'{self.Directory}/Clean Data/EPA.pkl')
-        EPA_BLS_Crosswalk.to_pickle(f'{self.Directory}/Clean Data/EPA_BLS_Crosswalk.pkl')
+        
+        
+        # ------------------ #
+        # Allocate Emissions #
+        # ------------------ #
+        Ind_CO2_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']],
+                                    on='BLS_Industry',
+                                    how='inner')
+        
+        Ind_CO2_df = Ind_CO2_df.merge(EPA_df,
+                            on='EPA_Sector',
+                            how='inner')
+        
+        Ind_CO2_df = Ind_CO2_df.merge(VA_panel,
+                            on=['BLS_Industry', 'Year'],
+                            how='inner')
+        
+        Ind_CO2_df['CO2e_denom'] = Ind_CO2_df.groupby(['EPA_Sector', 'Year'])['Value_Added'].transform("sum")
+        Ind_CO2_df['CO2e_integrand'] = Ind_CO2_df['Value_Added'] * Ind_CO2_df['CO2e'] / Ind_CO2_df['CO2e_denom']
+        Ind_CO2_df['CO2e_Industry'] = Ind_CO2_df.groupby(['BLS_Industry', 'Year'])['CO2e_integrand'].transform("sum")
+        Ind_CO2_df['CO2e_intensity_Industry'] = Ind_CO2_df['CO2e_Industry'] / Ind_CO2_df['Value_Added']
+        
+        Ind_CO2_df = Ind_CO2_df[['BLS_Industry', 'Year', 'CO2e_Industry', 'CO2e_intensity_Industry']].drop_duplicates()
+
+        
+        Ind_CO2_df.to_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+
 
 
         
@@ -257,10 +279,8 @@ class Processor:
         # ----------------------------------------------------------------
         
         BLS_Crosswalk_df = pd.read_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
-        EPA_df = pd.read_pickle(f'{self.Directory}/Clean Data/EPA.pkl')
-        VA_panel = pd.read_pickle(f'{self.Directory}/Clean Data/VA_panel.pkl')
-        EPA_BLS_Crosswalk = pd.read_pickle(f'{self.Directory}/Clean Data/EPA_BLS_Crosswalk.pkl')
-        
+        Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+
         
         # ------------------- #
         # Input-Output Matrix #
@@ -303,33 +323,17 @@ class Processor:
             "TV_sq_distance_reduced": tv_sq_by_industry_reduced})
         
         IO_df = IO_df.merge(IO_reduced_df,
-                                    on='BLS_Industry',
-                                    how='left')
-        
-        IO_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']],
-                                    on='BLS_Industry',
-                                    how='inner')
-        
-        IO_df = IO_df.merge(EPA_df,
-                            on='EPA_Sector',
-                            how='inner')
-        
-        IO_df = IO_df.merge(VA_panel,
-                            on=['BLS_Industry', 'Year'],
-                            how='inner')
-        
+                            on='BLS_Industry',
+                            how='left')
+
         
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        
-        IO_df['CO2e_denom'] = IO_df.groupby(['EPA_Sector', 'Year'])['Value_Added'].transform("sum")
-        IO_df['CO2e_integrand'] = IO_df['Value_Added'] * IO_df['CO2e'] / IO_df['CO2e_denom']
-        IO_df['CO2e_Industry'] = IO_df.groupby(['BLS_Industry', 'Year'])['CO2e_integrand'].transform("sum")
-        IO_df['CO2e_intensity_Industry'] = IO_df['CO2e_Industry'] / IO_df['Value_Added']
-        
-        IO_df = IO_df[['BLS_Industry', 'Year', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_intensity_Industry']].drop_duplicates()
-        
+        IO_df = IO_df.merge(Ind_CO2_df,
+                            on=['BLS_Industry'],
+                            how='inner')
+                
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
         
@@ -630,6 +634,66 @@ class Processor:
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
  
+    
+    
+    def Up_Down_Green(self, Year_start, Year_end):
+        """""
+        Upstream and Downstream Incentives for Greenification
+        
+        Output: 
+        """""
+        
+        # ----------------------------------------------------------------
+
+        # Build regression dataframes.
+
+        # ----------------------------------------------------------------
+        
+        Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+
+        
+        # ------------------ #
+        # Allocate Emissions #
+        # ------------------ #
+        J = self.IO_start.shape[0]
+        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
+        
+        IO_df = IO_df.merge(Ind_CO2_df,
+                            on=['BLS_Industry'],
+                            how='inner')
+                
+        IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+        IO_wide_df = IO_wide_df.dropna()
+        
+        IO_wide_df["dlog_CO2e_inten"] = np.log(IO_wide_df[Year_end]) - np.log(IO_wide_df[Year_start])
+        
+        idx1 = IO_wide_df.index.to_numpy(dtype=int)
+        idx0 = idx1 - 1
+        
+        ΙΟ = self.IO_end[np.ix_(idx0, idx0)]
+        
+        IO_wide_df["up_dlog_CO2e_inten"] = ΙΟ @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["down_dlog_CO2e_inten"] = ΙΟ.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        
+        IO_wide_df = IO_wide_df.reset_index()
+        reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']].drop_duplicates()
+    
+    
+        # ----------------------------------------------------------------
+
+        # Run regressions.
+
+        # ----------------------------------------------------------------
+        
+        # ------------------- #
+        # Emission Regression #
+        # ------------------- #
+        X = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        y = reg_df['dlog_CO2e_inten']
+        
+        model = sm.OLS(y, X).fit()
+        print(model.summary())
+        
     
     
     def write_package_versions(self, packages):
