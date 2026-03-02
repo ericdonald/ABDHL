@@ -354,6 +354,10 @@ class Processor:
                           IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']].drop_duplicates(),
                           on='BLS_Industry',
                           how='inner')
+        
+        reg_df = reg_df.merge(Ind_CO2_df.loc[Ind_CO2_df["Year"] == Year_start, ["BLS_Industry", "CO2e_Industry"]],
+                            on=['BLS_Industry'],
+                            how='inner')
 
         
         # ------------- #
@@ -453,29 +457,35 @@ class Processor:
         # Regression #
         # ---------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
-        y = reg_df['TV_distance']
+        Y = reg_df['TV_distance']
         
-        model = sm.OLS(y, X).fit()
+        model = sm.OLS(Y, X).fit()
         print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten']
         
         x = -reg_df['dlog_CO2e_inten'].to_numpy()
-        y = y.to_numpy()
+        y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
-        # Two Metric
-        y_sq = reg_df['TV_sq_distance']
+        # Square Metric
+        Y_sq = reg_df['TV_sq_distance']
         
-        model_sq = sm.OLS(y_sq, X).fit()
+        model_sq = sm.OLS(Y_sq, X).fit()
         print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten']
         
-        y_sq = y_sq.to_numpy()
+        y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
+        
+        # Initial Emissions Weighted   
+        weight = reg_df['CO2e_Industry']
+        
+        model = sm.WLS(Y, X, weight).fit()
+        print(model.summary())
         
         
         # ---------- #
@@ -493,7 +503,7 @@ class Processor:
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L1.png')
         plt.show()
         
-        # Square Root Metric
+        # Square Metric
         plt.figure(figsize=(8,6))
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
@@ -517,28 +527,28 @@ class Processor:
         # Regression #
         # ---------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
-        y = reg_df['TV_distance_LI']
+        Y = reg_df['TV_distance_LI']
         
-        model = sm.OLS(y, X).fit()
+        model = sm.OLS(Y, X).fit()
         print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten_LI']
         
         x = -reg_df['dlog_CO2e_inten_LI'].to_numpy()
-        y = y.to_numpy()
+        y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
-        # Two Metric
-        y_sq = reg_df['TV_sq_distance_LI']
+        # Square Metric
+        Y_sq = reg_df['TV_sq_distance_LI']
         
-        model_sq = sm.OLS(y_sq, X).fit()
+        model_sq = sm.OLS(Y_sq, X).fit()
         print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten_LI']
         
-        y_sq = y_sq.to_numpy()
+        y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
         
         
@@ -557,7 +567,7 @@ class Processor:
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L1.png')
         plt.show()
         
-        # Square Root Metric
+        # Square Metric
         plt.figure(figsize=(8,6))
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
@@ -581,28 +591,28 @@ class Processor:
         # Regression #
         # ---------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
-        y = reg_df['TV_distance_reduced']
+        Y = reg_df['TV_distance_reduced']
         
-        model = sm.OLS(y, X, missing='drop').fit()
+        model = sm.OLS(Y, X, missing='drop').fit()
         print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten']
         
         x = -reg_df['dlog_CO2e_inten'].to_numpy()
-        y = y.to_numpy()
+        y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
-        # Two Metric
-        y_sq = reg_df['TV_sq_distance_reduced']
+        # Square Metric
+        Y_sq = reg_df['TV_sq_distance_reduced']
         
-        model_sq = sm.OLS(y_sq, X, missing='drop').fit()
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit()
         print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten']
         
-        y_sq = y_sq.to_numpy()
+        y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
         
         
@@ -621,7 +631,7 @@ class Processor:
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
         plt.show()
         
-        # Square Root Metric
+        # Square Metric
         plt.figure(figsize=(8,6))
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
