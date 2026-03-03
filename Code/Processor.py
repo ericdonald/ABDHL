@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
 import io, sys
+from datetime import datetime
 from pathlib import Path
 import requests as api
 import importlib.metadata as md
@@ -284,7 +285,7 @@ class Processor:
         
         PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
         PV_applications_df = PV_applications_df.dropna(subset=["year"])
-        PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= Year_start) & (PV_applications_df["year"] <= Year_end)]
+        PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
         PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
         
         
@@ -299,20 +300,20 @@ class Processor:
                              how='inner'
                              )
         
+        relevant_df = relevant_df[(relevant_df["year"] >= Year_start) & (relevant_df["year"] <= Year_end)]
         relevant_df["cpc_group5"] = relevant_df["cpc_group"].str[:5]
         relevant_df["cpc_group6"] = relevant_df["cpc_group"].str[:6]
         
         codes = set(self.CPC_classes)
-        relevant_df = relevant_df[(relevant_df["cpc_class"].isin(codes)
+        clean_mask = (relevant_df["cpc_class"].isin(codes)
                                  | relevant_df["cpc_subclass"].isin(codes)
                                  | relevant_df["cpc_group"].isin(codes)
                                  | relevant_df["cpc_group5"].isin(codes)
-                                 | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)]
+                                 | relevant_df["cpc_group6"].isin(codes))
+        relevant_df = relevant_df[clean_mask]
         
         relevant_df = relevant_df[['patent_id']].drop_duplicates()
-        
-        del PV_applications_df
-        
+                
                 
         # --------------------- #
         # PatentsView Citations #
@@ -330,12 +331,13 @@ class Processor:
         citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
         citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
         
-        citations_df = pd.merge(
-            citations_df,
-            CPC_df[['patent_id', 'cpc_class']],
-            on='patent_id',
-            how='right'
-        )
+        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
+                                            on='patent_id',
+                                            how='right')
+        citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
+                                            on='patent_id',
+                                            how='inner')
+        
         citations_df['cites'] = citations_df['cites'].fillna(0)
         citations_df['cites'] = citations_df['cites'] + 1
         
@@ -349,7 +351,7 @@ class Processor:
             how='inner'
         )
 
-        del citations_df, CPC_df, relevant_df
+        del CPC_df, PV_applications_df, relevant_df, citations_df
         
         
         # ------------------------ #
@@ -816,6 +818,7 @@ class Processor:
         # ----------------------------------------------------------------
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
         
         # ------------------ #
@@ -843,7 +846,9 @@ class Processor:
         
         IO_wide_df = IO_wide_df.reset_index()
         reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']].drop_duplicates()
-    
+        reg_df = reg_df.merge(Ind_Pat_df,
+                            on='BLS_Industry',
+                            how='left')
     
         # ----------------------------------------------------------------
 
@@ -858,6 +863,20 @@ class Processor:
         Y = reg_df['dlog_CO2e_inten']
         
         model = sm.OLS(Y, X).fit()
+        print(model.summary())
+        
+        
+        # ------------------ #
+        # Patent Regressions #
+        # ------------------ #
+        Y_pat_count = reg_df['pat_count']
+        
+        model = sm.OLS(Y_pat_count, X).fit()
+        print(model.summary())
+        
+        Y_pat_cite = reg_df['pat_cites']
+        
+        model = sm.OLS(Y_pat_cite, X).fit()
         print(model.summary())
         
     
