@@ -25,11 +25,15 @@ Below is the list of all data sources required for replication. The first group 
 
 ### Python
 
-All of the replication codes run on Python `3.11.13`. Prior to running the codes, install the following packages:
+All of the replication codes run on Python `3.12.11`. Prior to running the codes, install the following packages:
 
 | Package | Version |
 |---------|---------|
-
+| matplotlib | 3.10.8 |
+| numpy | 2.4.2 |
+| openpyxl | 3.1.5 |
+| pandas | 3.0.0 |
+| statsmodels | 0.14.6 |
 
 ## Description of Code:
 
