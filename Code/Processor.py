@@ -235,6 +235,7 @@ class Processor:
         EPA_BLS_Crosswalk = (epa_naics2022_6
                                 .merge(bls_naics2022_6, on='naics2022_6', how='inner')
                                 .drop_duplicates())
+        EPA_BLS_Crosswalk['naics2022_6'] = pd.to_numeric(EPA_BLS_Crosswalk['naics2022_6'])
         
         BLS_Crosswalk_df.to_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
         
@@ -411,7 +412,7 @@ class Processor:
         pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
         pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
         
-        pat_df = pat_df[['BLS_Industry', 'pat_count', 'pat_cites']]
+        pat_df = pat_df[['BLS_Industry', 'pat_count', 'pat_cites']].drop_duplicates()
         
         pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
