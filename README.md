@@ -2,16 +2,24 @@
 
 ## Data Sources:
 
-Below is the list of all data sources required for replication. The first group are those programmatically retrieved via APIs or direct download, and the second group are those contained in the Raw Data folder. The links below are for reference only; a user does not need to visit these sites to extract the data.
+Below is the list of all data sources required for replication. The first group are those programmatically retrieved via APIs or direct download, the second group are those contained in the Raw Data folder, and the third group are those that require the user to have a license. The links below are for reference only; a user does not need to visit these sites to extract the data.
 
 ### API/Web Acessible:
 
 - EPA [Emissions by Sector](https://catalog.data.gov/dataset/2012-2020-greenhouse-gas-national-and-state-level-emission-totals-by-industry)
 - Census [NAICS Concordances](https://www.census.gov/naics/?68967)
+- PatentsView
+  - [CPC Codes](https://patentsview.org/download/data-download-tables)
+  - [Applications](https://patentsview.org/download/data-download-tables)
+  - [Citations](https://patentsview.org/download/data-download-tables)
 
 ### Contained in Raw Data:
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
+- Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) and [Arora et al. (2021)](https://zenodo.org/records/13619821)
+
+### Requires License:
+- [Compustat](https://wrds-www.wharton.upenn.edu/)
 
 ## Software Requirements:
 
