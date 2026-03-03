@@ -455,6 +455,13 @@ class Processor:
         
         IO_end_reduced = np.delete(np.delete(self.IO_end, [6, 7], axis=0), [6, 7], axis=1)
         IO_end_reduced = IO_end_reduced / IO_end_reduced.sum(axis=1, keepdims=True)
+        
+        #Manufacturing only
+        IO_start_manu = self.IO_start[15:79, 15:79]
+        IO_start_manu = IO_start_manu / IO_start_manu.sum(axis=1, keepdims=True)
+        
+        IO_end_manu = self.IO_end[15:79, 15:79]
+        IO_end_manu = IO_end_manu / IO_end_manu.sum(axis=1, keepdims=True)
 
         diff = np.abs(self.IO_end - self.IO_start)
         tv_by_industry = 0.5 * diff.sum(axis=1)
@@ -468,6 +475,10 @@ class Processor:
         tv_by_industry_reduced = 0.5 * diff_reduced.sum(axis=1)
         tv_sq_by_industry_reduced = 0.5 * ((diff_reduced**(2)).sum(axis=1))**(1/2)
         
+        diff_manu = np.abs(IO_end_manu - IO_start_manu)
+        tv_by_industry_manu = 0.5 * diff_manu.sum(axis=1)
+        tv_sq_by_industry_manu = 0.5 * ((diff_manu**(2)).sum(axis=1))**(1/2)
+        
         IO_df = pd.DataFrame({
             "BLS_Industry": np.arange(1, J+1),
             "TV_distance": tv_by_industry,
@@ -480,7 +491,15 @@ class Processor:
             "TV_distance_reduced": tv_by_industry_reduced,
             "TV_sq_distance_reduced": tv_sq_by_industry_reduced})
         
+        IO_manu_df = pd.DataFrame({
+            "BLS_Industry": np.arange(15, 79),
+            "TV_distance_manu": tv_by_industry_manu,
+            "TV_sq_distance_manu": tv_sq_by_industry_manu})
+        
         IO_df = IO_df.merge(IO_reduced_df,
+                            on='BLS_Industry',
+                            how='left')
+        IO_df = IO_df.merge(IO_manu_df,
                             on='BLS_Industry',
                             how='left')
 
@@ -508,7 +527,7 @@ class Processor:
         IO_wide_df["dlog_CO2e_inten_LI"] = np.log(CO2e_intensity_Industry_LI_end) - np.log(CO2e_intensity_Industry_LI_start)
         IO_wide_df = IO_wide_df.reset_index()
         
-        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'TV_distance_reduced', 'TV_sq_distance_reduced']].drop_duplicates(),
+        reg_df = pd.merge(IO_df[['BLS_Industry', 'TV_distance', 'TV_sq_distance', 'TV_distance_LI', 'TV_sq_distance_LI', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'TV_distance_manu', 'TV_sq_distance_manu']].drop_duplicates(),
                           IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']].drop_duplicates(),
                           on='BLS_Industry',
                           how='inner')
@@ -801,8 +820,43 @@ class Processor:
         plt.legend()
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
- 
+        
+        
+        # ----------------------------------------------------------------
     
+        # Manufacturing IO table.
+    
+        # ----------------------------------------------------------------
+        
+        # ---------- #
+        # Regression #
+        # ---------- #
+        X = sm.add_constant(reg_df['dlog_CO2e_inten'])
+        Y = reg_df['TV_distance_manu']
+        
+        model = sm.OLS(Y, X, missing='drop').fit()
+        print(model.summary())
+        
+        beta0 = model.params['const']
+        beta1 = -model.params['dlog_CO2e_inten']
+        
+        x = -reg_df['dlog_CO2e_inten'].to_numpy()
+        y = Y.to_numpy()
+        y_hat = beta0 + beta1 * x
+        
+        # Square Metric
+        Y_sq = reg_df['TV_sq_distance_manu']
+        
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit()
+        print(model_sq.summary())
+        
+        beta0_sq = model_sq.params['const']
+        beta1_sq = -model_sq.params['dlog_CO2e_inten']
+        
+        y_sq = Y_sq.to_numpy()
+        y_hat_sq = beta0_sq + beta1_sq * x
+        
+        
     
     def Up_Down_Green(self, Year_start, Year_end):
         """""
