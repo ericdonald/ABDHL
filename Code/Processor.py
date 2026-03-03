@@ -41,12 +41,7 @@ class Processor:
                      'Perfluoropropane': 8830,
                      'Sulfur hexafluoride': 22800
                      }
-        self.CPC_classes = ["Y02E10", "Y02E30", "Y02E60/10", "Y02E60/13", "Y02E60/14", "Y02E60/16", "Y02B10/10",
-                                        "B60L", "B60K1", "B60K6", "H01M8", "B60W20", "B60W10/08", "B60W10/24",
-                                        "B60W10/26", "B60W10/28", "Y02T10/64", "Y02T10/70", "Y02T10/7072", "Y02T10/72",
-                                        "Y02T10/92", "Y02T90/10", "Y02T90/12", "Y02T90/14", "Y02T90/16", "Y02T90/167",
-                                        "Y02T90/40", "Y02T10/62"]
-        #Classes follow both CPC and IPC classifications, but there is no discordance between CPC and IPC for these classes.
+        self.CPC_classes = ["Y02B", "Y02C", "Y02D", "Y02E", "Y02P", "Y02T", "Y02W", "B60L"]
 
         
         
@@ -306,14 +301,14 @@ class Processor:
         relevant_df["cpc_group6"] = relevant_df["cpc_group"].str[:6]
         
         codes = set(self.CPC_classes)
-        clean_mask = (relevant_df["cpc_class"].isin(codes)
-                                 | relevant_df["cpc_subclass"].isin(codes)
-                                 | relevant_df["cpc_group"].isin(codes)
-                                 | relevant_df["cpc_group5"].isin(codes)
-                                 | relevant_df["cpc_group6"].isin(codes))
-        relevant_df = relevant_df[clean_mask]
+        relevant_df['clean'] = (relevant_df["cpc_class"].isin(codes)
+                                | relevant_df["cpc_subclass"].isin(codes)
+                                | relevant_df["cpc_group"].isin(codes)
+                                | relevant_df["cpc_group5"].isin(codes)
+                                | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
         
-        relevant_df = relevant_df[['patent_id']].drop_duplicates()
+        relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
+        relevant_df = relevant_df[['patent_id', 'clean']].drop_duplicates()
                 
                 
         # --------------------- #
@@ -407,12 +402,16 @@ class Processor:
                             on='naics2022_6',
                             how='inner')
         
+        pat_df['clean'] = pat_df['split_weight'] * pat_df['clean']
         pat_df['pat_count'] = pat_df.groupby(['BLS_Industry'])['split_weight'].transform('sum')
+        pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry'])['clean'].transform('sum') / pat_df['pat_count']
         
         pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
+        pat_df['weighted_clean_cites'] = pat_df['clean'] * pat_df['norm_cites']
         pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
+        pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
         
-        pat_df = pat_df[['BLS_Industry', 'pat_count', 'pat_cites']].drop_duplicates()
+        pat_df = pat_df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
         
         pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
@@ -870,14 +869,14 @@ class Processor:
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        Y_pat_count = reg_df['pat_count']
+        Y_pat_count = reg_df['clean_pat_share']
         
-        model = sm.OLS(Y_pat_count, X).fit()
+        model = sm.OLS(Y_pat_count, X, missing='drop').fit()
         print(model.summary())
         
-        Y_pat_cite = reg_df['pat_cites']
+        Y_pat_cite = reg_df['clean_cite_share']
         
-        model = sm.OLS(Y_pat_cite, X).fit()
+        model = sm.OLS(Y_pat_cite, X, missing='drop').fit()
         print(model.summary())
         
     
