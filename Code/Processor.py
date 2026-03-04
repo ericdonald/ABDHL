@@ -77,7 +77,7 @@ class Processor:
         # ----------------------- #
         # EPA Emissions by Sector #
         # ----------------------- #
-        EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1529805/GHGs_by_Detailed_Sector_US_2012-2020.xlsx"
+        EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1531141/GHGs_by_Detailed_Sector_US_2012-2022.xlsx"
 
         EPA_df = pd.read_excel(EPA_url, sheet_name="Main")    
         
