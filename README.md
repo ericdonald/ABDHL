@@ -6,7 +6,7 @@ Below is the list of all data sources required for replication. The first group 
 
 ### API/Web Acessible:
 
-- EPA [Emissions by Sector](https://catalog.data.gov/dataset/2012-2020-greenhouse-gas-national-and-state-level-emission-totals-by-industry)
+- EPA [Emissions by Sector](https://catalog.data.gov/dataset/2012-2022-national-level-greenhouse-gas-emission-totals-by-industry)
 - Census [NAICS Concordances](https://www.census.gov/naics/?68967)
 - PatentsView
   - [CPC Codes](https://patentsview.org/download/data-download-tables)
