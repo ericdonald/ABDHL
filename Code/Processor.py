@@ -140,9 +140,12 @@ class Processor:
         # ------------------- #
         # Input-Output Matrix #
         # ------------------- #
-        
         self.IO_start = B_start @ A_start
         self.IO_end = B_end @ A_end
+        
+        #np.fill_diagonal(self.IO_start, 0)
+        #np.fill_diagonal(self.IO_end, 0)
+        
         J = self.IO_start.shape[0]
         IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
         
