@@ -675,7 +675,7 @@ class Processor:
         p1 = model.pvalues['dlog_CO2e_inten']
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1:.4f}{stars1}",
+            f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
@@ -695,13 +695,13 @@ class Processor:
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
-        plt.ylabel("2 Norm distance (input-share change)")
+        plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
@@ -753,7 +753,7 @@ class Processor:
         p1 = model.pvalues['dlog_CO2e_inten_LI']
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1:.4f}{stars1}",
+            f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
@@ -773,13 +773,13 @@ class Processor:
         p_sq = model_sq.pvalues['dlog_CO2e_inten_LI']
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
-        plt.ylabel("2 Norm distance (input-share change)")
+        plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
@@ -831,7 +831,7 @@ class Processor:
         p1 = model.pvalues['dlog_CO2e_inten']
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1:.4f}{stars1}",
+            f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
@@ -851,13 +851,13 @@ class Processor:
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
-            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
-        plt.ylabel("2 Norm distance (input-share change)")
+        plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
