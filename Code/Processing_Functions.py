@@ -85,5 +85,23 @@ def map_naics2012_to_2022_6(code2012, naics2012_6_universe, NAICS_2012_2017_df, 
 
 
 
+def get_stars(pval):
+    if pval < 0.01:   return '***'
+    elif pval < 0.05: return '**'
+    elif pval < 0.10: return '*'
+    else:             return ''
+
+
+
+def fmt_coef(model, varname):
+    """Return (coefficient string with stars, SE string) or ('', '') if variable not in model."""
+    if varname not in model.params:
+        return '', ''
+    coef  = model.params[varname]
+    se    = model.bse[varname]
+    pval  = model.pvalues[varname]
+    stars = get_stars(pval)
+    return f'{coef:.3f}{stars}', f'({se:.3f})'
+
 
 

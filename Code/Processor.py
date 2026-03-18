@@ -636,8 +636,8 @@ class Processor:
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
         Y = reg_df['TV_distance']
         
-        model = sm.OLS(Y, X).fit()
-        print(model.summary())
+        model = sm.OLS(Y, X).fit(cov_type='HC3')
+        #print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten']
@@ -649,8 +649,8 @@ class Processor:
         # Square Metric
         Y_sq = reg_df['TV_sq_distance']
         
-        model_sq = sm.OLS(Y_sq, X).fit()
-        print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
+        #print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten']
@@ -661,8 +661,8 @@ class Processor:
         # Initial Emissions Weighted   
         weight = reg_df['CO2e_Industry']
         
-        model = sm.WLS(Y, X, weight).fit()
-        print(model.summary())
+        model = sm.WLS(Y, X, weight).fit(cov_type='HC3')
+        #print(model.summary())
         
         
         # ---------- #
@@ -720,8 +720,8 @@ class Processor:
         X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
         Y = reg_df['TV_distance_LI']
         
-        model = sm.OLS(Y, X).fit()
-        print(model.summary())
+        model = sm.OLS(Y, X).fit(cov_type='HC3')
+        #print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten_LI']
@@ -733,8 +733,8 @@ class Processor:
         # Square Metric
         Y_sq = reg_df['TV_sq_distance_LI']
         
-        model_sq = sm.OLS(Y_sq, X).fit()
-        print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
+        #print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten_LI']
@@ -798,8 +798,8 @@ class Processor:
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
         Y = reg_df['TV_distance_reduced']
         
-        model = sm.OLS(Y, X, missing='drop').fit()
-        print(model.summary())
+        model = sm.OLS(Y, X, missing='drop').fit(cov_type='HC3')
+        #print(model.summary())
         
         beta0 = model.params['const']
         beta1 = -model.params['dlog_CO2e_inten']
@@ -811,8 +811,8 @@ class Processor:
         # Square Metric
         Y_sq = reg_df['TV_sq_distance_reduced']
         
-        model_sq = sm.OLS(Y_sq, X, missing='drop').fit()
-        print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='HC3')
+        #print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
         beta1_sq = -model_sq.params['dlog_CO2e_inten']
@@ -876,27 +876,14 @@ class Processor:
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
         Y = reg_df['TV_distance_manu']
         
-        model = sm.OLS(Y, X, missing='drop').fit()
-        print(model.summary())
-        
-        beta0 = model.params['const']
-        beta1 = -model.params['dlog_CO2e_inten']
-        
-        x = -reg_df['dlog_CO2e_inten'].to_numpy()
-        y = Y.to_numpy()
-        y_hat = beta0 + beta1 * x
+        model = sm.OLS(Y, X, missing='drop').fit(cov_type='HC3')
+        #print(model.summary())
         
         # Square Metric
         Y_sq = reg_df['TV_sq_distance_manu']
         
-        model_sq = sm.OLS(Y_sq, X, missing='drop').fit()
-        print(model_sq.summary())
-        
-        beta0_sq = model_sq.params['const']
-        beta1_sq = -model_sq.params['dlog_CO2e_inten']
-        
-        y_sq = Y_sq.to_numpy()
-        y_hat_sq = beta0_sq + beta1_sq * x
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='HC3')
+        #print(model_sq.summary())
         
         
     
@@ -939,12 +926,17 @@ class Processor:
         idx0 = idx1 - 1
         
         IO = self.IO_end[np.ix_(idx0, idx0)]
+        I = np.eye(IO.shape[0])
         
-        IO_wide_df["up_dlog_CO2e_inten"] = IO @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        IO_wide_df["down_dlog_CO2e_inten"] = IO.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["up_dlog_CO2e_inten"] = - IO @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["down_dlog_CO2e_inten"] = - IO.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        
+        LI = np.linalg.inv(I - IO)
+        IO_wide_df["up_higher_dlog_CO2e_inten"] = - (LI - I - IO) @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
+        IO_wide_df["down_higher_dlog_CO2e_inten"] = - (LI - I - IO).T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
         
         IO_wide_df = IO_wide_df.reset_index()
-        reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']].drop_duplicates()
+        reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten', 'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']].drop_duplicates()
         reg_df = reg_df.merge(Ind_Pat_df,
                             on='BLS_Industry',
                             how='left')
@@ -955,14 +947,20 @@ class Processor:
 
         # ----------------------------------------------------------------
         
+        X = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_higher = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten', 'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
+        
+        
         # ------------------- #
         # Emission Regression #
         # ------------------- #
-        X = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        Y = reg_df['dlog_CO2e_inten']
+        Y_em = - reg_df['dlog_CO2e_inten']
         
-        model = sm.OLS(Y, X).fit()
-        print(model.summary())
+        model_em = sm.OLS(Y_em, X).fit(cov_type='HC3')
+        #print(model_em.summary())
+        
+        model_em_higher = sm.OLS(Y_em, X_higher).fit(cov_type='HC3')
+        #print(model_em_higher.summary())
         
         
         # ------------------ #
@@ -970,15 +968,72 @@ class Processor:
         # ------------------ #
         Y_pat_count = reg_df['clean_pat_share']
         
-        model = sm.OLS(Y_pat_count, X, missing='drop').fit()
-        print(model.summary())
+        model_pat_count = sm.OLS(Y_pat_count, X, missing='drop').fit(cov_type='HC3')
+        #print(model_pat_count.summary())
+        model_pat_count_higher = sm.OLS(Y_pat_count, X_higher, missing='drop').fit(cov_type='HC3')
+        #print(model_pat_count_higher.summary())
         
         Y_pat_cite = reg_df['clean_cite_share']
         
-        model = sm.OLS(Y_pat_cite, X, missing='drop').fit()
-        print(model.summary())
+        model_pat_cite = sm.OLS(Y_pat_cite, X, missing='drop').fit(cov_type='HC3')
+        #print(model_pat_cite.summary())
+        model_pat_cite_higher = sm.OLS(Y_pat_cite, X_higher, missing='drop').fit(cov_type='HC3')
+        #print(model_pat_cite_higher.summary())
         
-    
+        
+        # ----------- #
+        # Print Table #
+        # ----------- #
+        models = [
+            model_em,
+            model_em_higher,
+            None,            # spacer col
+            model_pat_count,
+            model_pat_count_higher,
+            None,            # spacer col
+            model_pat_cite,
+            model_pat_cite_higher,
+        ]
+
+        variables = [
+            ('up_dlog_CO2e_inten',        'Upstream Emissions Intensity Reduction'),
+            ('down_dlog_CO2e_inten',      'Downstream Emissions Intensity Reduction'),
+            ('up_higher_dlog_CO2e_inten', 'Higher-Order Upstream Emissions Intensity Reduction'),
+            ('down_higher_dlog_CO2e_inten','Higher-Order Downstream Emissions Intensity Reduction'),
+        ]
+
+        body = ''
+        for varname, label in variables:
+            coefs, ses = [], []
+            for m in models:
+                if m is None:
+                    coefs.append('')
+                    ses.append('')
+                else:
+                    c, s = gpf.fmt_coef(m, varname)
+                    coefs.append(c)
+                    ses.append(s)
+            body += f'{label} & {" & ".join(coefs)} \\\\\n'
+            body += f'& {" & ".join(ses)} \\\\[3pt]\n'
+            
+        r2_vals, n_vals = [], []
+        for m in models:
+            if m is None:
+                r2_vals.append('')
+                n_vals.append('')
+            else:
+                r2_vals.append(f'{m.rsquared:.3f}')
+                n_vals.append(str(int(m.nobs)))
+        
+        body += '\\midrule\n'
+        body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
+        body += f'Obs & {" & ".join(n_vals)} \\\\\n'
+        
+        out_path = f'{self.Directory}/Results/Tables/Fact2_Regressions.tex'
+        with open(out_path, 'w') as f:
+            f.write(body)
+        
+        
     
     def write_package_versions(self, packages):
         """""
