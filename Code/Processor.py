@@ -672,11 +672,18 @@ class Processor:
         plt.scatter(x, y, alpha=0.7, label="Industries")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
+        p1 = model.pvalues['dlog_CO2e_inten']
+        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1:.4f}{stars1}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.title("IO Table - 1 Norm")
-        plt.legend()
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L1.png')
         plt.show()
         
@@ -685,11 +692,18 @@ class Processor:
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
+        p_sq = model_sq.pvalues['dlog_CO2e_inten']
+        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.title("IO Table - 2 Norm")
-        plt.legend()
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
         plt.show()
 
@@ -736,11 +750,18 @@ class Processor:
         plt.scatter(x, y, alpha=0.7, label="Industries")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
+        p1 = model.pvalues['dlog_CO2e_inten_LI']
+        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1:.4f}{stars1}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend()
-        plt.title("Leontief Inverse - 1 Norm")
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L1.png')
         plt.show()
         
@@ -749,11 +770,18 @@ class Processor:
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
+        p_sq = model_sq.pvalues['dlog_CO2e_inten_LI']
+        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend()
-        plt.title("Leontief Inverse - 2 Norm")
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
         plt.show()
         
@@ -800,11 +828,18 @@ class Processor:
         plt.scatter(x, y, alpha=0.7, label="Industries")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
+        p1 = model.pvalues['dlog_CO2e_inten']
+        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1:.4f}{stars1}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.title("Reduced IO Table - 1 Norm")
-        plt.legend()
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
         plt.show()
         
@@ -813,11 +848,18 @@ class Processor:
         plt.scatter(x, y_sq, alpha=0.7, label="Industries")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
+        p_sq = model_sq.pvalues['dlog_CO2e_inten']
+        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        plt.annotate(
+            f"Slope = {beta1_sq:.4f}{stars_sq}",
+            xy=(0.05, 0.90), xycoords='axes fraction',
+            fontsize=11, color='red',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+        )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.title("Reduced IO Table - 2 Norm")
-        plt.legend()
+        plt.legend(loc='upper left')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
         
