@@ -45,7 +45,7 @@ class Processor:
 
         
         
-    def Cleaner(self, Year_start, Year_end):
+    def Cleaner(self, Year_start, Year_end, patents=1):
         """""
         Clean Data
         
@@ -265,155 +265,155 @@ class Processor:
         # Build industry patenting cross-section.
 
         # ----------------------------------------------------------------
-        
-        # --------------------- #
-        # PatentsView CPC Codes #
-        # --------------------- #
-        CPC_df = gpf.Extract_PatentsView('g_cpc_current')
-        
-        CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
-                
-        
-        # ------------------------ #
-        # PatentsView Applications #
-        # ------------------------ #
-        PV_applications_df = gpf.Extract_PatentsView('g_application')
-        
-        PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
-        PV_applications_df = PV_applications_df.dropna(subset=["year"])
-        PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
-        PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
-        
-        
-        # ------------------ #
-        # Technology Classes #
-        # ------------------ #
-        relevant_df = CPC_df.copy()
-        
-        relevant_df = pd.merge(relevant_df,
-                             PV_applications_df,
-                             on='patent_id',
-                             how='inner'
-                             )
-        
-        relevant_df = relevant_df[(relevant_df["year"] >= Year_start) & (relevant_df["year"] <= Year_end)]
-        relevant_df["cpc_group5"] = relevant_df["cpc_group"].str[:5]
-        relevant_df["cpc_group6"] = relevant_df["cpc_group"].str[:6]
-        
-        codes = set(self.CPC_classes)
-        relevant_df['clean'] = (relevant_df["cpc_class"].isin(codes)
-                                | relevant_df["cpc_subclass"].isin(codes)
-                                | relevant_df["cpc_group"].isin(codes)
-                                | relevant_df["cpc_group5"].isin(codes)
-                                | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
-        
-        relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
-        relevant_df = relevant_df[['patent_id', 'clean']].drop_duplicates()
-                
-                
-        # --------------------- #
-        # PatentsView Citations #
-        # --------------------- #
-        citations_df = gpf.Extract_PatentsView('g_us_patent_citation')
-        
-        citations_df['patent_id'] = citations_df['patent_id'].astype(str)
-        citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
-        
-        
-        # ------------------------- #
-        # Patent Citation Weighting #
-        # ------------------------- #
-        citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
-        citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
-        citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
-        
-        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
-                                            on='patent_id',
-                                            how='right')
-        citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
-                                            on='patent_id',
-                                            how='inner')
-        
-        citations_df['cites'] = citations_df['cites'].fillna(0)
-        citations_df['cites'] = citations_df['cites'] + 1
-        
-        citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
-        citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
-        
-        pat_df = pd.merge(
-            citations_df[['patent_id', 'norm_cites']].drop_duplicates(),
-            relevant_df,
-            on='patent_id',
-            how='inner'
-        )
-
-        del CPC_df, PV_applications_df, relevant_df, citations_df
-        
-        
-        # ------------------------ #
-        # Patent to Firm Crosswalk #
-        # ------------------------ #
-        discern_df = pd.read_csv(f'{self.Directory}/Raw Data/discern_pat_grant_1980_2021.csv', low_memory=False)
-        KPSS_df = pd.read_csv(f'{self.Directory}/Raw Data/KPSS_match_patent_permno_2023.csv')
-        gvkey_df = pd.read_csv(f'{self.Directory}/Raw Data/permno_gvkey.csv')
-        
-        KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
-        discern_df = discern_df.rename(columns={"permno_adj": "permno"})
-        gvkey_df = gvkey_df.rename(columns={"permno_adj": "permno"})
-        
-        new_pats = KPSS_df[~KPSS_df['patent_id'].isin(discern_df['patent_id'])]
-
-        pat_firm_crosswalk_df = pd.concat([discern_df, new_pats], ignore_index=True)
-
-        pat_firm_crosswalk_df = pat_firm_crosswalk_df.merge(gvkey_df[['gvkey', 'permno']],
-                                    on='permno',
-                                    how='inner'
-                                         )
-        pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']]
-        pat_firm_crosswalk_df['split_weight'] = 1 / pat_firm_crosswalk_df.groupby('patent_id')['patent_id'].transform('count')
-        
-        
-        # --------- #
-        # Compustat #
-        # --------- #
-        compustat_df = pd.read_csv(f'{self.Directory}/Raw Data/compustat.csv')
-        
-        compustat_df = compustat_df[(compustat_df['fic']=="USA") & (compustat_df['final']=="Y")]
-        terry_cols = ['at', 'ppent', 'emp', 'capxv', 'sale', 'xrd']
-        compustat_df = compustat_df[compustat_df[terry_cols].gt(0).all(axis=1)]
-        compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('size') > 1]
-        compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
-        
-        compustat_df = compustat_df[(compustat_df["year"] >= Year_start) & (compustat_df["year"] <= Year_end)]
-        compustat_df['naics2022_6'] = compustat_df['naics'] #Assume Compustat uses most up to date NAICS
-        compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
-
-
-        # -------------------------- #
-        # Allocate Patent to Sectors #
-        # -------------------------- #
-        pat_df = pat_df.merge(pat_firm_crosswalk_df,
-                            on='patent_id',
-                            how='inner')
-        pat_df = pat_df.merge(compustat_df,
-                            on='gvkey',
-                            how='inner')
-        pat_df = pat_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']],
-                            on='naics2022_6',
-                            how='inner')
-        
-        pat_df['clean'] = pat_df['split_weight'] * pat_df['clean']
-        pat_df['pat_count'] = pat_df.groupby(['BLS_Industry'])['split_weight'].transform('sum')
-        pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry'])['clean'].transform('sum') / pat_df['pat_count']
-        
-        pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
-        pat_df['weighted_clean_cites'] = pat_df['clean'] * pat_df['norm_cites']
-        pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
-        pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
-        
-        pat_df = pat_df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
-        
-        pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        if patents==1:
+            # --------------------- #
+            # PatentsView CPC Codes #
+            # --------------------- #
+            CPC_df = gpf.Extract_PatentsView('g_cpc_current')
+            
+            CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
+                    
+            
+            # ------------------------ #
+            # PatentsView Applications #
+            # ------------------------ #
+            PV_applications_df = gpf.Extract_PatentsView('g_application')
+            
+            PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
+            PV_applications_df = PV_applications_df.dropna(subset=["year"])
+            PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
+            PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
+            
+            
+            # ------------------ #
+            # Technology Classes #
+            # ------------------ #
+            relevant_df = CPC_df.copy()
+            
+            relevant_df = pd.merge(relevant_df,
+                                 PV_applications_df,
+                                 on='patent_id',
+                                 how='inner'
+                                 )
+            
+            relevant_df = relevant_df[(relevant_df["year"] >= Year_start) & (relevant_df["year"] <= Year_end)]
+            relevant_df["cpc_group5"] = relevant_df["cpc_group"].str[:5]
+            relevant_df["cpc_group6"] = relevant_df["cpc_group"].str[:6]
+            
+            codes = set(self.CPC_classes)
+            relevant_df['clean'] = (relevant_df["cpc_class"].isin(codes)
+                                    | relevant_df["cpc_subclass"].isin(codes)
+                                    | relevant_df["cpc_group"].isin(codes)
+                                    | relevant_df["cpc_group5"].isin(codes)
+                                    | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
+            
+            relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
+            relevant_df = relevant_df[['patent_id', 'clean']].drop_duplicates()
+                    
+                    
+            # --------------------- #
+            # PatentsView Citations #
+            # --------------------- #
+            citations_df = gpf.Extract_PatentsView('g_us_patent_citation')
+            
+            citations_df['patent_id'] = citations_df['patent_id'].astype(str)
+            citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
+            
+            
+            # ------------------------- #
+            # Patent Citation Weighting #
+            # ------------------------- #
+            citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
+            citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
+            citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
+            
+            citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
+                                                on='patent_id',
+                                                how='right')
+            citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
+                                                on='patent_id',
+                                                how='inner')
+            
+            citations_df['cites'] = citations_df['cites'].fillna(0)
+            citations_df['cites'] = citations_df['cites'] + 1
+            
+            citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
+            citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
+            
+            pat_df = pd.merge(
+                citations_df[['patent_id', 'norm_cites']].drop_duplicates(),
+                relevant_df,
+                on='patent_id',
+                how='inner'
+            )
+    
+            del CPC_df, PV_applications_df, relevant_df, citations_df
+            
+            
+            # ------------------------ #
+            # Patent to Firm Crosswalk #
+            # ------------------------ #
+            discern_df = pd.read_csv(f'{self.Directory}/Raw Data/discern_pat_grant_1980_2021.csv', low_memory=False)
+            KPSS_df = pd.read_csv(f'{self.Directory}/Raw Data/KPSS_match_patent_permno_2023.csv')
+            gvkey_df = pd.read_csv(f'{self.Directory}/Raw Data/permno_gvkey.csv')
+            
+            KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
+            discern_df = discern_df.rename(columns={"permno_adj": "permno"})
+            gvkey_df = gvkey_df.rename(columns={"permno_adj": "permno"})
+            
+            new_pats = KPSS_df[~KPSS_df['patent_id'].isin(discern_df['patent_id'])]
+    
+            pat_firm_crosswalk_df = pd.concat([discern_df, new_pats], ignore_index=True)
+    
+            pat_firm_crosswalk_df = pat_firm_crosswalk_df.merge(gvkey_df[['gvkey', 'permno']],
+                                        on='permno',
+                                        how='inner'
+                                             )
+            pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']]
+            pat_firm_crosswalk_df['split_weight'] = 1 / pat_firm_crosswalk_df.groupby('patent_id')['patent_id'].transform('count')
+            
+            
+            # --------- #
+            # Compustat #
+            # --------- #
+            compustat_df = pd.read_csv(f'{self.Directory}/Raw Data/compustat.csv')
+            
+            compustat_df = compustat_df[(compustat_df['fic']=="USA") & (compustat_df['final']=="Y")]
+            terry_cols = ['at', 'ppent', 'emp', 'capxv', 'sale', 'xrd']
+            compustat_df = compustat_df[compustat_df[terry_cols].gt(0).all(axis=1)]
+            compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('size') > 1]
+            compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
+            
+            compustat_df = compustat_df[(compustat_df["year"] >= Year_start) & (compustat_df["year"] <= Year_end)]
+            compustat_df['naics2022_6'] = compustat_df['naics'] #Assume Compustat uses most up to date NAICS
+            compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
+    
+    
+            # -------------------------- #
+            # Allocate Patent to Sectors #
+            # -------------------------- #
+            pat_df = pat_df.merge(pat_firm_crosswalk_df,
+                                on='patent_id',
+                                how='inner')
+            pat_df = pat_df.merge(compustat_df,
+                                on='gvkey',
+                                how='inner')
+            pat_df = pat_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']],
+                                on='naics2022_6',
+                                how='inner')
+            
+            pat_df['clean'] = pat_df['split_weight'] * pat_df['clean']
+            pat_df['pat_count'] = pat_df.groupby(['BLS_Industry'])['split_weight'].transform('sum')
+            pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry'])['clean'].transform('sum') / pat_df['pat_count']
+            
+            pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
+            pat_df['weighted_clean_cites'] = pat_df['clean'] * pat_df['norm_cites']
+            pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
+            pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
+            
+            pat_df = pat_df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
+            
+            pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
 
 
@@ -676,14 +676,14 @@ class Processor:
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1:.4f}{stars1}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L1.png')
         plt.show()
         
@@ -696,14 +696,14 @@ class Processor:
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1_sq:.4f}{stars_sq}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
         plt.show()
 
@@ -754,14 +754,14 @@ class Processor:
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1:.4f}{stars1}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L1.png')
         plt.show()
         
@@ -774,14 +774,14 @@ class Processor:
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1_sq:.4f}{stars_sq}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
         plt.show()
         
@@ -832,14 +832,14 @@ class Processor:
         stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1:.4f}{stars1}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
         plt.show()
         
@@ -852,14 +852,14 @@ class Processor:
         stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
         plt.annotate(
             f"Slope = {beta1_sq:.4f}{stars_sq}",
-            xy=(0.05, 0.90), xycoords='axes fraction',
-            fontsize=11, color='red',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='red', alpha=0.7)
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
         plt.xlabel("-Δ log(emissions intensity)")
         plt.ylabel("2 Norm distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper left')
+        plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
         

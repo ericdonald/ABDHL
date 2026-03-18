@@ -26,7 +26,7 @@ Year_start, Year_end = (2012, 2022)
 # ---------- #
 # Clean Data #
 # ---------- #
-P.Cleaner(Year_start, Year_end)
+P.Cleaner(Year_start, Year_end, 0)
 
 
 # ---------------- #
