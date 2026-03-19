@@ -702,7 +702,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -723,7 +723,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -782,7 +782,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -803,7 +803,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -867,7 +867,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -888,7 +888,7 @@ class Processor:
             fontsize=11, color='green',
             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
         )
-        plt.xlabel("-Δ log(emissions intensity)")
+        plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
@@ -1029,10 +1029,10 @@ class Processor:
         ]
 
         variables = [
-            ('up_dlog_CO2e_inten',        'Upstream Emissions Intensity Reduction'),
-            ('down_dlog_CO2e_inten',      'Downstream Emissions Intensity Reduction'),
-            ('up_higher_dlog_CO2e_inten', 'Higher-Order Upstream Emissions Intensity Reduction'),
-            ('down_higher_dlog_CO2e_inten','Higher-Order Downstream Emissions Intensity Reduction'),
+            ('up_dlog_CO2e_inten',        'Upstream CO2e Reduction'),
+            ('down_dlog_CO2e_inten',      'Downstream CO2e Reduction'),
+            ('up_higher_dlog_CO2e_inten', 'Higher-Order Upstream CO2e Reduction'),
+            ('down_higher_dlog_CO2e_inten','Higher-Order Downstream CO2e Reduction'),
         ]
 
         body = ''
