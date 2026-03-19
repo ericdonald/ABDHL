@@ -913,8 +913,7 @@ class Processor:
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         Ind_Pat_df['period'] = Ind_Pat_df['year'].apply(lambda y: 1 if y <= Year_mid else 2)
-
-
+        
         
         # ------------------ #
         # Allocate Emissions #
@@ -932,9 +931,7 @@ class Processor:
                 
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
-        
-        IO_wide_df["dlog_CO2e_inten"] = np.log(IO_wide_df[Year_end]) - np.log(IO_wide_df[Year_start])
-        
+                
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
         
