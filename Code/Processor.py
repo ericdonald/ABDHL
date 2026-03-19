@@ -918,7 +918,8 @@ class Processor:
         # Allocate Emissions #
         # ------------------ #
         np.fill_diagonal(self.IO_start, 0)
-        np.fill_diagonal(self.IO_end, 0)
+        np.fill_diagonal(self.IO_mid,   0)
+        np.fill_diagonal(self.IO_end,   0)
         
         J = self.IO_start.shape[0]
         IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
@@ -935,18 +936,38 @@ class Processor:
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
         
-        IO = self.IO_end[np.ix_(idx0, idx0)]
-        I = np.eye(IO.shape[0])
-        
-        IO_wide_df["up_dlog_CO2e_inten"] = - IO @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        IO_wide_df["down_dlog_CO2e_inten"] = - IO.T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        
-        LI = np.linalg.inv(I - IO)
-        IO_wide_df["up_higher_dlog_CO2e_inten"] = - (LI - I - IO) @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        IO_wide_df["down_higher_dlog_CO2e_inten"] = - (LI - I - IO).T @ IO_wide_df["dlog_CO2e_inten"].to_numpy()
-        
-        IO_wide_df = IO_wide_df.reset_index()
-        reg_df = IO_wide_df[['BLS_Industry', 'dlog_CO2e_inten', 'up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten', 'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']].drop_duplicates()
+        def compute_network_effect(IO_matrix, dlog):
+            IO  = IO_matrix[np.ix_(idx0, idx0)]
+            I   = np.eye(IO.shape[0])
+            LI  = np.linalg.inv(I - IO)
+            return {
+                "up_dlog_CO2e_inten":          - IO            @ dlog,
+                "down_dlog_CO2e_inten":        - IO.T          @ dlog,
+                "up_higher_dlog_CO2e_inten":   - (LI - I - IO) @ dlog,
+                "down_higher_dlog_CO2e_inten": - (LI - I - IO).T @ dlog,
+            }
+
+        dlog_p1 = np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy())
+        spill_p1 = compute_network_effect(self.IO_mid, dlog_p1)
+
+        period1_df = pd.DataFrame({
+            "BLS_Industry":    IO_wide_df.index,
+            "period":          1,
+            "dlog_CO2e_inten": dlog_p1,
+            **spill_p1
+        })
+
+        dlog_p2 = np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy())
+        spill_p2 = compute_network_effect(self.IO_end, dlog_p2)
+
+        period2_df = pd.DataFrame({
+            "BLS_Industry":    IO_wide_df.index,
+            "period":          2,
+            "dlog_CO2e_inten": dlog_p2,
+            **spill_p2
+        })
+
+        reg_df = pd.concat([period1_df, period2_df], ignore_index=True)
         reg_df = reg_df.merge(Ind_Pat_df,
                             on='BLS_Industry',
                             how='left')
@@ -957,38 +978,41 @@ class Processor:
 
         # ----------------------------------------------------------------
         
-        X = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        X_higher = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten', 'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
-        
+        period_fe = pd.get_dummies(reg_df['period'], drop_first=True, dtype=float)
+
+        X    = sm.add_constant(pd.concat([reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']], period_fe], axis=1))
+        X_higher = sm.add_constant(pd.concat([reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
+                                                        'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']], period_fe], axis=1))
+        cluster = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_df['BLS_Industry']}}
+
         
         # ------------------- #
         # Emission Regression #
         # ------------------- #
-        Y_em = - reg_df['dlog_CO2e_inten']
-        
-        model_em = sm.OLS(Y_em, X).fit(cov_type='HC3')
-        #print(model_em.summary())
-        
-        model_em_higher = sm.OLS(Y_em, X_higher).fit(cov_type='HC3')
-        #print(model_em_higher.summary())
+        Y_em = -reg_df['dlog_CO2e_inten']
+
+        model_em        = sm.OLS(Y_em, X).fit(**cluster)
+        model_em_higher = sm.OLS(Y_em, X_higher).fit(**cluster)
         
         
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        Y_pat_count = reg_df['clean_pat_share']
-        
-        model_pat_count = sm.OLS(Y_pat_count, X, missing='drop').fit(cov_type='HC3')
-        #print(model_pat_count.summary())
-        model_pat_count_higher = sm.OLS(Y_pat_count, X_higher, missing='drop').fit(cov_type='HC3')
-        #print(model_pat_count_higher.summary())
-        
-        Y_pat_cite = reg_df['clean_cite_share']
-        
-        model_pat_cite = sm.OLS(Y_pat_cite, X, missing='drop').fit(cov_type='HC3')
-        #print(model_pat_cite.summary())
-        model_pat_cite_higher = sm.OLS(Y_pat_cite, X_higher, missing='drop').fit(cov_type='HC3')
-        #print(model_pat_cite_higher.summary())
+        pat_df = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
+        period_fe_pat    = pd.get_dummies(pat_df['period'], drop_first=True, dtype=float)
+        cluster_pat      = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df['BLS_Industry']}}
+
+        X_pat        = sm.add_constant(pd.concat([pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']], period_fe_pat], axis=1))
+        X_pat_higher = sm.add_constant(pd.concat([pat_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
+                                                            'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']], period_fe_pat], axis=1))
+
+        Y_pat_count = pat_df['clean_pat_share']
+        model_pat_count        = sm.OLS(Y_pat_count, X_pat).fit(**cluster_pat)
+        model_pat_count_higher = sm.OLS(Y_pat_count, X_pat_higher).fit(**cluster_pat)
+
+        Y_pat_cite = pat_df['clean_cite_share']
+        model_pat_cite        = sm.OLS(Y_pat_cite, X_pat).fit(**cluster_pat)
+        model_pat_cite_higher = sm.OLS(Y_pat_cite, X_pat_higher).fit(**cluster_pat)
         
         
         # ----------- #
