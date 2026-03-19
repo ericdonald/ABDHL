@@ -912,6 +912,8 @@ class Processor:
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_Pat_df['period'] = Ind_Pat_df['year'].apply(lambda y: 1 if y <= Year_mid else 2)
+
 
         
         # ------------------ #
@@ -969,7 +971,7 @@ class Processor:
 
         reg_df = pd.concat([period1_df, period2_df], ignore_index=True)
         reg_df = reg_df.merge(Ind_Pat_df,
-                            on='BLS_Industry',
+                            on=['BLS_Industry', 'period'],
                             how='left')
     
         # ----------------------------------------------------------------
