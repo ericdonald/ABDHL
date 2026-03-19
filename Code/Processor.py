@@ -324,8 +324,7 @@ class Processor:
                                     | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
             
             relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
-            relevant_df['year'] = relevant_df['year'].apply(lambda y: Year_mid if y <= Year_mid else Year_end)
-            relevant_df = relevant_df[['patent_id', 'year', 'clean']].drop_duplicates()
+            relevant_df = relevant_df[['patent_id', 'clean']].drop_duplicates()
                     
                     
             # --------------------- #
@@ -420,15 +419,15 @@ class Processor:
                                 how='inner')
             
             pat_df['clean'] = pat_df['split_weight'] * pat_df['clean']
-            pat_df['pat_count'] = pat_df.groupby(['BLS_Industry', 'year'])['split_weight'].transform('sum')
-            pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry', 'year'])['clean'].transform('sum') / pat_df['pat_count']
+            pat_df['pat_count'] = pat_df.groupby(['BLS_Industry'])['split_weight'].transform('sum')
+            pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry'])['clean'].transform('sum') / pat_df['pat_count']
             
             pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
             pat_df['weighted_clean_cites'] = pat_df['clean'] * pat_df['norm_cites']
-            pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry', 'year'])['weighted_pat_cites'].transform('sum')
-            pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry', 'year'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
+            pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
+            pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
             
-            pat_df = pat_df[['BLS_Industry', 'year', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
+            pat_df = pat_df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
             
             pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
@@ -897,7 +896,7 @@ class Processor:
         
         
     
-    def Up_Down_Green(self, Year_start, Year_mid, Year_end):
+    def Up_Down_Green(self, Year_start, Year_end):
         """""
         Upstream and Downstream Incentives for Greenification
         
@@ -912,79 +911,55 @@ class Processor:
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
-        Ind_Pat_df['period'] = Ind_Pat_df['year'].apply(lambda y: 1 if y <= Year_mid else 2)
-        
-        
+
+
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        np.fill_diagonal(self.IO_start, 0)
-        np.fill_diagonal(self.IO_mid,   0)
-        np.fill_diagonal(self.IO_end,   0)
-        
-        J = self.IO_start.shape[0]
+        np.fill_diagonal(self.IO_end, 0)
+
+        J = self.IO_end.shape[0]
         IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
-        
-        IO_df = IO_df.merge(Ind_CO2_df,
-                            on=['BLS_Industry'],
-                            how='inner')
-                
+
+        IO_df = IO_df.merge(Ind_CO2_df, on=['BLS_Industry'], how='inner')
+
         IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
-                
+
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
-        
+
         def compute_network_effect(IO_matrix, dlog):
             IO  = IO_matrix[np.ix_(idx0, idx0)]
             I   = np.eye(IO.shape[0])
             LI  = np.linalg.inv(I - IO)
             return {
-                "up_dlog_CO2e_inten":          - IO            @ dlog,
-                "down_dlog_CO2e_inten":        - IO.T          @ dlog,
-                "up_higher_dlog_CO2e_inten":   - (LI - I - IO) @ dlog,
+                "up_dlog_CO2e_inten":          - IO              @ dlog,
+                "down_dlog_CO2e_inten":        - IO.T            @ dlog,
+                "up_higher_dlog_CO2e_inten":   - (LI - I - IO)   @ dlog,
                 "down_higher_dlog_CO2e_inten": - (LI - I - IO).T @ dlog,
             }
 
-        dlog_p1 = np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy())
-        spill_p1 = compute_network_effect(self.IO_mid, dlog_p1)
+        dlog = np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy())
+        spill = compute_network_effect(self.IO_end, dlog)
 
-        period1_df = pd.DataFrame({
+        reg_df = pd.DataFrame({
             "BLS_Industry":    IO_wide_df.index,
-            "period":          1,
-            "dlog_CO2e_inten": dlog_p1,
-            **spill_p1
+            "dlog_CO2e_inten": dlog,
+            **spill
         })
 
-        dlog_p2 = np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy())
-        spill_p2 = compute_network_effect(self.IO_end, dlog_p2)
+        reg_df = reg_df.merge(Ind_Pat_df, on='BLS_Industry', how='left')
 
-        period2_df = pd.DataFrame({
-            "BLS_Industry":    IO_wide_df.index,
-            "period":          2,
-            "dlog_CO2e_inten": dlog_p2,
-            **spill_p2
-        })
-
-        reg_df = pd.concat([period1_df, period2_df], ignore_index=True)
-        reg_df = reg_df.merge(Ind_Pat_df,
-                            on=['BLS_Industry', 'period'],
-                            how='left')
-    
         # ----------------------------------------------------------------
-
         # Run regressions.
-
         # ----------------------------------------------------------------
-        
-        period_fe = pd.get_dummies(reg_df['period'], drop_first=True, dtype=float)
 
-        X    = sm.add_constant(pd.concat([reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']], period_fe], axis=1))
-        X_higher = sm.add_constant(pd.concat([reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
-                                                        'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']], period_fe], axis=1))
-        cluster = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_df['BLS_Industry']}}
+        X        = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_higher = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
+                                           'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
+        cluster  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_df['BLS_Industry']}}
 
-        
         # ------------------- #
         # Emission Regression #
         # ------------------- #
@@ -992,18 +967,16 @@ class Processor:
 
         model_em        = sm.OLS(Y_em, X).fit(**cluster)
         model_em_higher = sm.OLS(Y_em, X_higher).fit(**cluster)
-        
-        
+
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        pat_df = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
-        period_fe_pat    = pd.get_dummies(pat_df['period'], drop_first=True, dtype=float)
-        cluster_pat      = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df['BLS_Industry']}}
+        pat_df      = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
+        cluster_pat = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df['BLS_Industry']}}
 
-        X_pat        = sm.add_constant(pd.concat([pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']], period_fe_pat], axis=1))
-        X_pat_higher = sm.add_constant(pd.concat([pat_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
-                                                            'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']], period_fe_pat], axis=1))
+        X_pat        = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_pat_higher = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
+                                               'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
 
         Y_pat_count = pat_df['clean_pat_share']
         model_pat_count        = sm.OLS(Y_pat_count, X_pat).fit(**cluster_pat)
