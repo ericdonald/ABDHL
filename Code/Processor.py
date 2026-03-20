@@ -488,6 +488,16 @@ class Processor:
         IO_start_reduced = reduce_and_normalize(self.IO_start)
         IO_mid_reduced   = reduce_and_normalize(self.IO_mid)
         IO_end_reduced   = reduce_and_normalize(self.IO_end)
+        
+        # Manufacturing only (industries 15:79, 0-indexed)
+        manu_idx = list(range(15, 79))
+        IO_start_manu = self.IO_start[np.ix_(manu_idx, manu_idx)]
+        IO_mid_manu   = self.IO_mid[np.ix_(manu_idx,   manu_idx)]
+        IO_end_manu   = self.IO_end[np.ix_(manu_idx,   manu_idx)]
+
+        IO_start_manu = IO_start_manu / IO_start_manu.sum(axis=1, keepdims=True)
+        IO_mid_manu   = IO_mid_manu   / IO_mid_manu.sum(axis=1, keepdims=True)
+        IO_end_manu   = IO_end_manu   / IO_end_manu.sum(axis=1, keepdims=True)
 
         def tv_metrics(A, B):
             diff = np.abs(B - A)
@@ -495,13 +505,15 @@ class Processor:
             tv_sq = 0.5 * ((diff**2).sum(axis=1))**(1/2)
             return tv, tv_sq
 
-        tv_p1,          tv_sq_p1          = tv_metrics(self.IO_start,    self.IO_mid)
-        tv_LI_p1,       tv_sq_LI_p1       = tv_metrics(LI_start,         LI_mid)
-        tv_reduced_p1,  tv_sq_reduced_p1  = tv_metrics(IO_start_reduced, IO_mid_reduced)
+        tv_p1,         tv_sq_p1         = tv_metrics(self.IO_start,    self.IO_mid)
+        tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start,         LI_mid)
+        tv_reduced_p1, tv_sq_reduced_p1 = tv_metrics(IO_start_reduced, IO_mid_reduced)
+        tv_manu_p1,    tv_sq_manu_p1    = tv_metrics(IO_start_manu,    IO_mid_manu)
 
-        tv_p2,          tv_sq_p2          = tv_metrics(self.IO_mid,    self.IO_end)
-        tv_LI_p2,       tv_sq_LI_p2       = tv_metrics(LI_mid,         LI_end)
-        tv_reduced_p2,  tv_sq_reduced_p2  = tv_metrics(IO_mid_reduced, IO_end_reduced)
+        tv_p2,         tv_sq_p2         = tv_metrics(self.IO_mid,    self.IO_end)
+        tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid,         LI_end)
+        tv_reduced_p2, tv_sq_reduced_p2 = tv_metrics(IO_mid_reduced, IO_end_reduced)
+        tv_manu_p2,    tv_sq_manu_p2    = tv_metrics(IO_mid_manu,    IO_end_manu)
 
         
         def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, J):
@@ -517,13 +529,21 @@ class Processor:
                 "BLS_Industry":           np.concatenate([np.arange(1, 7), np.arange(9, J+1)]),
                 "TV_distance_reduced":    tv_r,
                 "TV_sq_distance_reduced": tv_sq_r})
+        
+        def make_manu_df(tv_m, tv_sq_m):
+            return pd.DataFrame({
+                "BLS_Industry":         np.arange(16, 80),  # 1-indexed: industries 16 to 79
+                "TV_distance_manu":     tv_m,
+                "TV_sq_distance_manu":  tv_sq_m})
 
         IO_df_p1 = make_IO_df(tv_p1, tv_sq_p1, tv_LI_p1, tv_sq_LI_p1, J)
         IO_df_p1 = IO_df_p1.merge(make_reduced_df(tv_reduced_p1, tv_sq_reduced_p1, J), on='BLS_Industry', how='left')
+        IO_df_p1 = IO_df_p1.merge(make_manu_df(tv_manu_p1, tv_sq_manu_p1),             on='BLS_Industry', how='left')
         IO_df_p1['period'] = 1
 
         IO_df_p2 = make_IO_df(tv_p2, tv_sq_p2, tv_LI_p2, tv_sq_LI_p2, J)
         IO_df_p2 = IO_df_p2.merge(make_reduced_df(tv_reduced_p2, tv_sq_reduced_p2, J), on='BLS_Industry', how='left')
+        IO_df_p2 = IO_df_p2.merge(make_manu_df(tv_manu_p2, tv_sq_manu_p2),             on='BLS_Industry', how='left')
         IO_df_p2['period'] = 2
 
         IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
@@ -532,7 +552,7 @@ class Processor:
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values=['CO2e_intensity_Industry', 'CO2e_Industry'])
         IO_wide_df = IO_wide_df.dropna()
         
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
@@ -542,20 +562,32 @@ class Processor:
         LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
         LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
 
-        CO2e_LI_start = LI_start_sub @ IO_wide_df[Year_start].to_numpy()
-        CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df[Year_mid].to_numpy()
-        CO2e_LI_end   = LI_end_sub   @ IO_wide_df[Year_end].to_numpy()
-        
+        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values=['CO2e_intensity_Industry', 'CO2e_Industry'])
+        IO_wide_df = IO_wide_df.dropna()
+
+        idx1 = IO_wide_df.index.to_numpy(dtype=int)
+        idx0 = idx1 - 1
+
+        LI_start_sub = LI_start[np.ix_(idx0, idx0)]
+        LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
+        LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
+
+        CO2e_LI_start = LI_start_sub @ IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()
+        CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()
+        CO2e_LI_end   = LI_end_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()
+
         em_p1 = pd.DataFrame({
             "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    np.log(IO_wide_df[Year_mid].to_numpy())   - np.log(IO_wide_df[Year_start].to_numpy()),
-            "dlog_CO2e_inten_LI": np.log(CO2e_LI_mid) - np.log(CO2e_LI_start),
+            "dlog_CO2e_inten":    np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()),
+            "dlog_CO2e_inten_LI": np.log(CO2e_LI_mid)   - np.log(CO2e_LI_start),
+            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_start].to_numpy(),
             "period": 1})
 
         em_p2 = pd.DataFrame({
             "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    np.log(IO_wide_df[Year_end].to_numpy())   - np.log(IO_wide_df[Year_mid].to_numpy()),
-            "dlog_CO2e_inten_LI": np.log(CO2e_LI_end) - np.log(CO2e_LI_mid),
+            "dlog_CO2e_inten":    np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()),
+            "dlog_CO2e_inten_LI": np.log(CO2e_LI_end)   - np.log(CO2e_LI_mid),
+            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy(),
             "period": 2})
 
         em_df = pd.concat([em_p1, em_p2], ignore_index=True)
@@ -563,9 +595,10 @@ class Processor:
         distance_cols = ['BLS_Industry', 'period',
                          'TV_distance',       'TV_sq_distance',
                          'TV_distance_LI',    'TV_sq_distance_LI',
-                         'TV_distance_reduced','TV_sq_distance_reduced']
+                         'TV_distance_reduced','TV_sq_distance_reduced',
+                         'TV_distance_manu', 'TV_sq_distance_manu']
 
-        emission_cols = ['BLS_Industry', 'period',
+        emission_cols = ['BLS_Industry', 'period', 'CO2e_Industry',
                          'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
 
         reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
@@ -697,6 +730,15 @@ class Processor:
         
         y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
+        
+        # Initial Emissions Weighted   
+        weight = reg_df['CO2e_Industry']
+        
+        model_em = sm.WLS(Y, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
+        #print(model_em.summary())
+        
+        model_em_sq = sm.WLS(Y_sq, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
+        #print(model_em_sq.summary())
         
         
         # ---------- #
@@ -909,6 +951,33 @@ class Processor:
         plt.show()
         
         
+        # ----------------------------------------------------------------
+    
+        # Manufacturing IO table.
+    
+        # ----------------------------------------------------------------
+        
+        manu_df = reg_df.dropna(subset=['TV_distance_manu', 'TV_sq_distance_manu', 'dlog_CO2e_inten'])
+        mask_p1 = manu_df['period'] == 1
+        mask_p2 = manu_df['period'] == 2
+        
+        
+        # ---------- #
+        # Regression #
+        # ---------- #
+        X = sm.add_constant(manu_df['dlog_CO2e_inten'])
+        Y = manu_df['TV_distance_manu']
+        
+        model = sm.OLS(Y, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
+        #print(model.summary())
+        
+        # Square Metric
+        Y_sq = manu_df['TV_sq_distance_manu']
+        
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
+        #print(model_sq.summary())
+        
+        
     
     def Up_Down_Green(self, Year_start, Year_mid, Year_end):
         """""
@@ -977,6 +1046,9 @@ class Processor:
             **net_pat_cite
         }), on='BLS_Industry', how='left')
         
+        reg_df = reg_df.merge(Ind_CO2_df.loc[Ind_CO2_df['Year'] == Year_mid, ['BLS_Industry', 'CO2e_Industry']],
+                              on='BLS_Industry', how='left')
+        
 
         # ----------------------------------------------------------------
         
@@ -1001,6 +1073,18 @@ class Processor:
 
         model_em_cite_net = sm.OLS(Y_em, X_cite_net).fit(cov_type='HC3')
         print(model_em_cite_net.summary())
+        
+        # Initial Emissions Weighted   
+        weight = reg_df['CO2e_Industry']
+        
+        model_em_wgt = sm.WLS(Y_em, X, weight).fit(cov_type='HC3')
+        print(model_em_wgt.summary())
+        
+        model_em_pat_net_wgt = sm.WLS(Y_em, X_pat_net, weight).fit(cov_type='HC3')
+        print(model_em_pat_net_wgt.summary())
+        
+        model_em_cite_net_wgt = sm.WLS(Y_em, X_cite_net, weight).fit(cov_type='HC3')
+        print(model_em_cite_net_wgt.summary())
 
 
         # ------------------ #
@@ -1027,6 +1111,21 @@ class Processor:
         
         model_pat_cite_net = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
         print(model_pat_cite_net.summary())
+        
+        # Initial Emissions Weighted   
+        weight = pat_df['CO2e_Industry']
+        
+        model_pat_count_wgt = sm.WLS(Y_pat_count, X_pat, weight).fit(cov_type='HC3')
+        print(model_pat_count_wgt.summary())
+        
+        model_pat_count_net_wgt = sm.WLS(Y_pat_count, X_pat_count_net, weight).fit(cov_type='HC3')
+        print(model_pat_count_net_wgt.summary())
+        
+        model_pat_cite_wgt = sm.WLS(Y_pat_cite, X_pat, weight).fit(cov_type='HC3')
+        print(model_pat_cite_wgt.summary())
+        
+        model_pat_cite_net_wgt = sm.WLS(Y_pat_cite, X_pat_cite_net, weight).fit(cov_type='HC3')
+        print(model_pat_cite_net_wgt.summary())
         
         
         # ----------- #
