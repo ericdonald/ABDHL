@@ -1078,7 +1078,7 @@ class Processor:
 
         body += '\\midrule\n'
         body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
-        body += f'Obs & {" & ".join(n_vals)} \\\\\n'
+        body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
 
         out_path = f'{self.Directory}/Results/Tables/Fact2_Regressions.tex'
         with open(out_path, 'w') as f:
