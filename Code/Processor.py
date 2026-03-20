@@ -158,19 +158,21 @@ class Processor:
         J = self.IO_start.shape[0]
         IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
         
-        df_VA_start = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
-                                    "Value_Added": ind_Y_start,
-                                    "Year": Year_start})
-        
-        df_VA_mid = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
-                                  "Value_Added": ind_Y_end,
-                                  "Year": Year_mid})
+        # ----------------- #
+        # Value Added Panel #
+        # ----------------- #
+        va_frames = []
+        for year in range(Year_start, Year_end + 1):
+            USE_yr = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{year}")
+            U = USE_yr.iloc[:, 1:-3].to_numpy()
+            ind_Y_yr = np.sum(U, 0)
+            va_frames.append(pd.DataFrame({
+                "BLS_Industry": np.arange(1, J+1),
+                "Value_Added":  ind_Y_yr,
+                "Year":         year
+            }))
 
-        df_VA_end = pd.DataFrame({"BLS_Industry": np.arange(1, J+1),
-                                  "Value_Added": ind_Y_end,
-                                  "Year": Year_end})
-
-        VA_panel = pd.concat([df_VA_start, df_VA_mid, df_VA_end], ignore_index=True)
+        VA_panel = pd.concat(va_frames, ignore_index=True)
         
         
         # ----------------------------------------------------------------
