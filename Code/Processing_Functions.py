@@ -89,6 +89,7 @@ def get_stars(pval):
     if pval < 0.01:   return '***'
     elif pval < 0.05: return '**'
     elif pval < 0.10: return '*'
+    elif pval < 0.15: return r'$^\dagger$'
     else:             return ''
 
 
