@@ -704,9 +704,9 @@ class Processor:
         mask_p1 = reg_df['period'] == 1
         mask_p2 = reg_df['period'] == 2
         
-        # ---------- #
-        # Regression #
-        # ---------- #
+        # ----------- #
+        # Regressions #
+        # ----------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
         Y = reg_df['TV_distance']
         
@@ -738,20 +738,30 @@ class Processor:
         model_em = sm.WLS(Y, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
         #print(model_em.summary())
         
+        beta0_em = model_em.params['const']
+        beta1_em = -model_em.params['dlog_CO2e_inten']
+        
+        y_hat_em = beta0_em + beta1_em * x
+        
         model_em_sq = sm.WLS(Y_sq, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
         #print(model_em_sq.summary())
         
+        beta0_em_sq = model_em_sq.params['const']
+        beta1_em_sq = -model_em_sq.params['dlog_CO2e_inten']
         
-        # ---------- #
-        # Plot Graph #
-        # ---------- #
+        y_hat_em_sq = beta0_em_sq + beta1_em_sq * x
+        
+        
+        # ----------- #
+        # Plot Graphs #
+        # ----------- #
         plt.figure(figsize=(8,6))
         plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
         plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten']
-        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        stars1 = gpf.get_stars(p1)
         plt.annotate(
             f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -772,7 +782,7 @@ class Processor:
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
-        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        stars_sq = gpf.get_stars(p_sq)
         plt.annotate(
             f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -785,6 +795,46 @@ class Processor:
         plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
         plt.show()
+        
+        # Initial Emissions Weighted 
+        plt.figure(figsize=(8,6))
+        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
+        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
+        
+        p1 = model_em.pvalues['dlog_CO2e_inten']
+        stars1_em = gpf.get_stars(p1)
+        plt.annotate(
+            f"Slope = {beta1_em:.3f}{stars1_em}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.show()
+        
+        # Initial Emissions Weighted, Square Metric
+        plt.figure(figsize=(8,6))
+        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
+        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.plot(x, y_hat_em_sq, color='red', linewidth=2, label="OLS fit")
+        
+        p_sq = model_em_sq.pvalues['dlog_CO2e_inten']
+        stars_em_sq = gpf.get_stars(p_sq)
+        plt.annotate(
+            f"Slope = {beta1_em_sq:.3f}{stars_em_sq}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("Euclidean distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.show()
 
 
         # ----------------------------------------------------------------
@@ -793,9 +843,9 @@ class Processor:
     
         # ----------------------------------------------------------------
         
-        # ---------- #
-        # Regression #
-        # ---------- #
+        # ----------- #
+        # Regressions #
+        # ----------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
         Y = reg_df['TV_distance_LI']
         
@@ -822,16 +872,16 @@ class Processor:
         y_hat_sq = beta0_sq + beta1_sq * x
         
         
-        # ---------- #
-        # Plot Graph #
-        # ---------- #
+        # ----------- #
+        # Plot Graphs #
+        # ----------- #
         plt.figure(figsize=(8,6))
         plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
         plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten_LI']
-        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        stars1 = gpf.get_stars(p1)
         plt.annotate(
             f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -852,7 +902,7 @@ class Processor:
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten_LI']
-        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        stars_sq = gpf.get_stars(p_sq)
         plt.annotate(
             f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -878,9 +928,9 @@ class Processor:
         mask_p2 = reduced_df['period'] == 2
         
         
-        # ---------- #
-        # Regression #
-        # ---------- #
+        # ----------- #
+        # Regressions #
+        # ----------- #
         X = sm.add_constant(reduced_df['dlog_CO2e_inten'])
         Y = reduced_df['TV_distance_reduced']
         
@@ -907,16 +957,86 @@ class Processor:
         y_hat_sq = beta0_sq + beta1_sq * x
         
         
-        # ---------- #
-        # Plot Graph #
-        # ---------- #
+        # ----------- #
+        # Plot Graphs #
+        # ----------- #
         plt.figure(figsize=(8,6))
         plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
         plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten']
-        stars1 = '***' if p1 < 0.01 else '**' if p1 < 0.05 else '*' if p1 < 0.1 else ''
+        stars1 = gpf.get_stars(p1)
+        plt.annotate(
+            f"Slope = {beta1:.3f}{stars1}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.show()
+        
+        # Square Metric
+        plt.figure(figsize=(8,6))
+        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
+        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
+        
+        p_sq = model_sq.pvalues['dlog_CO2e_inten']
+        stars_sq = gpf.get_stars(p_sq)
+        plt.annotate(
+            f"Slope = {beta1_sq:.3f}{stars_sq}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("Euclidean distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.show()
+        
+        
+        # ----------------------------------------------------------------
+    
+        # Manufacturing IO table.
+    
+        # ----------------------------------------------------------------
+        
+        manu_df = reg_df.dropna(subset=['TV_distance_manu', 'TV_sq_distance_manu', 'dlog_CO2e_inten'])
+        mask_p1 = manu_df['period'] == 1
+        mask_p2 = manu_df['period'] == 2
+        
+        
+        # ----------- #
+        # Regressions #
+        # ----------- #
+        X = sm.add_constant(manu_df['dlog_CO2e_inten'])
+        Y = manu_df['TV_distance_manu']
+        
+        model = sm.OLS(Y, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
+        #print(model.summary())
+        
+        # Square Metric
+        Y_sq = manu_df['TV_sq_distance_manu']
+        
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
+        #print(model_sq.summary())
+        
+        
+        # ----------- #
+        # Plot Graphs #
+        # ----------- #
+        plt.figure(figsize=(8,6))
+        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
+        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
+        
+        p1 = model.pvalues['dlog_CO2e_inten']
+        stars1 = gpf.get_stars(p1)
         plt.annotate(
             f"Slope = {beta1:.3f}{stars1}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -937,7 +1057,7 @@ class Processor:
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
-        stars_sq = '***' if p_sq < 0.01 else '**' if p_sq < 0.05 else '*' if p_sq < 0.1 else ''
+        stars_sq = gpf.get_stars(p_sq)
         plt.annotate(
             f"Slope = {beta1_sq:.3f}{stars_sq}",
             xy=(0.05, 0.95), xycoords='axes fraction',
@@ -950,33 +1070,6 @@ class Processor:
         plt.legend(loc='upper right')
         plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
-        
-        
-        # ----------------------------------------------------------------
-    
-        # Manufacturing IO table.
-    
-        # ----------------------------------------------------------------
-        
-        manu_df = reg_df.dropna(subset=['TV_distance_manu', 'TV_sq_distance_manu', 'dlog_CO2e_inten'])
-        mask_p1 = manu_df['period'] == 1
-        mask_p2 = manu_df['period'] == 2
-        
-        
-        # ---------- #
-        # Regression #
-        # ---------- #
-        X = sm.add_constant(manu_df['dlog_CO2e_inten'])
-        Y = manu_df['TV_distance_manu']
-        
-        model = sm.OLS(Y, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
-        #print(model.summary())
-        
-        # Square Metric
-        Y_sq = manu_df['TV_sq_distance_manu']
-        
-        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
-        #print(model_sq.summary())
         
         
     
