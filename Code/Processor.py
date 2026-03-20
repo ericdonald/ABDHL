@@ -324,7 +324,7 @@ class Processor:
                                     | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
             
             relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
-            relevant_df = relevant_df[['patent_id', 'clean']].drop_duplicates()
+            relevant_df = relevant_df[['patent_id', 'year', 'clean']].drop_duplicates()
                     
                     
             # --------------------- #
@@ -418,16 +418,30 @@ class Processor:
                                 on='naics2022_6',
                                 how='inner')
             
-            pat_df['clean'] = pat_df['split_weight'] * pat_df['clean']
-            pat_df['pat_count'] = pat_df.groupby(['BLS_Industry'])['split_weight'].transform('sum')
-            pat_df['clean_pat_share'] = pat_df.groupby(['BLS_Industry'])['clean'].transform('sum') / pat_df['pat_count']
-            
-            pat_df['weighted_pat_cites'] = pat_df['split_weight'] * pat_df['norm_cites']
-            pat_df['weighted_clean_cites'] = pat_df['clean'] * pat_df['norm_cites']
-            pat_df['pat_cites'] = pat_df.groupby(['BLS_Industry'])['weighted_pat_cites'].transform('sum')
-            pat_df['clean_cite_share'] = pat_df.groupby(['BLS_Industry'])['weighted_clean_cites'].transform('sum') / pat_df['pat_cites']
-            
-            pat_df = pat_df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']].drop_duplicates()
+            def compute_pat_metrics(df, suffix=''):
+                df = df.copy()
+                df['clean']               = df['split_weight'] * df['clean']
+                df['pat_count']           = df.groupby('BLS_Industry')['split_weight'].transform('sum')
+                df['clean_pat_share']     = df.groupby('BLS_Industry')['clean'].transform('sum') / df['pat_count']
+
+                df['weighted_pat_cites']   = df['split_weight'] * df['norm_cites']
+                df['weighted_clean_cites'] = df['clean'] * df['norm_cites']
+                df['pat_cites']            = df.groupby('BLS_Industry')['weighted_pat_cites'].transform('sum')
+                df['clean_cite_share']     = df.groupby('BLS_Industry')['weighted_clean_cites'].transform('sum') / df['pat_cites']
+
+                cols = {'BLS_Industry':    'BLS_Industry',
+                        'clean_pat_share': f'clean_pat_share{suffix}',
+                        'clean_cite_share':f'clean_cite_share{suffix}'}
+                return df[list(cols.keys())].drop_duplicates().rename(columns=cols)
+
+            pat_metrics_full = compute_pat_metrics(pat_df)
+
+            pat_metrics_late = compute_pat_metrics(
+                pat_df[pat_df['year'] >= Year_mid],
+                suffix='_late'
+            )
+
+            pat_df = pat_metrics_full.merge(pat_metrics_late, on='BLS_Industry', how='left')
             
             pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
@@ -896,7 +910,7 @@ class Processor:
         
         
     
-    def Up_Down_Green(self, Year_start, Year_end):
+    def Up_Down_Green(self, Year_start, Year_mid, Year_end):
         """""
         Upstream and Downstream Incentives for Greenification
         
@@ -929,62 +943,90 @@ class Processor:
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
 
-        def compute_network_effect(IO_matrix, dlog):
+        def compute_network_effect(IO_matrix, z, prefix):
             IO  = IO_matrix[np.ix_(idx0, idx0)]
             I   = np.eye(IO.shape[0])
             LI  = np.linalg.inv(I - IO)
             return {
-                "up_dlog_CO2e_inten":          - IO              @ dlog,
-                "down_dlog_CO2e_inten":        - IO.T            @ dlog,
-                "up_higher_dlog_CO2e_inten":   - (LI - I - IO)   @ dlog,
-                "down_higher_dlog_CO2e_inten": - (LI - I - IO).T @ dlog,
+                f"up_{prefix}":     (LI - I) @ z,
+                f"down_{prefix}": (LI - I).T @ z,
             }
 
-        dlog = np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy())
-        spill = compute_network_effect(self.IO_end, dlog)
+        dlog_CO2e = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
+        dlog_CO2e_late = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
+
+        net_em = compute_network_effect(self.IO_end, dlog_CO2e, 'dlog_CO2e_inten')
 
         reg_df = pd.DataFrame({
             "BLS_Industry":    IO_wide_df.index,
-            "dlog_CO2e_inten": dlog,
-            **spill
+            "dlog_CO2e_inten": dlog_CO2e_late,
+            **net_em
         })
 
         reg_df = reg_df.merge(Ind_Pat_df, on='BLS_Industry', how='left')
+        
+        pat_count = reg_df['clean_pat_share'].fillna(0).to_numpy()
+        net_pat_count = compute_network_effect(self.IO_end, pat_count, 'pat_count')
+
+        pat_cite = reg_df['clean_cite_share'].fillna(0).to_numpy()
+        net_pat_cite = compute_network_effect(self.IO_end, pat_cite, 'pat_cite')
+
+        reg_df = reg_df.merge(pd.DataFrame({
+            "BLS_Industry": IO_wide_df.index,
+            **net_pat_count,
+            **net_pat_cite
+        }), on='BLS_Industry', how='left')
+        
 
         # ----------------------------------------------------------------
+        
         # Run regressions.
+        
         # ----------------------------------------------------------------
-
-        X        = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        X_higher = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
-                                           'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
-        cluster  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_df['BLS_Industry']}}
 
         # ------------------- #
         # Emission Regression #
         # ------------------- #
-        Y_em = -reg_df['dlog_CO2e_inten']
+        X = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_pat_net = sm.add_constant(reg_df[['up_pat_count', 'down_pat_count']])
+        X_cite_net = sm.add_constant(reg_df[['up_pat_cite', 'down_pat_cite']])
+        
+        Y_em = reg_df['dlog_CO2e_inten']
 
-        model_em        = sm.OLS(Y_em, X).fit(**cluster)
-        model_em_higher = sm.OLS(Y_em, X_higher).fit(**cluster)
+        model_em = sm.OLS(Y_em, X).fit(cov_type='HC3')
+        print(model_em.summary())
+        
+        model_em_pat_net = sm.OLS(Y_em, X_pat_net).fit(cov_type='HC3')
+        print(model_em_pat_net.summary())
+
+        model_em_cite_net = sm.OLS(Y_em, X_cite_net).fit(cov_type='HC3')
+        print(model_em_cite_net.summary())
+
 
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        pat_df      = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
-        cluster_pat = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df['BLS_Industry']}}
+        pat_df = reg_df.dropna(subset=['clean_pat_share_late', 'clean_cite_share_late'])
 
-        X_pat        = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        X_pat_higher = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'up_higher_dlog_CO2e_inten',
-                                               'down_dlog_CO2e_inten', 'down_higher_dlog_CO2e_inten']])
+        X_pat = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_pat_count_net = sm.add_constant(pat_df[['up_pat_count', 'down_pat_count']])
+        X_pat_cite_net = sm.add_constant(pat_df[['up_pat_cite', 'down_pat_cite']])
 
-        Y_pat_count = pat_df['clean_pat_share']
-        model_pat_count        = sm.OLS(Y_pat_count, X_pat).fit(**cluster_pat)
-        model_pat_count_higher = sm.OLS(Y_pat_count, X_pat_higher).fit(**cluster_pat)
+        Y_pat_count = pat_df['clean_pat_share_late']
+        
+        model_pat_count = sm.OLS(Y_pat_count, X_pat).fit(cov_type='HC3')
+        print(model_pat_count.summary())
+        
+        model_pat_count_net = sm.OLS(Y_pat_count, X_pat_count_net).fit(cov_type='HC3')
+        print(model_pat_count_net.summary())
 
-        Y_pat_cite = pat_df['clean_cite_share']
-        model_pat_cite        = sm.OLS(Y_pat_cite, X_pat).fit(**cluster_pat)
-        model_pat_cite_higher = sm.OLS(Y_pat_cite, X_pat_higher).fit(**cluster_pat)
+        Y_pat_cite = pat_df['clean_cite_share_late']
+        
+        model_pat_cite = sm.OLS(Y_pat_cite, X_pat).fit(cov_type='HC3')
+        print(model_pat_cite.summary())
+        
+        model_pat_cite_net = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
+        print(model_pat_cite_net.summary())
         
         
         # ----------- #
@@ -992,20 +1034,23 @@ class Processor:
         # ----------- #
         models = [
             model_em,
-            model_em_higher,
-            None,            # spacer col
+            model_em_pat_net,
+            model_em_cite_net,
+            None,
             model_pat_count,
-            model_pat_count_higher,
-            None,            # spacer col
+            model_pat_count_net,
+            None,
             model_pat_cite,
-            model_pat_cite_higher,
+            model_pat_cite_net,
         ]
 
         variables = [
-            ('up_dlog_CO2e_inten',        'Upstream CO2e Reduction'),
-            ('down_dlog_CO2e_inten',      'Downstream CO2e Reduction'),
-            ('up_higher_dlog_CO2e_inten', 'Higher-Order Upstream CO2e Reduction'),
-            ('down_higher_dlog_CO2e_inten','Higher-Order Downstream CO2e Reduction'),
+            ('up_dlog_CO2e_inten',  'Upstream CO2e Reduction'),
+            ('down_dlog_CO2e_inten','Downstream CO2e Reduction'),
+            ('up_pat_count',        'Upstream Clean Patents'),
+            ('down_pat_count',      'Downstream Clean Patents'),
+            ('up_pat_cite',         'Upstream Clean Citations'),
+            ('down_pat_cite',       'Downstream Clean Citations'),
         ]
 
         body = ''
@@ -1021,7 +1066,7 @@ class Processor:
                     ses.append(s)
             body += f'{label} & {" & ".join(coefs)} \\\\\n'
             body += f'& {" & ".join(ses)} \\\\[3pt]\n'
-            
+
         r2_vals, n_vals = [], []
         for m in models:
             if m is None:
@@ -1030,11 +1075,11 @@ class Processor:
             else:
                 r2_vals.append(f'{m.rsquared:.3f}')
                 n_vals.append(str(int(m.nobs)))
-        
+
         body += '\\midrule\n'
         body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
         body += f'Obs & {" & ".join(n_vals)} \\\\\n'
-        
+
         out_path = f'{self.Directory}/Results/Tables/Fact2_Regressions.tex'
         with open(out_path, 'w') as f:
             f.write(body)

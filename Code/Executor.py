@@ -38,7 +38,7 @@ P.IO_Change(Year_start, Year_mid, Year_end)
 # --------------------- #
 # Directional Incentive #
 # --------------------- #
-P.Up_Down_Green(Year_start, Year_end)
+P.Up_Down_Green(Year_start, Year_mid, Year_end)
 
 
 # ----------------------- #
