@@ -1020,11 +1020,24 @@ class Processor:
         model = sm.OLS(Y, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
         #print(model.summary())
         
+        beta0 = model.params['const']
+        beta1 = -model.params['dlog_CO2e_inten']
+        
+        x = -manu_df['dlog_CO2e_inten'].to_numpy()
+        y = Y.to_numpy()
+        y_hat = beta0 + beta1 * x
+        
         # Square Metric
         Y_sq = manu_df['TV_sq_distance_manu']
         
         model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': manu_df['BLS_Industry']})
         #print(model_sq.summary())
+        
+        beta0_sq = model_sq.params['const']
+        beta1_sq = -model_sq.params['dlog_CO2e_inten']
+        
+        y_sq = Y_sq.to_numpy()
+        y_hat_sq = beta0_sq + beta1_sq * x
         
         
         # ----------- #
@@ -1077,7 +1090,7 @@ class Processor:
         """""
         Upstream and Downstream Incentives for Greenification
         
-        Output: Results/Tables/Fact2_Regressions.tex
+        Output: Results/Tables/Fact_Regressions.tex
         
         """""
         
@@ -1274,7 +1287,7 @@ class Processor:
         body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
         body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
 
-        out_path = f'{self.Directory}/Results/Tables/Fact2_Regressions.tex'
+        out_path = f'{self.Directory}/Results/Tables/Fact_Regressions.tex'
         with open(out_path, 'w') as f:
             f.write(body)
             
