@@ -464,15 +464,17 @@ class Processor:
 
 
 
-    def IO_Change(self, Year_start, Year_mid, Year_end):
+    def IO_Change(self, Year_start, Year_end):
         """""
         Plot of Changes in IO Network from Decarbonization
     
         Output: Results/Tables/sector_extremes_table.tex
                 Results/Figures/Baseline_L1.png
                 Results/Figures/Baseline_L2.png
+                Results/Figures/Baseline_em_wgt.png
                 Results/Figures/Leontief_L1.png
                 Results/Figures/Leontief_L2.png
+                Results/Figures/Leontief_em_wgt.png
                 Results/Figures/Reduced_L1.png
                 Results/Figures/Reduced_L2.png
         """""
@@ -494,7 +496,6 @@ class Processor:
         
         I = np.eye(J)
         LI_start = np.linalg.inv(I - self.IO_start)
-        LI_mid = np.linalg.inv(I - self.IO_mid)
         LI_end = np.linalg.inv(I - self.IO_end)
         
         #Cut oil and gas extraction as well as coal mining, then normalize
@@ -503,7 +504,6 @@ class Processor:
             return IO_r / IO_r.sum(axis=1, keepdims=True)
 
         IO_start_reduced = reduce_and_normalize(self.IO_start)
-        IO_mid_reduced   = reduce_and_normalize(self.IO_mid)
         IO_end_reduced   = reduce_and_normalize(self.IO_end)
 
         def tv_metrics(A, B):
@@ -512,15 +512,10 @@ class Processor:
             tv_sq = 0.5 * ((diff**2).sum(axis=1))**(1/2)
             return tv, tv_sq
 
-        tv_p1,         tv_sq_p1         = tv_metrics(self.IO_start,    self.IO_mid)
-        tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start,         LI_mid)
-        tv_reduced_p1, tv_sq_reduced_p1 = tv_metrics(IO_start_reduced, IO_mid_reduced)
+        tv,         tv_sq         = tv_metrics(self.IO_start,    self.IO_end)
+        tv_LI,      tv_sq_LI      = tv_metrics(LI_start,         LI_end)
+        tv_reduced, tv_sq_reduced = tv_metrics(IO_start_reduced, IO_end_reduced)
 
-        tv_p2,         tv_sq_p2         = tv_metrics(self.IO_mid,    self.IO_end)
-        tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid,         LI_end)
-        tv_reduced_p2, tv_sq_reduced_p2 = tv_metrics(IO_mid_reduced, IO_end_reduced)
-
-        
         def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, J):
             return pd.DataFrame({
                 "BLS_Industry":      np.arange(1, J+1),
@@ -535,15 +530,8 @@ class Processor:
                 "TV_distance_reduced":    tv_r,
                 "TV_sq_distance_reduced": tv_sq_r})
 
-        IO_df_p1 = make_IO_df(tv_p1, tv_sq_p1, tv_LI_p1, tv_sq_LI_p1, J)
-        IO_df_p1 = IO_df_p1.merge(make_reduced_df(tv_reduced_p1, tv_sq_reduced_p1, J), on='BLS_Industry', how='left')
-        IO_df_p1['period'] = 1
-
-        IO_df_p2 = make_IO_df(tv_p2, tv_sq_p2, tv_LI_p2, tv_sq_LI_p2, J)
-        IO_df_p2 = IO_df_p2.merge(make_reduced_df(tv_reduced_p2, tv_sq_reduced_p2, J), on='BLS_Industry', how='left')
-        IO_df_p2['period'] = 2
-
-        IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
+        IO_df = make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, J)
+        IO_df = IO_df.merge(make_reduced_df(tv_reduced, tv_sq_reduced, J), on='BLS_Industry', how='left')
 
         
         # ------------------ #
@@ -556,7 +544,6 @@ class Processor:
         idx0 = idx1 - 1
         
         LI_start_sub = LI_start[np.ix_(idx0, idx0)]
-        LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
         LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
 
         IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values=['CO2e_intensity_Industry', 'CO2e_Industry'])
@@ -566,45 +553,31 @@ class Processor:
         idx0 = idx1 - 1
 
         LI_start_sub = LI_start[np.ix_(idx0, idx0)]
-        LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
         LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
 
         CO2e_LI_start = LI_start_sub @ IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()
-        CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()
         CO2e_LI_end   = LI_end_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()
         
         CO2e_lev_LI_start = LI_start_sub @ IO_wide_df['CO2e_Industry', Year_start].to_numpy()
-        CO2e_lev_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_Industry', Year_mid].to_numpy()
 
-        em_p1 = pd.DataFrame({
+        em_df = pd.DataFrame({
             "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()),
-            "dlog_CO2e_inten_LI": np.log(CO2e_LI_mid)   - np.log(CO2e_LI_start),
+            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()) - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
+            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_start)),
             "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_start].to_numpy(),
-            "CO2e_Industry_LI":   CO2e_lev_LI_start,
-            "period": 1})
+            "CO2e_Industry_LI":   CO2e_lev_LI_start})
 
-        em_p2 = pd.DataFrame({
-            "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()),
-            "dlog_CO2e_inten_LI": np.log(CO2e_LI_end)   - np.log(CO2e_LI_mid),
-            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy(),
-            "CO2e_Industry_LI":   CO2e_lev_LI_mid,
-            "period": 2})
-
-        em_df = pd.concat([em_p1, em_p2], ignore_index=True)
-
-        distance_cols = ['BLS_Industry', 'period',
+        distance_cols = ['BLS_Industry',
                          'TV_distance',       'TV_sq_distance',
                          'TV_distance_LI',    'TV_sq_distance_LI',
                          'TV_distance_reduced','TV_sq_distance_reduced']
 
-        emission_cols = ['BLS_Industry', 'period', 'CO2e_Industry', 'CO2e_Industry_LI',
+        emission_cols = ['BLS_Industry','CO2e_Industry', 'CO2e_Industry_LI',
                          'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
 
         reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
                           em_df[emission_cols].drop_duplicates(),
-                          on=['BLS_Industry', 'period'],
+                          on=['BLS_Industry'],
                           how='inner')
 
         
@@ -701,33 +674,30 @@ class Processor:
 
         # ----------------------------------------------------------------
         
-        mask_p1 = reg_df['period'] == 1
-        mask_p2 = reg_df['period'] == 2
-        
         # ----------- #
         # Regressions #
         # ----------- #
         X = sm.add_constant(reg_df['dlog_CO2e_inten'])
         Y = reg_df['TV_distance']
         
-        model = sm.OLS(Y, X).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model.summary())
+        model = sm.OLS(Y, X).fit(cov_type='HC3')
+        print(model.summary())
         
         beta0 = model.params['const']
-        beta1 = -model.params['dlog_CO2e_inten']
+        beta1 = model.params['dlog_CO2e_inten']
         
-        x = -reg_df['dlog_CO2e_inten'].to_numpy()
+        x = reg_df['dlog_CO2e_inten'].to_numpy()
         y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
         # Square Metric
         Y_sq = reg_df['TV_sq_distance']
         
-        model_sq = sm.OLS(Y_sq, X).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
+        print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
-        beta1_sq = -model_sq.params['dlog_CO2e_inten']
+        beta1_sq = model_sq.params['dlog_CO2e_inten']
         
         y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
@@ -735,29 +705,34 @@ class Processor:
         # Initial Emissions Weighted   
         weight = reg_df['CO2e_Industry']
         
-        model_em = sm.WLS(Y, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model_em.summary())
+        model_em = sm.WLS(Y, X, weight).fit(cov_type='HC3')
+        print(model_em.summary())
         
         beta0_em = model_em.params['const']
-        beta1_em = -model_em.params['dlog_CO2e_inten']
+        beta1_em = model_em.params['dlog_CO2e_inten']
         
         y_hat_em = beta0_em + beta1_em * x
         
-        model_em_sq = sm.WLS(Y_sq, X, weight).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model_em_sq.summary())
-        
-        beta0_em_sq = model_em_sq.params['const']
-        beta1_em_sq = -model_em_sq.params['dlog_CO2e_inten']
-        
-        y_hat_em_sq = beta0_em_sq + beta1_em_sq * x
+        # Split by sign of dlog_CO2e_inten
+        mask_pos = x >= 0
+        mask_neg = x < 0
+
+        x_pos, y_pos = x[mask_pos], y[mask_pos]
+        x_neg, y_neg = x[mask_neg], y[mask_neg]
+
+        model_pos = sm.OLS(y_pos, sm.add_constant(x_pos)).fit(cov_type='HC3')
+        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
+
+        print(model_pos.summary())
+
+        print(model_neg.summary())
         
         
         # ----------- #
         # Plot Graphs #
         # ----------- #
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten']
@@ -777,8 +752,7 @@ class Processor:
         
         # Square Metric
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
@@ -798,8 +772,7 @@ class Processor:
         
         # Initial Emissions Weighted 
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
         
         p1 = model_em.pvalues['dlog_CO2e_inten']
@@ -813,29 +786,11 @@ class Processor:
         plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
+        plt.ylim(bottom=0)
         plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_em_wgt.png')
         plt.show()
         
-        # Initial Emissions Weighted, Square Metric
-        plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
-        plt.plot(x, y_hat_em_sq, color='red', linewidth=2, label="OLS fit")
-        
-        p_sq = model_em_sq.pvalues['dlog_CO2e_inten']
-        stars_em_sq = gpf.get_stars(p_sq)
-        plt.annotate(
-            f"Slope = {beta1_em_sq:.3f}{stars_em_sq}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("Euclidean distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.show()
-
 
         # ----------------------------------------------------------------
     
@@ -849,35 +804,45 @@ class Processor:
         X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
         Y = reg_df['TV_distance_LI']
         
-        model = sm.OLS(Y, X).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model.summary())
+        model = sm.OLS(Y, X).fit(cov_type='HC3')
+        print(model.summary())
         
         beta0 = model.params['const']
-        beta1 = -model.params['dlog_CO2e_inten_LI']
+        beta1 = model.params['dlog_CO2e_inten_LI']
         
-        x = -reg_df['dlog_CO2e_inten_LI'].to_numpy()
+        x = reg_df['dlog_CO2e_inten_LI'].to_numpy()
         y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
         # Square Metric
         Y_sq = reg_df['TV_sq_distance_LI']
         
-        model_sq = sm.OLS(Y_sq, X).fit(cov_type='cluster', cov_kwds={'groups': reg_df['BLS_Industry']})
-        #print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
+        print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
-        beta1_sq = -model_sq.params['dlog_CO2e_inten_LI']
+        beta1_sq = model_sq.params['dlog_CO2e_inten_LI']
         
         y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
+        
+        # Initial Emissions Weighted   
+        weight = reg_df['CO2e_Industry_LI']
+        
+        model_em = sm.WLS(Y, X, weight).fit(cov_type='HC3')
+        print(model_em.summary())
+        
+        beta0_em = model_em.params['const']
+        beta1_em = model_em.params['dlog_CO2e_inten_LI']
+        
+        y_hat_em = beta0_em + beta1_em * x
         
         
         # ----------- #
         # Plot Graphs #
         # ----------- #
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten_LI']
@@ -897,8 +862,7 @@ class Processor:
         
         # Square Metric
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten_LI']
@@ -916,6 +880,26 @@ class Processor:
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
         plt.show()
         
+        # Initial Emissions Weighted 
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
+        plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
+        
+        p1 = model.pvalues['dlog_CO2e_inten_LI']
+        stars1 = gpf.get_stars(p1)
+        plt.annotate(
+            f"Slope = {beta1:.3f}{stars1}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_em_wgt.png')
+        plt.show()
+        
         
         # ----------------------------------------------------------------
     
@@ -924,8 +908,6 @@ class Processor:
         # ----------------------------------------------------------------
         
         reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced', 'dlog_CO2e_inten'])
-        mask_p1 = reduced_df['period'] == 1
-        mask_p2 = reduced_df['period'] == 2
         
         
         # ----------- #
@@ -934,24 +916,24 @@ class Processor:
         X = sm.add_constant(reduced_df['dlog_CO2e_inten'])
         Y = reduced_df['TV_distance_reduced']
         
-        model = sm.OLS(Y, X, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': reduced_df['BLS_Industry']})
-        #print(model.summary())
+        model = sm.OLS(Y, X, missing='drop').fit(cov_type='HC3')
+        print(model.summary())
         
         beta0 = model.params['const']
-        beta1 = -model.params['dlog_CO2e_inten']
+        beta1 = model.params['dlog_CO2e_inten']
         
-        x = -reduced_df['dlog_CO2e_inten'].to_numpy()
+        x = reduced_df['dlog_CO2e_inten'].to_numpy()
         y = Y.to_numpy()
         y_hat = beta0 + beta1 * x
         
         # Square Metric
         Y_sq = reduced_df['TV_sq_distance_reduced']
         
-        model_sq = sm.WLS(Y_sq, X, weight, missing='drop').fit(cov_type='cluster', cov_kwds={'groups': reduced_df['BLS_Industry']})
-        #print(model_sq.summary())
+        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='HC3')
+        print(model_sq.summary())
         
         beta0_sq = model_sq.params['const']
-        beta1_sq = -model_sq.params['dlog_CO2e_inten']
+        beta1_sq = model_sq.params['dlog_CO2e_inten']
         
         y_sq = Y_sq.to_numpy()
         y_hat_sq = beta0_sq + beta1_sq * x
@@ -961,8 +943,7 @@ class Processor:
         # Plot Graphs #
         # ----------- #
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten']
@@ -977,12 +958,12 @@ class Processor:
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
         plt.show()
         
         # Square Metric
         plt.figure(figsize=(8,6))
-        plt.scatter(x[mask_p1], y_sq[mask_p1], alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_mid})")
-        plt.scatter(x[mask_p2], y_sq[mask_p2], alpha=0.7, color='blue',   label=f"Sectors ({Year_mid}–{Year_end})")
+        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
         
         p_sq = model_sq.pvalues['dlog_CO2e_inten']
@@ -997,6 +978,7 @@ class Processor:
         plt.ylabel("Euclidean distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
         plt.show()
         
         
