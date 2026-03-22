@@ -454,11 +454,17 @@ class Processor:
             pat_metrics_full = compute_pat_metrics(pat_df)
 
             pat_metrics_late = compute_pat_metrics(
-                pat_df[pat_df['year'] >= Year_mid],
+                pat_df[pat_df['year'] > Year_mid],
                 suffix='_late'
+            )
+            
+            pat_metrics_early = compute_pat_metrics(
+                pat_df[pat_df['year'] <= Year_mid],
+                suffix='_early'
             )
 
             pat_df = pat_metrics_full.merge(pat_metrics_late, on='BLS_Industry', how='left')
+            pat_df = pat_df.merge(pat_metrics_early, on='BLS_Industry', how='left')
             
             pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
@@ -1101,14 +1107,10 @@ class Processor:
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
+        np.fill_diagonal(self.IO_mid, 0)
         np.fill_diagonal(self.IO_end, 0)
-
-        J = self.IO_end.shape[0]
-        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
-
-        IO_df = IO_df.merge(Ind_CO2_df, on=['BLS_Industry'], how='inner')
-
-        IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+        
+        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
 
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
@@ -1125,31 +1127,50 @@ class Processor:
 
         dlog_CO2e = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
         dlog_CO2e_late = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
+        dlog_CO2e_early = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
 
         net_em = compute_network_effect(self.IO_end, dlog_CO2e, 'dlog_CO2e_inten')
+        net_em_late = compute_network_effect(self.IO_mid, dlog_CO2e_early, 'dlog_CO2e_inten_late')
+        net_em_early = compute_network_effect(self.IO_mid, dlog_CO2e_early, 'dlog_CO2e_inten_early')
 
         reg_df = pd.DataFrame({
             "BLS_Industry":    IO_wide_df.index,
-            "dlog_CO2e_inten": dlog_CO2e_late,
-            **net_em
+            "dlog_CO2e_inten": dlog_CO2e,
+            "dlog_CO2e_inten_late": dlog_CO2e_late,
+            **net_em,
+            **net_em_late,
+            **net_em_early
         })
 
         reg_df = reg_df.merge(Ind_Pat_df, on='BLS_Industry', how='left')
         
         pat_count = reg_df['clean_pat_share'].fillna(0).to_numpy()
         net_pat_count = compute_network_effect(self.IO_end, pat_count, 'pat_count')
+        
+        pat_count_late = reg_df['clean_pat_share_late'].fillna(0).to_numpy()
+        net_pat_count_late = compute_network_effect(self.IO_end, pat_count_late, 'pat_count_late')
+        
+        pat_count_early = reg_df['clean_pat_share_early'].fillna(0).to_numpy()
+        net_pat_count_early = compute_network_effect(self.IO_mid, pat_count_early, 'pat_count_early')
 
         pat_cite = reg_df['clean_cite_share'].fillna(0).to_numpy()
         net_pat_cite = compute_network_effect(self.IO_end, pat_cite, 'pat_cite')
+        
+        pat_cite_late = reg_df['clean_cite_share_late'].fillna(0).to_numpy()
+        net_pat_cite_late = compute_network_effect(self.IO_end, pat_cite_late, 'pat_cite_late')
+        
+        pat_cite_early = reg_df['clean_cite_share_early'].fillna(0).to_numpy()
+        net_pat_cite_early = compute_network_effect(self.IO_mid, pat_cite_early, 'pat_cite_early')
 
         reg_df = reg_df.merge(pd.DataFrame({
             "BLS_Industry": IO_wide_df.index,
             **net_pat_count,
-            **net_pat_cite
+            **net_pat_count_late,
+            **net_pat_count_early,
+            **net_pat_cite,
+            **net_pat_cite_late,
+            **net_pat_cite_early
         }), on='BLS_Industry', how='left')
-        
-        reg_df = reg_df.merge(Ind_CO2_df.loc[Ind_CO2_df['Year'] == Year_mid, ['BLS_Industry', 'CO2e_Industry']],
-                              on='BLS_Industry', how='left')
         
 
         # ----------------------------------------------------------------
@@ -1176,28 +1197,63 @@ class Processor:
         model_em_cite_net = sm.OLS(Y_em, X_cite_net).fit(cov_type='HC3')
         print(model_em_cite_net.summary())
         
-        # Initial Emissions Weighted   
-        weight = reg_df['CO2e_Industry']
+        # Late on Whole Sample
+        Y_em_late = reg_df['dlog_CO2e_inten_late']
+
+        model_em = sm.OLS(Y_em_late, X).fit(cov_type='HC3')
+        print(model_em.summary())
         
-        model_em_wgt = sm.WLS(Y_em, X, weight).fit(cov_type='HC3')
-        print(model_em_wgt.summary())
+        model_em_pat_net = sm.OLS(Y_em_late, X_pat_net).fit(cov_type='HC3')
+        print(model_em_pat_net.summary())
+
+        model_em_cite_net = sm.OLS(Y_em_late, X_cite_net).fit(cov_type='HC3')
+        print(model_em_cite_net.summary())
         
-        model_em_pat_net_wgt = sm.WLS(Y_em, X_pat_net, weight).fit(cov_type='HC3')
-        print(model_em_pat_net_wgt.summary())
+        # Late on Split Sample
+        X_split = sm.add_constant(reg_df[['up_dlog_CO2e_inten_late', 'down_dlog_CO2e_inten_late', 'up_dlog_CO2e_inten_early', 'down_dlog_CO2e_inten_early']])
+        X_pat_net_split = sm.add_constant(reg_df[['up_pat_count_late', 'down_pat_count_late', 'up_pat_count_early', 'down_pat_count_early']])
+        X_cite_net_split = sm.add_constant(reg_df[['up_pat_cite_late', 'down_pat_cite_late', 'up_pat_cite_early', 'down_pat_cite_early']])
         
-        model_em_cite_net_wgt = sm.WLS(Y_em, X_cite_net, weight).fit(cov_type='HC3')
-        print(model_em_cite_net_wgt.summary())
+        model_em = sm.OLS(Y_em_late, X_split).fit(cov_type='HC3')
+        print(model_em.summary())
+        
+        model_em_pat_net = sm.OLS(Y_em_late, X_pat_net_split).fit(cov_type='HC3')
+        print(model_em_pat_net.summary())
+
+        model_em_cite_net = sm.OLS(Y_em_late, X_cite_net_split).fit(cov_type='HC3')
+        print(model_em_cite_net.summary())
 
 
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        pat_df = reg_df.dropna(subset=['clean_pat_share_late', 'clean_cite_share_late'])
+        pat_df = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
 
         X_pat = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
         X_pat_count_net = sm.add_constant(pat_df[['up_pat_count', 'down_pat_count']])
         X_pat_cite_net = sm.add_constant(pat_df[['up_pat_cite', 'down_pat_cite']])
 
+        Y_pat_count = pat_df['clean_pat_share']
+        
+        model_pat_count = sm.OLS(Y_pat_count, X_pat).fit(cov_type='HC3')
+        print(model_pat_count.summary())
+        
+        model_pat_count_net = sm.OLS(Y_pat_count, X_pat_count_net).fit(cov_type='HC3')
+        print(model_pat_count_net.summary())
+
+        Y_pat_cite = pat_df['clean_cite_share']
+        
+        model_pat_cite = sm.OLS(Y_pat_cite, X_pat).fit(cov_type='HC3')
+        print(model_pat_cite.summary())
+        
+        model_pat_cite_net = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
+        print(model_pat_cite_net.summary())
+        
+        # Late on Whole Sample
+        pat_df = reg_df.dropna(subset=['clean_pat_share_late', 'clean_cite_share_late'])
+        X_pat = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
+        X_pat_count_net = sm.add_constant(pat_df[['up_pat_count', 'down_pat_count']])
+        X_pat_cite_net = sm.add_constant(pat_df[['up_pat_cite', 'down_pat_cite']])
         Y_pat_count = pat_df['clean_pat_share_late']
         
         model_pat_count = sm.OLS(Y_pat_count, X_pat).fit(cov_type='HC3')
@@ -1214,21 +1270,23 @@ class Processor:
         model_pat_cite_net = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
         print(model_pat_cite_net.summary())
         
-        # Initial Emissions Weighted   
-        weight = pat_df['CO2e_Industry']
+        # Late on Split Sample
+        X_pat = sm.add_constant(pat_df[['up_dlog_CO2e_inten_late', 'down_dlog_CO2e_inten_late', 'up_dlog_CO2e_inten_early', 'down_dlog_CO2e_inten_early']])
+        X_pat_count_net = sm.add_constant(pat_df[['up_pat_count_late', 'down_pat_count_late', 'up_pat_count_early', 'down_pat_count_early']])
+        X_pat_cite_net = sm.add_constant(pat_df[['up_pat_cite_late', 'down_pat_cite_late', 'up_pat_cite_early', 'down_pat_cite_early']])
         
-        model_pat_count_wgt = sm.WLS(Y_pat_count, X_pat, weight).fit(cov_type='HC3')
-        print(model_pat_count_wgt.summary())
+        model_pat_count = sm.OLS(Y_pat_count, X_pat).fit(cov_type='HC3')
+        print(model_pat_count.summary())
         
-        model_pat_count_net_wgt = sm.WLS(Y_pat_count, X_pat_count_net, weight).fit(cov_type='HC3')
-        print(model_pat_count_net_wgt.summary())
+        model_pat_count_net = sm.OLS(Y_pat_count, X_pat_count_net).fit(cov_type='HC3')
+        print(model_pat_count_net.summary())
         
-        model_pat_cite_wgt = sm.WLS(Y_pat_cite, X_pat, weight).fit(cov_type='HC3')
-        print(model_pat_cite_wgt.summary())
+        model_pat_cite = sm.OLS(Y_pat_cite, X_pat).fit(cov_type='HC3')
+        print(model_pat_cite.summary())
         
-        model_pat_cite_net_wgt = sm.WLS(Y_pat_cite, X_pat_cite_net, weight).fit(cov_type='HC3')
-        print(model_pat_cite_net_wgt.summary())
-        
+        model_pat_cite_net = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
+        print(model_pat_cite_net.summary())
+    
         
         # ----------- #
         # Print Table #
@@ -1285,128 +1343,6 @@ class Processor:
         with open(out_path, 'w') as f:
             f.write(body)
             
-            
-        # ----------------------------------------------------------------
-
-        # Regressions for manufacturing.
-
-        # ----------------------------------------------------------------
-        
-        # ------------------ #
-        # Allocate Emissions #
-        # ------------------ #
-        np.fill_diagonal(self.IO_end_manu, 0)
- 
-        J = self.IO_end.shape[0]
-        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
- 
-        IO_df = IO_df.merge(Ind_CO2_df, on=['BLS_Industry'], how='inner')
- 
-        IO_wide_df = IO_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
-        IO_wide_df = IO_wide_df.dropna()
- 
-        # Restrict to manufacturing sectors (BLS_Industry 16-79) before computing network effects
-        IO_wide_df = IO_wide_df[IO_wide_df.index.isin(range(16, 80))]
- 
-        idx1 = IO_wide_df.index.to_numpy(dtype=int)
-        idx0 = idx1 - 16  # 0-indexed offset into the manufacturing submatrix
-        
-        def compute_network_effect(IO_matrix, z, prefix):
-            IO  = IO_matrix[np.ix_(idx0, idx0)]
-            I   = np.eye(IO.shape[0])
-            LI  = np.linalg.inv(I - IO)
-            return {
-                f"up_{prefix}":     (LI - I) @ z,
-                f"down_{prefix}": (LI - I).T @ z,
-            }
-
-        dlog_CO2e      = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
-        dlog_CO2e_late = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
-
-        net_em = compute_network_effect(self.IO_end_manu, dlog_CO2e, 'dlog_CO2e_inten')
-
-        reg_df = pd.DataFrame({
-            "BLS_Industry":    IO_wide_df.index,
-            "dlog_CO2e_inten": dlog_CO2e_late,
-            **net_em
-        })
-
-        reg_df = reg_df.merge(Ind_Pat_df, on='BLS_Industry', how='left')
-
-        pat_count = reg_df['clean_pat_share'].fillna(0).to_numpy()
-        net_pat_count = compute_network_effect(self.IO_end_manu, pat_count, 'pat_count')
-
-        pat_cite = reg_df['clean_cite_share'].fillna(0).to_numpy()
-        net_pat_cite = compute_network_effect(self.IO_end_manu, pat_cite, 'pat_cite')
-
-        reg_df = reg_df.merge(pd.DataFrame({
-            "BLS_Industry": IO_wide_df.index,
-            **net_pat_count,
-            **net_pat_cite
-        }), on='BLS_Industry', how='left')
-
-        reg_df = reg_df.merge(
-            Ind_CO2_df.loc[Ind_CO2_df['Year'] == Year_mid, ['BLS_Industry', 'CO2e_Industry']],
-            on='BLS_Industry', how='left')
-        
-        
-        # -------------------- #
-        # Emission Regressions #
-        # -------------------- #
-        X          = sm.add_constant(reg_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        X_pat_net  = sm.add_constant(reg_df[['up_pat_count',       'down_pat_count']])
-        X_cite_net = sm.add_constant(reg_df[['up_pat_cite',        'down_pat_cite']])
-
-        Y_em   = reg_df['dlog_CO2e_inten']
-        weight = reg_df['CO2e_Industry']
-
-        model_em           = sm.OLS(Y_em, X).fit(cov_type='HC3')
-        model_em_pat_net   = sm.OLS(Y_em, X_pat_net).fit(cov_type='HC3')
-        model_em_cite_net  = sm.OLS(Y_em, X_cite_net).fit(cov_type='HC3')
-        print(model_em.summary())
-        print(model_em_pat_net.summary())
-        print(model_em_cite_net.summary())
-
-        model_em_wgt           = sm.WLS(Y_em, X,          weight).fit(cov_type='HC3')
-        model_em_pat_net_wgt   = sm.WLS(Y_em, X_pat_net,  weight).fit(cov_type='HC3')
-        model_em_cite_net_wgt  = sm.WLS(Y_em, X_cite_net, weight).fit(cov_type='HC3')
-        print(model_em_wgt.summary())
-        print(model_em_pat_net_wgt.summary())
-        print(model_em_cite_net_wgt.summary())
-
-
-        # ------------------ #
-        # Patent Regressions #
-        # ------------------ #
-        pat_df      = reg_df.dropna(subset=['clean_pat_share_late', 'clean_cite_share_late'])
-        weight_pat  = pat_df['CO2e_Industry']
-
-        X_pat           = sm.add_constant(pat_df[['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten']])
-        X_pat_count_net = sm.add_constant(pat_df[['up_pat_count',       'down_pat_count']])
-        X_pat_cite_net  = sm.add_constant(pat_df[['up_pat_cite',        'down_pat_cite']])
-
-        Y_pat_count = pat_df['clean_pat_share_late']
-
-        model_pat_count         = sm.OLS(Y_pat_count, X_pat).fit(cov_type='HC3')
-        model_pat_count_net     = sm.OLS(Y_pat_count, X_pat_count_net).fit(cov_type='HC3')
-        model_pat_count_wgt     = sm.WLS(Y_pat_count, X_pat,           weight_pat).fit(cov_type='HC3')
-        model_pat_count_net_wgt = sm.WLS(Y_pat_count, X_pat_count_net, weight_pat).fit(cov_type='HC3')
-        print(model_pat_count.summary())
-        print(model_pat_count_net.summary())
-        print(model_pat_count_wgt.summary())
-        print(model_pat_count_net_wgt.summary())
-
-        Y_pat_cite = pat_df['clean_cite_share_late']
-
-        model_pat_cite         = sm.OLS(Y_pat_cite, X_pat).fit(cov_type='HC3')
-        model_pat_cite_net     = sm.OLS(Y_pat_cite, X_pat_cite_net).fit(cov_type='HC3')
-        model_pat_cite_wgt     = sm.WLS(Y_pat_cite, X_pat,          weight_pat).fit(cov_type='HC3')
-        model_pat_cite_net_wgt = sm.WLS(Y_pat_cite, X_pat_cite_net, weight_pat).fit(cov_type='HC3')
-        print(model_pat_cite.summary())
-        print(model_pat_cite_net.summary())
-        print(model_pat_cite_wgt.summary())
-        print(model_pat_cite_net_wgt.summary())
-        
     
     
     def write_package_versions(self, packages):
