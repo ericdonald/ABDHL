@@ -472,6 +472,7 @@ class Processor:
                 Results/Figures/Baseline_L1.png
                 Results/Figures/Baseline_L2.png
                 Results/Figures/Baseline_em_wgt.png
+                Results/Figures/Baseline_split.png
                 Results/Figures/Leontief_L1.png
                 Results/Figures/Leontief_L2.png
                 Results/Figures/Leontief_em_wgt.png
@@ -713,7 +714,7 @@ class Processor:
         
         y_hat_em = beta0_em + beta1_em * x
         
-        # Split by sign of dlog_CO2e_inten
+        # Split by Sign 
         mask_pos = x >= 0
         mask_neg = x < 0
 
@@ -721,11 +722,19 @@ class Processor:
         x_neg, y_neg = x[mask_neg], y[mask_neg]
 
         model_pos = sm.OLS(y_pos, sm.add_constant(x_pos)).fit(cov_type='HC3')
-        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
-
         print(model_pos.summary())
-
+        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
         print(model_neg.summary())
+        
+        beta0_pos = model_pos.params[0]
+        beta1_pos = model_pos.params[1]
+        
+        y_hat_pos = beta0_pos + beta1_pos * x_pos
+        
+        beta0_neg = model_neg.params[0]
+        beta1_neg = model_neg.params[1]
+        
+        y_hat_neg = beta0_neg + beta1_neg * x_neg
         
         
         # ----------- #
@@ -771,8 +780,10 @@ class Processor:
         plt.show()
         
         # Initial Emissions Weighted 
+        weight = weight.to_numpy()
+        scale = 1000 / weight.max()
         plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
+        plt.scatter(x, y, s=weight*scale, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
         
         p1 = model_em.pvalues['dlog_CO2e_inten']
@@ -787,8 +798,39 @@ class Processor:
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
         plt.ylim(bottom=0)
-        plt.legend(loc='upper right')
+        leg = plt.legend(loc='upper right')
+        leg.legend_handles[0]._sizes = [30]
         plt.savefig(f'{self.Directory}/Results/Figures/Baseline_em_wgt.png')
+        plt.show()
+        
+        # Split by Sign 
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
+        plt.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="OLS fit (x>0)")
+        plt.plot(x_neg, y_hat_neg, color='cyan', linewidth=2, label="OLS fit (x<0)")
+        
+        p1_pos = model_pos.pvalues[1]
+        stars1_pos = gpf.get_stars(p1_pos)
+        plt.annotate(
+            f"Slope (x>0) = {beta1_pos:.3f}{stars1_pos}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        p1_neg = model_neg.pvalues[1]
+        stars1_neg = gpf.get_stars(p1_neg)
+        plt.annotate(
+            f"Slope (x<0) = {beta1_neg:.3f}{stars1_neg}",
+            xy=(0.05, 0.883), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_split.png')
         plt.show()
         
 
@@ -837,6 +879,28 @@ class Processor:
         
         y_hat_em = beta0_em + beta1_em * x
         
+        # Split by Sign 
+        mask_pos = x >= 0
+        mask_neg = x < 0
+
+        x_pos, y_pos = x[mask_pos], y[mask_pos]
+        x_neg, y_neg = x[mask_neg], y[mask_neg]
+
+        model_pos = sm.OLS(y_pos, sm.add_constant(x_pos)).fit(cov_type='HC3')
+        print(model_pos.summary())
+        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
+        print(model_neg.summary())
+        
+        beta0_pos = model_pos.params[0]
+        beta1_pos = model_pos.params[1]
+        
+        y_hat_pos = beta0_pos + beta1_pos * x_pos
+        
+        beta0_neg = model_neg.params[0]
+        beta1_neg = model_neg.params[1]
+        
+        y_hat_neg = beta0_neg + beta1_neg * x_neg
+        
         
         # ----------- #
         # Plot Graphs #
@@ -881,8 +945,10 @@ class Processor:
         plt.show()
         
         # Initial Emissions Weighted 
+        weight = weight.to_numpy()
+        scale = 1000 / weight.max()
         plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
+        plt.scatter(x, y, s=weight*scale, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
         plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
         
         p1 = model.pvalues['dlog_CO2e_inten_LI']
@@ -896,8 +962,39 @@ class Processor:
         plt.xlabel("-Δ ln(emissions intensity)")
         plt.ylabel("TV distance (input-share change)")
         plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
+        leg = plt.legend(loc='upper right')
+        leg.legend_handles[0]._sizes = [30]
         plt.savefig(f'{self.Directory}/Results/Figures/Leontief_em_wgt.png')
+        plt.show()
+        
+        # Split by Sign 
+        plt.figure(figsize=(8,6))
+        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
+        plt.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="OLS fit (x>0)")
+        plt.plot(x_neg, y_hat_neg, color='cyan', linewidth=2, label="OLS fit (x<0)")
+        
+        p1_pos = model_pos.pvalues[1]
+        stars1_pos = gpf.get_stars(p1_pos)
+        plt.annotate(
+            f"Slope (x>0) = {beta1_pos:.3f}{stars1_pos}",
+            xy=(0.05, 0.95), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        p1_neg = model_neg.pvalues[1]
+        stars1_neg = gpf.get_stars(p1_neg)
+        plt.annotate(
+            f"Slope (x<0) = {beta1_neg:.3f}{stars1_neg}",
+            xy=(0.05, 0.883), xycoords='axes fraction',
+            fontsize=11, color='green',
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
+        )
+        
+        plt.xlabel("-Δ ln(emissions intensity)")
+        plt.ylabel("TV distance (input-share change)")
+        plt.grid(alpha=0.3)
+        plt.legend(loc='upper right')
+        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_split.png')
         plt.show()
         
         
