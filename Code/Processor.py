@@ -887,13 +887,13 @@ class Processor:
             "BLS_Industry":    IO_wide_df.index,
             "period":          Year_mid,
             "dlog_CO2e_inten": dlog_p1,
-            **compute_network_effect(self.IO[Year_mid], dlog_p1, 'dlog_CO2e_inten')})
+            **compute_network_effect(self.IO[Year_mid], np.maximum(dlog_p1, 0), 'dlog_CO2e_inten')})
 
         em_p2 = pd.DataFrame({
             "BLS_Industry":    IO_wide_df.index,
             "period":          Year_end,
             "dlog_CO2e_inten": dlog_p2,
-            **compute_network_effect(self.IO[Year_end], dlog_p2, 'dlog_CO2e_inten')})
+            **compute_network_effect(self.IO[Year_end], np.maximum(dlog_p2, 0), 'dlog_CO2e_inten')})
 
         em_df = pd.concat([em_p1, em_p2], ignore_index=True)
 
@@ -965,6 +965,7 @@ class Processor:
         em_df      = reg_df.dropna(subset=['dlog_CO2e_inten'])
         cluster_em = {'cov_type': 'cluster', 'cov_kwds': {'groups': em_df['BLS_Industry']}}
         Y_em       = em_df['dlog_CO2e_inten']
+        weight = em_df['CO2e_Industry']
 
         # Emissions on emissions
         model_em_em      = sm.OLS(Y_em, make_X(em_df, ['up_dlog_CO2e_inten',  'down_dlog_CO2e_inten'])).fit(**cluster_em)
@@ -989,8 +990,8 @@ class Processor:
         # Patent Regressions #
         # ------------------ #
         # Current period only (no lag required)
-        pat_df_cur  = reg_df[reg_df[['clean_pat_share', 'clean_cite_share']].gt(0).all(axis=1)]
-        #pat_df_cur  = pat_df_cur[pat_df_cur['period'] >= 2017]
+        pat_df_cur  = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
+        pat_df_cur  = pat_df_cur[pat_df_cur['period'] >= 2017]
         cluster_cur = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df_cur['BLS_Industry']}}
         
         pat_df_em   = pat_df_cur.dropna(subset=['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten'])
@@ -1016,10 +1017,10 @@ class Processor:
         print(model_cite_cc.summary())
 
         # Current + lagged (requires lag to be non-zero)
-        pat_df_lag  = reg_df[reg_df[['clean_pat_share', 'clean_cite_share',
+        pat_df_lag  = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share',
                                      'up_pat_count_lag', 'down_pat_count_lag',
-                                     'up_pat_cite_lag',  'down_pat_cite_lag']].gt(0).all(axis=1)]
-        #pat_df_lag  = pat_df_lag[pat_df_lag['period'] >= 2017]
+                                     'up_pat_cite_lag',  'down_pat_cite_lag'])
+        pat_df_lag  = pat_df_lag[pat_df_lag['period'] >= 2017]
         cluster_lag = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df_lag['BLS_Industry']}}
 
         Y_count_lag = pat_df_lag['clean_pat_share']
