@@ -42,10 +42,12 @@ class Processor:
                      'Sulfur hexafluoride': 22800
                      }
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
+        self.manu_cols = [7, 94]
+        self.fossil_cols = [6, 7]
 
         
         
-    def Cleaner(self, Year_start, Year_mid, Year_end, patents=1):
+    def Cleaner(self, BLS_year_start, Year_start, Year_mid, Year_end, patents=1):
         """""
         Clean Data
         
@@ -63,14 +65,22 @@ class Processor:
         # ------------ #
         # BLS IO Table #
         # ------------ #
-        USE_start_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{Year_start}")
-        MAKE_start_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{Year_start}")
-        
-        USE_mid_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{Year_mid}")
-        MAKE_mid_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{Year_mid}")
-        
-        USE_end_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{Year_end}")
-        MAKE_end_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{Year_end}")
+        def compute_IO(year):
+            USE_df  = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx',  sheet_name=f"{year}")
+            MAKE_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{year}")
+
+            U      = USE_df.iloc[:, 1:-3].to_numpy()
+            ind_Y  = np.sum(U, 0)
+            B      = (U[:-3, :] @ np.diag(ind_Y**(-1))).T
+
+            M      = MAKE_df.iloc[:, 1:].to_numpy()
+            com_Y  = np.sum(M, 0)[:-2]
+            A      = (M[:-2, :-2] @ np.diag(com_Y**(-1))).T
+
+            return B @ A
+
+        bin_ends = list(range(BLS_year_start, Year_end+1, 5))
+        self.IO = {year: compute_IO(year) for year in bin_ends}
         #NAICS 2022
         
         BLS_Crosswalk_df = pd.read_excel(f'{self.Directory}/Raw Data/BLS_Crosswalk.xlsx', sheet_name="Stubs")
@@ -123,59 +133,12 @@ class Processor:
         NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
         
         
-        # ----------------------------------------------------------------
-
-        # Build industry IO matrix.
-
-        # ----------------------------------------------------------------
-        
-        # --------------------------------------- #
-        # Industry x Commodity Expenditure Shares #
-        # --------------------------------------- #
-        
-        U_start_rev = USE_start_df.iloc[:, 1:-3].to_numpy()
-        ind_Y_start = np.sum(U_start_rev, 0)
-        B_start = (U_start_rev[:-3,:] @ np.diag(ind_Y_start**(-1))).T
-        
-        U_mid_rev = USE_mid_df.iloc[:, 1:-3].to_numpy()
-        ind_Y_mid = np.sum(U_mid_rev, 0)
-        B_mid = (U_mid_rev[:-3,:] @ np.diag(ind_Y_mid**(-1))).T
-        
-        U_end_rev = USE_end_df.iloc[:, 1:-3].to_numpy()
-        ind_Y_end = np.sum(U_end_rev, 0)
-        B_end = (U_end_rev[:-3,:] @ np.diag(ind_Y_end**(-1))).T
-
-        
-        # -------------------------------------- #
-        # Commodity x Industry Production Shares #
-        # -------------------------------------- #
-        
-        M_start_rev = MAKE_start_df.iloc[:, 1:].to_numpy()
-        com_Y_start = np.sum(M_start_rev, 0)[:-2]
-        A_start = (M_start_rev[:-2,:-2] @ np.diag(com_Y_start**(-1))).T
-        
-        M_mid_rev = MAKE_mid_df.iloc[:, 1:].to_numpy()
-        com_Y_mid = np.sum(M_mid_rev, 0)[:-2]
-        A_mid = (M_mid_rev[:-2,:-2] @ np.diag(com_Y_mid**(-1))).T
-        
-        M_end_rev = MAKE_end_df.iloc[:, 1:].to_numpy()
-        com_Y_end = np.sum(M_end_rev, 0)[:-2]
-        A_end = (M_end_rev[:-2,:-2] @ np.diag(com_Y_end**(-1))).T
-        
-        
-        # ------------------- #
-        # Input-Output Matrix #
-        # ------------------- #
-        self.IO_start = B_start @ A_start
-        self.IO_mid = B_mid @ A_mid
-        self.IO_end = B_end @ A_end
-        
-        J = self.IO_start.shape[0]
-        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
-        
         # ----------------- #
         # Value Added Panel #
         # ----------------- #
+        J = self.IO[Year_end].shape[0]
+        IO_df = pd.DataFrame({"BLS_Industry": np.arange(1, J+1)})
+        
         va_frames = []
         for year in range(Year_start, Year_end + 1):
             USE_yr = pd.read_excel(f'{self.Directory}/Raw Data/REAL_USE.xlsx', sheet_name=f"{year}")
@@ -329,7 +292,7 @@ class Processor:
                                  how='inner'
                                  )
             
-            relevant_df = relevant_df[(relevant_df["year"] >= Year_start) & (relevant_df["year"] <= Year_end)]
+            relevant_df = relevant_df[(relevant_df["year"] >= BLS_year_start-5) & (relevant_df["year"] <= Year_end)]
             relevant_df["cpc_group5"] = relevant_df["cpc_group"].str[:5]
             relevant_df["cpc_group6"] = relevant_df["cpc_group"].str[:6]
             
@@ -417,7 +380,7 @@ class Processor:
             compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('size') > 1]
             compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
             
-            compustat_df = compustat_df[(compustat_df["year"] >= Year_start) & (compustat_df["year"] <= Year_end)]
+            compustat_df = compustat_df[(compustat_df["year"] >= BLS_year_start-5) & (compustat_df["year"] <= Year_end)]
             compustat_df['naics2022_6'] = compustat_df['naics'] #Assume Compustat uses most up to date NAICS
             compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
     
@@ -450,12 +413,14 @@ class Processor:
                         .drop_duplicates()
                         .assign(period=period))
 
-            # Period 1: year <= Year_mid; Period 2: year > Year_mid
-            pat_metrics_p1 = compute_pat_metrics(pat_df[pat_df['year'] <= Year_mid], period=1)
-            pat_metrics_p2 = compute_pat_metrics(pat_df[pat_df['year'] >  Year_mid], period=2)
+            bin_starts = range(BLS_year_start-5, Year_end, 5) 
+            frames = []
+            for i, start in enumerate(bin_starts):
+                end = start + 5 
+                bin_df = pat_df[(pat_df['year'] > start) & (pat_df['year'] <= end)]
+                frames.append(compute_pat_metrics(bin_df, period=end))
 
-            pat_df = pd.concat([pat_metrics_p1, pat_metrics_p2], ignore_index=True)
-
+            pat_df = pd.concat(frames, ignore_index=True)
             pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
 
@@ -492,18 +457,18 @@ class Processor:
         # ------------------- #
         # Input-Output Matrix #
         # ------------------- #
-        J       = self.IO_start.shape[0]
-        manu    = slice(7-1, 94-1)  # 0-indexed rows for non-service industries
+        J       = self.IO[Year_start].shape[0]
+        manu    = slice(self.manu_cols[0]-1, self.manu_cols[1]-1)  # 0-indexed rows for non-service industries
  
         I        = np.eye(J)
-        LI_start = np.linalg.inv(I - self.IO_start)
-        LI_mid   = np.linalg.inv(I - self.IO_mid)
-        LI_end   = np.linalg.inv(I - self.IO_end)
+        LI_start = np.linalg.inv(I - self.IO[Year_start])
+        LI_mid   = np.linalg.inv(I - self.IO[Year_mid])
+        LI_end   = np.linalg.inv(I - self.IO[Year_end])
  
         # Baseline: non-service rows, all columns
-        IO_start_manu = self.IO_start[manu, :]
-        IO_mid_manu   = self.IO_mid[manu, :]
-        IO_end_manu   = self.IO_end[manu, :]
+        IO_start_manu = self.IO[Year_start][manu, :]
+        IO_mid_manu   = self.IO[Year_mid][manu, :]
+        IO_end_manu   = self.IO[Year_end][manu, :]
  
         # Leontief: non-service rows, all columns
         LI_start_manu = LI_start[manu, :]
@@ -511,14 +476,13 @@ class Processor:
         LI_end_manu   = LI_end[manu, :]
  
         # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
-        fossil_cols = [6, 7]
         def drop_and_normalize(IO):
-            IO_r = np.delete(IO[manu, :], fossil_cols, axis=1)
+            IO_r = np.delete(IO[manu, :], self.fossil_cols, axis=1)
             return IO_r / IO_r.sum(axis=1, keepdims=True)
 
-        IO_start_reduced = drop_and_normalize(self.IO_start)
-        IO_mid_reduced   = drop_and_normalize(self.IO_mid)
-        IO_end_reduced   = drop_and_normalize(self.IO_end)
+        IO_start_reduced = drop_and_normalize(self.IO[Year_start])
+        IO_mid_reduced   = drop_and_normalize(self.IO[Year_mid])
+        IO_end_reduced   = drop_and_normalize(self.IO[Year_end])
 
         def tv_metrics(A, B):
            diff  = np.abs(B - A)
@@ -538,7 +502,7 @@ class Processor:
 
         def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, tv_red, tv_sq_red):
             return pd.DataFrame({
-                "BLS_Industry":           np.arange(7, 94),
+                "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]),
                 "TV_distance":            tv,
                 "TV_sq_distance":         tv_sq,
                 "TV_distance_LI":         tv_LI,
@@ -861,7 +825,7 @@ class Processor:
         
         
     
-    def Up_Down_Green(self, Year_start, Year_mid, Year_end):
+    def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end):
         """""
         Upstream and Downstream Incentives for Greenification
         
@@ -879,20 +843,21 @@ class Processor:
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
 
-        # ------------------ #
-        # Allocate Emissions #
-        # ------------------ #
-        np.fill_diagonal(self.IO_mid, 0)
-        np.fill_diagonal(self.IO_end, 0)
+        # ----------- #
+        # Build Panel #
+        # ----------- #
+        bin_ends = list(range(BLS_year_start, Year_end+1, 5))
+        for year in bin_ends:
+            np.fill_diagonal(self.IO[year], 0)
 
-        J = self.IO_mid.shape[0]
+        J = self.IO[Year_end].shape[0]
 
         IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
         IO_wide_df = IO_wide_df.dropna()
 
         # Non-service mask over the full J-length vector (0-indexed)
         manu_mask = np.zeros(J, dtype=bool)
-        manu_mask[6:93] = True  # BLS industries 7-93 (0-indexed: 6-92)
+        manu_mask[self.manu_cols[0]-1:self.manu_cols[1]-1] = True
 
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
@@ -910,45 +875,77 @@ class Processor:
                f"up_{prefix}":   ((LI - I)   @ z_full)[idx0],
                f"down_{prefix}": ((LI - I).T @ z_full)[idx0],
            }
-
-        # Period 1: start -> mid (IO from mid, forward looking)
-        dlog_p1 = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
-        net_em_p1 = compute_network_effect(self.IO_mid, dlog_p1, 'dlog_CO2e_inten')
-
-        # Period 2: mid -> end (IO from end, forward looking)
-        dlog_p2 = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
-        net_em_p2 = compute_network_effect(self.IO_end, dlog_p2, 'dlog_CO2e_inten')
-
-        em_p1 = pd.DataFrame({"BLS_Industry": IO_wide_df.index, "period": 1, "dlog_CO2e_inten": dlog_p1, **net_em_p1})
-        em_p2 = pd.DataFrame({"BLS_Industry": IO_wide_df.index, "period": 2, "dlog_CO2e_inten": dlog_p2, **net_em_p2})
-        reg_df = pd.concat([em_p1, em_p2], ignore_index=True)
-
-        reg_df = reg_df.merge(Ind_Pat_df, on=['BLS_Industry', 'period'], how='left')
-
-        # Compute patent network effects per period
-        def pat_network_effects(IO_matrix, reg_period_df, pat_col, cite_col, prefix_suffix):
-            pc = reg_period_df[pat_col].fillna(0).to_numpy()
-            cc = reg_period_df[cite_col].fillna(0).to_numpy()
-            net_pc = compute_network_effect(IO_matrix, pc, f'pat_count{prefix_suffix}')
-            net_cc = compute_network_effect(IO_matrix, cc, f'pat_cite{prefix_suffix}')
-            return pd.DataFrame({"BLS_Industry": IO_wide_df.index, **net_pc, **net_cc})
-
-        p1_df = reg_df[reg_df['period'] == 1].copy()
-        p2_df = reg_df[reg_df['period'] == 2].copy()
+       
         
-        net_pat_p1 = pat_network_effects(self.IO_mid, p1_df, 'clean_pat_share', 'clean_cite_share', '')
-        net_pat_p2 = pat_network_effects(self.IO_end, p2_df, 'clean_pat_share', 'clean_cite_share', '')
+        # --------- #
+        # Emissions #
+        # --------- #
+        dlog_p1 = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
+        dlog_p2 = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
 
-        net_pat_p1['period'] = 1
-        net_pat_p2['period'] = 2
-        net_pat_df = pd.concat([net_pat_p1, net_pat_p2], ignore_index=True)
+        em_p1 = pd.DataFrame({
+            "BLS_Industry":    IO_wide_df.index,
+            "period":          Year_mid,
+            "dlog_CO2e_inten": dlog_p1,
+            **compute_network_effect(self.IO[Year_mid], dlog_p1, 'dlog_CO2e_inten')})
 
-        reg_df = reg_df.merge(net_pat_df, on=['BLS_Industry', 'period'], how='left')
+        em_p2 = pd.DataFrame({
+            "BLS_Industry":    IO_wide_df.index,
+            "period":          Year_end,
+            "dlog_CO2e_inten": dlog_p2,
+            **compute_network_effect(self.IO[Year_end], dlog_p2, 'dlog_CO2e_inten')})
 
-        # Merge initial emissions weight
-        reg_df = reg_df.merge(
-            Ind_CO2_df.loc[Ind_CO2_df['Year'] == Year_mid, ['BLS_Industry', 'CO2e_Industry']],
-            on='BLS_Industry', how='left')
+        em_df = pd.concat([em_p1, em_p2], ignore_index=True)
+
+
+        # ------- #
+        # Patents #
+        # ------- #
+        pat_frames = []
+        for year in bin_ends:
+            IO_yr  = self.IO[year]
+            pat_yr = Ind_Pat_df[Ind_Pat_df['period'] == year].copy()
+
+            # Skip if no patent data for this period
+            if pat_yr.empty:
+                continue
+
+            # Align patent data to IO_wide_df index
+            pat_yr = pat_yr.set_index('BLS_Industry').reindex(IO_wide_df.index).reset_index()
+
+            pc_raw = pat_yr['clean_pat_share'].to_numpy()
+            cc_raw = pat_yr['clean_cite_share'].to_numpy()
+
+            net_pc = compute_network_effect(IO_yr, np.nan_to_num(pc_raw), 'pat_count')
+            net_cc = compute_network_effect(IO_yr, np.nan_to_num(cc_raw), 'pat_cite')
+
+            pat_frames.append(pd.DataFrame({
+                "BLS_Industry":     IO_wide_df.index,
+                "period":           year,
+                "clean_pat_share":  pc_raw,
+                "clean_cite_share": cc_raw,
+                **net_pc,
+                **net_cc,
+            }))
+
+        pat_df = pd.concat(pat_frames, ignore_index=True)
+        
+
+        # ----- #
+        # Merge #
+        # ----- #
+        reg_df = pat_df.copy()
+        reg_df = reg_df.merge(em_df, on=['BLS_Industry', 'period'], how='left')
+        
+        reg_df = reg_df.sort_values(['BLS_Industry', 'period'])
+        for col in ['up_pat_count', 'down_pat_count', 'up_pat_cite', 'down_pat_cite']:
+            reg_df[f'{col}_lag'] = reg_df.groupby('BLS_Industry')[col].shift(1)
+        
+        co2_weights = pd.concat([
+            Ind_CO2_df.loc[Ind_CO2_df['Year'] == y - 5, ['BLS_Industry', 'CO2e_Industry']].assign(period=y)
+            for y in bin_ends
+        ], ignore_index=True)
+        reg_df = reg_df.merge(co2_weights, on=['BLS_Industry', 'period'], how='left')
         
 
         # ----------------------------------------------------------------
@@ -957,54 +954,86 @@ class Processor:
         
         # ----------------------------------------------------------------
         
-        period_fe = pd.get_dummies(reg_df['period'], drop_first=True, dtype=float)
-        cluster   = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_df['BLS_Industry']}}
-
-        def make_X(cols):
-            return sm.add_constant(pd.concat([reg_df[cols], period_fe], axis=1))
+        def make_X(df, cols):
+            fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
+            return sm.add_constant(pd.concat([df[cols], fe], axis=1))
 
         
         # -------------------- #
         # Emission Regressions #
         # -------------------- #
-        Y_em     = reg_df['dlog_CO2e_inten']
-        X_em     = make_X(['up_dlog_CO2e_inten',  'down_dlog_CO2e_inten'])
-        X_em_pat = make_X(['up_pat_count',         'down_pat_count'])
-        X_em_cit = make_X(['up_pat_cite',          'down_pat_cite'])
+        em_df      = reg_df.dropna(subset=['dlog_CO2e_inten'])
+        cluster_em = {'cov_type': 'cluster', 'cov_kwds': {'groups': em_df['BLS_Industry']}}
+        Y_em       = em_df['dlog_CO2e_inten']
 
-        model_em        = sm.OLS(Y_em, X_em).fit(**cluster)
-        print(model_em.summary())
-        model_em_pat    = sm.OLS(Y_em, X_em_pat).fit(**cluster)
+        # Emissions on emissions
+        model_em_em      = sm.OLS(Y_em, make_X(em_df, ['up_dlog_CO2e_inten',  'down_dlog_CO2e_inten'])).fit(**cluster_em)
+        print(model_em_em.summary())
+
+        # Emissions on patents (current)
+        model_em_pat     = sm.OLS(Y_em, make_X(em_df, ['up_pat_count',        'down_pat_count'])).fit(**cluster_em)
         print(model_em_pat.summary())
-        model_em_cit    = sm.OLS(Y_em, X_em_cit).fit(**cluster)
+        model_em_cit     = sm.OLS(Y_em, make_X(em_df, ['up_pat_cite',         'down_pat_cite'])).fit(**cluster_em)
         print(model_em_cit.summary())
+
+        # Emissions on patents (current + lagged)
+        model_em_pat_lag = sm.OLS(Y_em, make_X(em_df, ['up_pat_count',        'down_pat_count',
+                                                         'up_pat_count_lag',    'down_pat_count_lag'])).fit(**cluster_em)
+        print(model_em_pat_lag.summary())
+        model_em_cit_lag = sm.OLS(Y_em, make_X(em_df, ['up_pat_cite',         'down_pat_cite',
+                                                         'up_pat_cite_lag',     'down_pat_cite_lag'])).fit(**cluster_em)
+        print(model_em_cit_lag.summary())
 
 
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        pat_df      = reg_df.dropna(subset=['clean_pat_share', 'clean_cite_share'])
-        period_fe_p = pd.get_dummies(pat_df['period'], drop_first=True, dtype=float)
-        cluster_pat = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df['BLS_Industry']}}
+        # Current period only (no lag required)
+        pat_df_cur  = reg_df[reg_df[['clean_pat_share', 'clean_cite_share']].gt(0).all(axis=1)]
+        #pat_df_cur  = pat_df_cur[pat_df_cur['period'] >= 2017]
+        cluster_cur = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df_cur['BLS_Industry']}}
+        
+        pat_df_em   = pat_df_cur.dropna(subset=['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten'])
+        cluster_em_pat = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df_em['BLS_Industry']}}
 
-        def make_X_pat(cols):
-            return sm.add_constant(pd.concat([pat_df[cols], period_fe_p], axis=1))
+        Y_count_cur = pat_df_cur['clean_pat_share']
+        Y_cite_cur  = pat_df_cur['clean_cite_share']
 
-        X_pat_em  = make_X_pat(['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten'])
-        X_pat_pc  = make_X_pat(['up_pat_count',        'down_pat_count'])
-        X_pat_cit = make_X_pat(['up_pat_cite',         'down_pat_cite'])
+        # Count on emissions
+        model_count_em   = sm.OLS(pat_df_em['clean_pat_share'], make_X(pat_df_em, ['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten'])).fit(**cluster_em_pat)
+        print(model_count_em.summary())
 
-        Y_pat_count = pat_df['clean_pat_share']
-        model_pat_count_em  = sm.OLS(Y_pat_count, X_pat_em).fit(**cluster_pat)
-        print(model_pat_count_em.summary())
-        model_pat_count_pc  = sm.OLS(Y_pat_count, X_pat_pc).fit(**cluster_pat)
-        print(model_pat_count_pc.summary())
+        # Count on count (current)
+        model_count_pc   = sm.OLS(Y_count_cur, make_X(pat_df_cur, ['up_pat_count',       'down_pat_count'])).fit(**cluster_cur)
+        print(model_count_pc.summary())
 
-        Y_pat_cite = pat_df['clean_cite_share']
-        model_pat_cite_em   = sm.OLS(Y_pat_cite, X_pat_em).fit(**cluster_pat)
-        print(model_pat_cite_em.summary())
-        model_pat_cite_cit  = sm.OLS(Y_pat_cite, X_pat_cit).fit(**cluster_pat)
-        print(model_pat_cite_cit.summary())
+        # Cite on emissions
+        model_cite_em    = sm.OLS(pat_df_em['clean_cite_share'],  make_X(pat_df_em, ['up_dlog_CO2e_inten', 'down_dlog_CO2e_inten'])).fit(**cluster_em_pat)
+        print(model_cite_em.summary())
+
+        # Cite on cite (current)
+        model_cite_cc    = sm.OLS(Y_cite_cur,  make_X(pat_df_cur, ['up_pat_cite',        'down_pat_cite'])).fit(**cluster_cur)
+        print(model_cite_cc.summary())
+
+        # Current + lagged (requires lag to be non-zero)
+        pat_df_lag  = reg_df[reg_df[['clean_pat_share', 'clean_cite_share',
+                                     'up_pat_count_lag', 'down_pat_count_lag',
+                                     'up_pat_cite_lag',  'down_pat_cite_lag']].gt(0).all(axis=1)]
+        #pat_df_lag  = pat_df_lag[pat_df_lag['period'] >= 2017]
+        cluster_lag = {'cov_type': 'cluster', 'cov_kwds': {'groups': pat_df_lag['BLS_Industry']}}
+
+        Y_count_lag = pat_df_lag['clean_pat_share']
+        Y_cite_lag  = pat_df_lag['clean_cite_share']
+
+        # Count on count (current + lagged)
+        model_count_pc_lag = sm.OLS(Y_count_lag, make_X(pat_df_lag, ['up_pat_count',     'down_pat_count',
+                                                                       'up_pat_count_lag', 'down_pat_count_lag'])).fit(**cluster_lag)
+        print(model_count_pc_lag.summary())
+
+        # Cite on cite (current + lagged)
+        model_cite_cc_lag  = sm.OLS(Y_cite_lag,  make_X(pat_df_lag, ['up_pat_cite',      'down_pat_cite',
+                                                                       'up_pat_cite_lag',  'down_pat_cite_lag'])).fit(**cluster_lag)
+        print(model_cite_cc_lag.summary())
     
         
         # ----------- #
