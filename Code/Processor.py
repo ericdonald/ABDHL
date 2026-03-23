@@ -694,15 +694,16 @@ class Processor:
             w_arr = weight.to_numpy()
             g_arr = groups.to_numpy()
 
-            # Split by sign (unweighted, clustered by group)
-            mask_pos = x_arr >= 0
-            mask_neg = x_arr <  0
+            # Split slope: β_0 + β_1 * x * 1(x>0)
+            mask_pos   = x_arr >= 0
+            mask_neg   = x_arr <  0
+            x_pos_only = x_arr * mask_pos  # x for positive values, 0 elsewhere
 
-            m_pos = sm.WLS(y_arr[mask_pos], sm.add_constant(x_arr[mask_pos]), w_arr[mask_pos]).fit(cov_type='cluster', cov_kwds={'groups': g_arr[mask_pos]})
-            m_neg = sm.WLS(y_arr[mask_neg], sm.add_constant(x_arr[mask_neg]), w_arr[mask_neg]).fit(cov_type='cluster', cov_kwds={'groups': g_arr[mask_neg]})
+            X_split = sm.add_constant(np.column_stack([x_arr, x_pos_only]))
+            m_split = sm.WLS(y_arr, X_split, w_arr).fit(cov_type='cluster', cov_kwds={'groups': g_arr})
 
             return dict(
-                m=m, m_sq=m_sq, m_uw=m_uw, m_pos=m_pos, m_neg=m_neg,
+                m=m, m_sq=m_sq, m_uw=m_uw, m_split=m_split,
                 x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
                 mask_pos=mask_pos, mask_neg=mask_neg,
                 x_col=x_col
@@ -775,14 +776,14 @@ class Processor:
             plt.savefig(f'{save_dir}/{prefix}_L2.png')
             plt.show()
 
-            # --- Split by sign ---
+           # --- Split by sign ---
             x_pos = x[r['mask_pos']]
             x_neg = x[r['mask_neg']]
             y_hat_pos = r['m_pos'].params[0] + r['m_pos'].params[1] * x_pos
             y_hat_neg = r['m_neg'].params[0] + r['m_neg'].params[1] * x_neg
 
             fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax, y)
+            scatter_periods(ax)
             ax.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="WLS fit (x≥0)")
             ax.plot(x_neg, y_hat_neg, color='cyan',   linewidth=2, label="WLS fit (x<0)")
             annotate(ax, f"Slope (x≥0) = {r['m_pos'].params[1]:.3f}{stars(r['m_pos'])}", 0.95)
