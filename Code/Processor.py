@@ -41,7 +41,7 @@ class Processor:
                      'Perfluoropropane': 8830,
                      'Sulfur hexafluoride': 22800
                      }
-        self.CPC_classes = ["Y02B", "Y02C", "Y02D", "Y02E", "Y02P", "Y02T", "Y02W", "B60L"]
+        self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
 
         
         
@@ -1130,7 +1130,7 @@ class Processor:
         dlog_CO2e_early = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
 
         net_em = compute_network_effect(self.IO_end, dlog_CO2e, 'dlog_CO2e_inten')
-        net_em_late = compute_network_effect(self.IO_mid, dlog_CO2e_early, 'dlog_CO2e_inten_late')
+        net_em_late = compute_network_effect(self.IO_end, dlog_CO2e_late, 'dlog_CO2e_inten_late')
         net_em_early = compute_network_effect(self.IO_mid, dlog_CO2e_early, 'dlog_CO2e_inten_early')
 
         reg_df = pd.DataFrame({
