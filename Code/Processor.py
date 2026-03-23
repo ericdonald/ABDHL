@@ -96,7 +96,7 @@ class Processor:
             .sort_values(['Sector', 'Year'])
             .groupby('Sector')['CO2e']
             .transform(lambda x: x.apply(np.log).diff().abs())
-            ) > 1
+            ) > np.log(1.5)
     
         flagged_industries = EPA_df['Sector'][jump_mask].unique()
         
@@ -471,19 +471,23 @@ class Processor:
 
 
     def IO_Change(self, Year_start, Year_end):
+    def IO_Change(self, Year_start, Year_mid, Year_end):
         """""
         Plot of Changes in IO Network from Decarbonization
     
         Output: Results/Tables/sector_extremes_table.tex
+                Results/Figures/Baseline_L1_uw.png
                 Results/Figures/Baseline_L1.png
                 Results/Figures/Baseline_L2.png
-                Results/Figures/Baseline_em_wgt.png
                 Results/Figures/Baseline_split.png
+                Results/Figures/Leontief_L1_uw.png
                 Results/Figures/Leontief_L1.png
                 Results/Figures/Leontief_L2.png
-                Results/Figures/Leontief_em_wgt.png
+                Results/Figures/Leontief_split.png
+                Results/Figures/Reduced_L1_uw.png
                 Results/Figures/Reduced_L1.png
                 Results/Figures/Reduced_L2.png
+                Results/Figures/Reduced_split.png
         """""
         
         # ----------------------------------------------------------------
@@ -499,92 +503,121 @@ class Processor:
         # ------------------- #
         # Input-Output Matrix #
         # ------------------- #
-        J = self.IO_start.shape[0]
-        
-        I = np.eye(J)
+        J       = self.IO_start.shape[0]
+        manu    = slice(7-1, 94-1)  # 0-indexed rows for non-service industries
+ 
+        I        = np.eye(J)
         LI_start = np.linalg.inv(I - self.IO_start)
-        LI_end = np.linalg.inv(I - self.IO_end)
-        
-        #Cut oil and gas extraction as well as coal mining, then normalize
-        def reduce_and_normalize(IO):
-            IO_r = np.delete(np.delete(IO, [6, 7], axis=0), [6, 7], axis=1)
+        LI_mid   = np.linalg.inv(I - self.IO_mid)
+        LI_end   = np.linalg.inv(I - self.IO_end)
+ 
+        # Baseline: non-service rows, all columns
+        IO_start_manu = self.IO_start[manu, :]
+        IO_mid_manu   = self.IO_mid[manu, :]
+        IO_end_manu   = self.IO_end[manu, :]
+ 
+        # Leontief: non-service rows, all columns
+        LI_start_manu = LI_start[manu, :]
+        LI_mid_manu   = LI_mid[manu, :]
+        LI_end_manu   = LI_end[manu, :]
+ 
+        # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
+        fossil_cols = [6, 7]
+        def drop_and_normalize(IO):
+            IO_r = np.delete(IO[manu, :], fossil_cols, axis=1)
             return IO_r / IO_r.sum(axis=1, keepdims=True)
 
-        IO_start_reduced = reduce_and_normalize(self.IO_start)
-        IO_end_reduced   = reduce_and_normalize(self.IO_end)
+        IO_start_reduced = drop_and_normalize(self.IO_start)
+        IO_mid_reduced   = drop_and_normalize(self.IO_mid)
+        IO_end_reduced   = drop_and_normalize(self.IO_end)
 
         def tv_metrics(A, B):
-            diff = np.abs(B - A)
-            tv   = 0.5 * diff.sum(axis=1)
-            tv_sq = 0.5 * ((diff**2).sum(axis=1))**(1/2)
-            return tv, tv_sq
+           diff  = np.abs(B - A)
+           tv    = 0.5 * diff.sum(axis=1)
+           tv_sq = 0.5 * ((diff**2).sum(axis=1))**(1/2)
+           return tv, tv_sq
 
-        tv,         tv_sq         = tv_metrics(self.IO_start,    self.IO_end)
-        tv_LI,      tv_sq_LI      = tv_metrics(LI_start,         LI_end)
-        tv_reduced, tv_sq_reduced = tv_metrics(IO_start_reduced, IO_end_reduced)
+        # Period 1: start -> mid
+        tv_p1,         tv_sq_p1         = tv_metrics(IO_start_manu,    IO_mid_manu)
+        tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start_manu,    LI_mid_manu)
+        tv_red_p1,     tv_sq_red_p1     = tv_metrics(IO_start_reduced, IO_mid_reduced)
 
-        def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, J):
+        # Period 2: mid -> end
+        tv_p2,         tv_sq_p2         = tv_metrics(IO_mid_manu,    IO_end_manu)
+        tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid_manu,   LI_end_manu)
+        tv_red_p2,     tv_sq_red_p2     = tv_metrics(IO_mid_reduced, IO_end_reduced)
+
+        def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, tv_red, tv_sq_red):
             return pd.DataFrame({
-                "BLS_Industry":      np.arange(1, J+1),
-                "TV_distance":       tv,
-                "TV_sq_distance":    tv_sq,
-                "TV_distance_LI":    tv_LI,
-                "TV_sq_distance_LI": tv_sq_LI})
+                "BLS_Industry":           np.arange(7, 94),
+                "TV_distance":            tv,
+                "TV_sq_distance":         tv_sq,
+                "TV_distance_LI":         tv_LI,
+                "TV_sq_distance_LI":      tv_sq_LI,
+                "TV_distance_reduced":    tv_red,
+                "TV_sq_distance_reduced": tv_sq_red})
 
-        def make_reduced_df(tv_r, tv_sq_r, J):
-            return pd.DataFrame({
-                "BLS_Industry":           np.concatenate([np.arange(1, 7), np.arange(9, J+1)]),
-                "TV_distance_reduced":    tv_r,
-                "TV_sq_distance_reduced": tv_sq_r})
+        IO_df_p1 = make_IO_df(tv_p1, tv_sq_p1, tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
+        IO_df_p1['period'] = 1
 
-        IO_df = make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, J)
-        IO_df = IO_df.merge(make_reduced_df(tv_reduced, tv_sq_reduced, J), on='BLS_Industry', how='left')
+        IO_df_p2 = make_IO_df(tv_p2, tv_sq_p2, tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
+        IO_df_p2['period'] = 2
+
+        IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
 
         
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values=['CO2e_intensity_Industry', 'CO2e_Industry'])
-        IO_wide_df = IO_wide_df.dropna()
-        
-        idx1 = IO_wide_df.index.to_numpy(dtype=int)
-        idx0 = idx1 - 1
-        
-        LI_start_sub = LI_start[np.ix_(idx0, idx0)]
-        LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
-
-        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values=['CO2e_intensity_Industry', 'CO2e_Industry'])
+        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year",
+                                       values=['CO2e_intensity_Industry', 'CO2e_Industry'])
         IO_wide_df = IO_wide_df.dropna()
 
         idx1 = IO_wide_df.index.to_numpy(dtype=int)
         idx0 = idx1 - 1
 
         LI_start_sub = LI_start[np.ix_(idx0, idx0)]
+        LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
         LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
 
         CO2e_LI_start = LI_start_sub @ IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()
+        CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()
         CO2e_LI_end   = LI_end_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()
-        
+
         CO2e_lev_LI_start = LI_start_sub @ IO_wide_df['CO2e_Industry', Year_start].to_numpy()
+        CO2e_lev_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_Industry', Year_mid].to_numpy()
 
-        em_df = pd.DataFrame({
+        em_p1 = pd.DataFrame({
             "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()) - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
-            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_start)),
+            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())
+                                  - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
+            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
             "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_start].to_numpy(),
-            "CO2e_Industry_LI":   CO2e_lev_LI_start})
+            "CO2e_Industry_LI":   CO2e_lev_LI_start,
+            "period": 1})
 
-        distance_cols = ['BLS_Industry',
-                         'TV_distance',       'TV_sq_distance',
-                         'TV_distance_LI',    'TV_sq_distance_LI',
-                         'TV_distance_reduced','TV_sq_distance_reduced']
+        em_p2 = pd.DataFrame({
+            "BLS_Industry":       IO_wide_df.index,
+            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())
+                                  - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())),
+            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
+            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy(),
+            "CO2e_Industry_LI":   CO2e_lev_LI_mid,
+            "period": 2})
 
-        emission_cols = ['BLS_Industry','CO2e_Industry', 'CO2e_Industry_LI',
+        distance_cols = ['BLS_Industry', 'period',
+                         'TV_distance',         'TV_sq_distance',
+                         'TV_distance_LI',      'TV_sq_distance_LI',
+                         'TV_distance_reduced', 'TV_sq_distance_reduced']
+
+        emission_cols = ['BLS_Industry', 'period',
+                         'CO2e_Industry', 'CO2e_Industry_LI',
                          'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
 
+        em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
         reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
                           em_df[emission_cols].drop_duplicates(),
-                          on=['BLS_Industry'],
+                          on=['BLS_Industry', 'period'],
                           how='inner')
 
         
@@ -681,408 +714,155 @@ class Processor:
 
         # ----------------------------------------------------------------
         
-        # ----------- #
-        # Regressions #
-        # ----------- #
-        X = sm.add_constant(reg_df['dlog_CO2e_inten'])
-        Y = reg_df['TV_distance']
+        # ---------------- #
+        # Helper Functions #
+        # ---------------- #
         
-        model = sm.OLS(Y, X).fit(cov_type='HC3')
-        print(model.summary())
-        
-        beta0 = model.params['const']
-        beta1 = model.params['dlog_CO2e_inten']
-        
-        x = reg_df['dlog_CO2e_inten'].to_numpy()
-        y = Y.to_numpy()
-        y_hat = beta0 + beta1 * x
-        
-        # Square Metric
-        Y_sq = reg_df['TV_sq_distance']
-        
-        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
-        print(model_sq.summary())
-        
-        beta0_sq = model_sq.params['const']
-        beta1_sq = model_sq.params['dlog_CO2e_inten']
-        
-        y_sq = Y_sq.to_numpy()
-        y_hat_sq = beta0_sq + beta1_sq * x
-        
-        # Initial Emissions Weighted   
-        weight = reg_df['CO2e_Industry']
-        
-        model_em = sm.WLS(Y, X, weight).fit(cov_type='HC3')
-        print(model_em.summary())
-        
-        beta0_em = model_em.params['const']
-        beta1_em = model_em.params['dlog_CO2e_inten']
-        
-        y_hat_em = beta0_em + beta1_em * x
-        
-        # Split by Sign 
-        mask_pos = x >= 0
-        mask_neg = x < 0
+        def run_regressions(df, x_col, y_col, y_sq_col, weight_col, group_col):
+            X      = sm.add_constant(df[x_col])
+            Y      = df[y_col]
+            Y_sq   = df[y_sq_col]
+            weight = df[weight_col]
+            groups = df[group_col]
 
-        x_pos, y_pos = x[mask_pos], y[mask_pos]
-        x_neg, y_neg = x[mask_neg], y[mask_neg]
+            m      = sm.WLS(Y,    X, weight).fit(cov_type='cluster', cov_kwds={'groups': groups})
+            m_sq   = sm.WLS(Y_sq, X, weight).fit(cov_type='cluster', cov_kwds={'groups': groups})
+            m_uw   = sm.OLS(Y,    X).fit(cov_type='cluster', cov_kwds={'groups': groups})
 
-        model_pos = sm.OLS(y_pos, sm.add_constant(x_pos)).fit(cov_type='HC3')
-        print(model_pos.summary())
-        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
-        print(model_neg.summary())
-        
-        beta0_pos = model_pos.params[0]
-        beta1_pos = model_pos.params[1]
-        
-        y_hat_pos = beta0_pos + beta1_pos * x_pos
-        
-        beta0_neg = model_neg.params[0]
-        beta1_neg = model_neg.params[1]
-        
-        y_hat_neg = beta0_neg + beta1_neg * x_neg
-        
-        
-        # ----------- #
-        # Plot Graphs #
-        # ----------- #
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
-        
-        p1 = model.pvalues['dlog_CO2e_inten']
-        stars1 = gpf.get_stars(p1)
-        plt.annotate(
-            f"Slope = {beta1:.3f}{stars1}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L1.png')
-        plt.show()
-        
-        # Square Metric
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
-        
-        p_sq = model_sq.pvalues['dlog_CO2e_inten']
-        stars_sq = gpf.get_stars(p_sq)
-        plt.annotate(
-            f"Slope = {beta1_sq:.3f}{stars_sq}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("Euclidean distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_L2.png')
-        plt.show()
-        
-        # Initial Emissions Weighted 
-        weight = weight.to_numpy()
-        scale = 1000 / weight.max()
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, s=weight*scale, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
-        
-        p1 = model_em.pvalues['dlog_CO2e_inten']
-        stars1_em = gpf.get_stars(p1)
-        plt.annotate(
-            f"Slope = {beta1_em:.3f}{stars1_em}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.ylim(bottom=0)
-        leg = plt.legend(loc='upper right')
-        leg.legend_handles[0]._sizes = [30]
-        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_em_wgt.png')
-        plt.show()
-        
-        # Split by Sign 
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="OLS fit (x>0)")
-        plt.plot(x_neg, y_hat_neg, color='cyan', linewidth=2, label="OLS fit (x<0)")
-        
-        p1_pos = model_pos.pvalues[1]
-        stars1_pos = gpf.get_stars(p1_pos)
-        plt.annotate(
-            f"Slope (x>0) = {beta1_pos:.3f}{stars1_pos}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        p1_neg = model_neg.pvalues[1]
-        stars1_neg = gpf.get_stars(p1_neg)
-        plt.annotate(
-            f"Slope (x<0) = {beta1_neg:.3f}{stars1_neg}",
-            xy=(0.05, 0.883), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Baseline_split.png')
-        plt.show()
-        
+            x_arr = df[x_col].to_numpy()
+            y_arr = Y.to_numpy()
+            y_sq_arr = Y_sq.to_numpy()
+            w_arr = weight.to_numpy()
+            g_arr = groups.to_numpy()
 
-        # ----------------------------------------------------------------
-    
-        # Leontief inverse.
-    
-        # ----------------------------------------------------------------
-        
-        # ----------- #
-        # Regressions #
-        # ----------- #
-        X = sm.add_constant(reg_df['dlog_CO2e_inten_LI'])
-        Y = reg_df['TV_distance_LI']
-        
-        model = sm.OLS(Y, X).fit(cov_type='HC3')
-        print(model.summary())
-        
-        beta0 = model.params['const']
-        beta1 = model.params['dlog_CO2e_inten_LI']
-        
-        x = reg_df['dlog_CO2e_inten_LI'].to_numpy()
-        y = Y.to_numpy()
-        y_hat = beta0 + beta1 * x
-        
-        # Square Metric
-        Y_sq = reg_df['TV_sq_distance_LI']
-        
-        model_sq = sm.OLS(Y_sq, X).fit(cov_type='HC3')
-        print(model_sq.summary())
-        
-        beta0_sq = model_sq.params['const']
-        beta1_sq = model_sq.params['dlog_CO2e_inten_LI']
-        
-        y_sq = Y_sq.to_numpy()
-        y_hat_sq = beta0_sq + beta1_sq * x
-        
-        # Initial Emissions Weighted   
-        weight = reg_df['CO2e_Industry_LI']
-        
-        model_em = sm.WLS(Y, X, weight).fit(cov_type='HC3')
-        print(model_em.summary())
-        
-        beta0_em = model_em.params['const']
-        beta1_em = model_em.params['dlog_CO2e_inten_LI']
-        
-        y_hat_em = beta0_em + beta1_em * x
-        
-        # Split by Sign 
-        mask_pos = x >= 0
-        mask_neg = x < 0
+            # Split by sign (unweighted, clustered by group)
+            mask_pos = x_arr >= 0
+            mask_neg = x_arr <  0
 
-        x_pos, y_pos = x[mask_pos], y[mask_pos]
-        x_neg, y_neg = x[mask_neg], y[mask_neg]
+            m_pos = sm.WLS(y_arr[mask_pos], sm.add_constant(x_arr[mask_pos]), w_arr[mask_pos]).fit(cov_type='cluster', cov_kwds={'groups': g_arr[mask_pos]})
+            m_neg = sm.WLS(y_arr[mask_neg], sm.add_constant(x_arr[mask_neg]), w_arr[mask_neg]).fit(cov_type='cluster', cov_kwds={'groups': g_arr[mask_neg]})
 
-        model_pos = sm.OLS(y_pos, sm.add_constant(x_pos)).fit(cov_type='HC3')
-        print(model_pos.summary())
-        model_neg = sm.OLS(y_neg, sm.add_constant(x_neg)).fit(cov_type='HC3')
-        print(model_neg.summary())
+            return dict(
+                m=m, m_sq=m_sq, m_uw=m_uw, m_pos=m_pos, m_neg=m_neg,
+                x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
+                mask_pos=mask_pos, mask_neg=mask_neg,
+                x_col=x_col
+            )
         
-        beta0_pos = model_pos.params[0]
-        beta1_pos = model_pos.params[1]
-        
-        y_hat_pos = beta0_pos + beta1_pos * x_pos
-        
-        beta0_neg = model_neg.params[0]
-        beta1_neg = model_neg.params[1]
-        
-        y_hat_neg = beta0_neg + beta1_neg * x_neg
-        
-        
-        # ----------- #
-        # Plot Graphs #
-        # ----------- #
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
-        
-        p1 = model.pvalues['dlog_CO2e_inten_LI']
-        stars1 = gpf.get_stars(p1)
-        plt.annotate(
-            f"Slope = {beta1:.3f}{stars1}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L1.png')
-        plt.show()
-        
-        # Square Metric
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
-        
-        p_sq = model_sq.pvalues['dlog_CO2e_inten_LI']
-        stars_sq = gpf.get_stars(p_sq)
-        plt.annotate(
-            f"Slope = {beta1_sq:.3f}{stars_sq}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("Euclidean distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_L2.png')
-        plt.show()
-        
-        # Initial Emissions Weighted 
-        weight = weight.to_numpy()
-        scale = 1000 / weight.max()
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, s=weight*scale, alpha=0.7, color='purple', label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat_em, color='red', linewidth=2, label="OLS fit")
-        
-        p1 = model.pvalues['dlog_CO2e_inten_LI']
-        stars1 = gpf.get_stars(p1)
-        plt.annotate(
-            f"Slope = {beta1:.3f}{stars1}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        leg = plt.legend(loc='upper right')
-        leg.legend_handles[0]._sizes = [30]
-        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_em_wgt.png')
-        plt.show()
-        
-        # Split by Sign 
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="OLS fit (x>0)")
-        plt.plot(x_neg, y_hat_neg, color='cyan', linewidth=2, label="OLS fit (x<0)")
-        
-        p1_pos = model_pos.pvalues[1]
-        stars1_pos = gpf.get_stars(p1_pos)
-        plt.annotate(
-            f"Slope (x>0) = {beta1_pos:.3f}{stars1_pos}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        p1_neg = model_neg.pvalues[1]
-        stars1_neg = gpf.get_stars(p1_neg)
-        plt.annotate(
-            f"Slope (x<0) = {beta1_neg:.3f}{stars1_neg}",
-            xy=(0.05, 0.883), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Leontief_split.png')
-        plt.show()
+        def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir):
+            x, y, y_sq, w = r['x'], r['y'], r['y_sq'], r['w']
+            x_col  = r['x_col']
+            scale  = 1000 / w.max()
+            stars_named = lambda m, col: gpf.get_stars(m.pvalues[col])
+            stars       = lambda m, k=1: gpf.get_stars(m.pvalues[k])
+
+            mask_p1 = df['period'].to_numpy() == 1
+            mask_p2 = df['period'].to_numpy() == 2
+
+            def annotate(ax, text, y_frac):
+                ax.annotate(
+                    text, xy=(0.05, y_frac), xycoords='axes fraction',
+                    fontsize=11, color='green',
+                    bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7))
+
+            def scatter_periods(ax, y_arr):
+                ax.scatter(x[mask_p1], y_arr[mask_p1], s=w[mask_p1]*scale, alpha=0.7, color='purple', label=f"Sectors: ({year_start}–{year_mid})")
+                ax.scatter(x[mask_p2], y_arr[mask_p2], s=w[mask_p2]*scale, alpha=0.7, color='blue',   label=f"Sectors: ({year_mid}–{year_end})")
+
+            def fix_legend(ax):
+                leg = ax.legend(loc='upper right')
+                for h in leg.legend_handles:
+                    h._sizes = [30]
+
+            # --- L1 unweighted ---
+            fig, ax = plt.subplots(figsize=(8, 6))
+            scatter_periods(ax, y)
+            y_hat_uw = r['m_uw'].params['const'] + r['m_uw'].params[x_col] * x
+            ax.plot(x, y_hat_uw, color='red', linewidth=2, label="OLS fit")
+            annotate(ax, f"Slope = {r['m_uw'].params[x_col]:.3f}{stars_named(r['m_uw'], x_col)}", 0.95)
+            ax.set_xlabel("-Δ ln(emissions intensity)")
+            ax.set_ylabel(ylabel_tv)
+            ax.set_ylim(bottom=0)
+            ax.grid(alpha=0.3)
+            fix_legend(ax)
+            plt.savefig(f'{save_dir}/{prefix}_L1_uw.png')
+            plt.show()
+
+            # --- L1: TV distance ---
+            fig, ax = plt.subplots(figsize=(8, 6))
+            scatter_periods(ax, y)
+            y_hat = r['m'].params['const'] + r['m'].params[x_col] * x
+            ax.plot(x, y_hat, color='red', linewidth=2, label="WLS fit")
+            annotate(ax, f"Slope = {r['m'].params[x_col]:.3f}{stars_named(r['m'], x_col)}", 0.95)
+            ax.set_xlabel("-Δ ln(emissions intensity)")
+            ax.set_ylabel(ylabel_tv)
+            ax.set_ylim(bottom=0)
+            ax.grid(alpha=0.3)
+            fix_legend(ax)
+            plt.savefig(f'{save_dir}/{prefix}_L1.png')
+            plt.show()
+
+            # --- L2: 2-norm distance ---
+            fig, ax = plt.subplots(figsize=(8, 6))
+            scatter_periods(ax, y_sq)
+            y_hat_sq = r['m_sq'].params['const'] + r['m_sq'].params[x_col] * x
+            ax.plot(x, y_hat_sq, color='red', linewidth=2, label="WLS fit")
+            annotate(ax, f"Slope = {r['m_sq'].params[x_col]:.3f}{stars_named(r['m_sq'], x_col)}", 0.95)
+            ax.set_xlabel("-Δ ln(emissions intensity)")
+            ax.set_ylabel(ylabel_sq)
+            ax.set_ylim(bottom=0)
+            ax.grid(alpha=0.3)
+            fix_legend(ax)
+            plt.savefig(f'{save_dir}/{prefix}_L2.png')
+            plt.show()
+
+            # --- Split by sign ---
+            x_pos = x[r['mask_pos']]
+            x_neg = x[r['mask_neg']]
+            y_hat_pos = r['m_pos'].params[0] + r['m_pos'].params[1] * x_pos
+            y_hat_neg = r['m_neg'].params[0] + r['m_neg'].params[1] * x_neg
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            scatter_periods(ax, y)
+            ax.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="WLS fit (x≥0)")
+            ax.plot(x_neg, y_hat_neg, color='cyan',   linewidth=2, label="WLS fit (x<0)")
+            annotate(ax, f"Slope (x≥0) = {r['m_pos'].params[1]:.3f}{stars(r['m_pos'])}", 0.95)
+            annotate(ax, f"Slope (x<0) = {r['m_neg'].params[1]:.3f}{stars(r['m_neg'])}", 0.883)
+            ax.set_xlabel("-Δ ln(emissions intensity)")
+            ax.set_ylabel(ylabel_tv)
+            ax.grid(alpha=0.3)
+            fix_legend(ax)
+            plt.savefig(f'{save_dir}/{prefix}_split.png')
+            plt.show()
+
+        fig_dir = f'{self.Directory}/Results/Figures'
         
         
-        # ----------------------------------------------------------------
-    
-        # Reduced and normalized IO table.
-    
-        # ----------------------------------------------------------------
-        
-        reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced', 'dlog_CO2e_inten'])
-        
-        
-        # ----------- #
-        # Regressions #
-        # ----------- #
-        X = sm.add_constant(reduced_df['dlog_CO2e_inten'])
-        Y = reduced_df['TV_distance_reduced']
-        
-        model = sm.OLS(Y, X, missing='drop').fit(cov_type='HC3')
-        print(model.summary())
-        
-        beta0 = model.params['const']
-        beta1 = model.params['dlog_CO2e_inten']
-        
-        x = reduced_df['dlog_CO2e_inten'].to_numpy()
-        y = Y.to_numpy()
-        y_hat = beta0 + beta1 * x
-        
-        # Square Metric
-        Y_sq = reduced_df['TV_sq_distance_reduced']
-        
-        model_sq = sm.OLS(Y_sq, X, missing='drop').fit(cov_type='HC3')
-        print(model_sq.summary())
-        
-        beta0_sq = model_sq.params['const']
-        beta1_sq = model_sq.params['dlog_CO2e_inten']
-        
-        y_sq = Y_sq.to_numpy()
-        y_hat_sq = beta0_sq + beta1_sq * x
+        # -------- #
+        # Baseline #
+        # -------- #
+        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'CO2e_Industry', 'BLS_Industry')
+        plot_case(r_base, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
+                  'Baseline', Year_start, Year_mid, Year_end, fig_dir)
         
         
-        # ----------- #
-        # Plot Graphs #
-        # ----------- #
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat, color='red', linewidth=2, label="OLS fit")
+        # ---------------- #
+        # Leontief Inverse #
+        # ---------------- #
+        r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI', 'BLS_Industry')
+        plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
+                  'Leontief', Year_start, Year_mid, Year_end, fig_dir)
         
-        p1 = model.pvalues['dlog_CO2e_inten']
-        stars1 = gpf.get_stars(p1)
-        plt.annotate(
-            f"Slope = {beta1:.3f}{stars1}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("TV distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L1.png')
-        plt.show()
         
-        # Square Metric
-        plt.figure(figsize=(8,6))
-        plt.scatter(x, y_sq, alpha=0.7, label=f"Sectors ({Year_start}–{Year_end})")
-        plt.plot(x, y_hat_sq, color='red', linewidth=2, label="OLS fit")
+        # ------- #
+        # Reduced #
+        # ------- #
+        reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
+        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry', 'BLS_Industry')
+        plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
+                  'Reduced', Year_start, Year_mid, Year_end, fig_dir)
         
-        p_sq = model_sq.pvalues['dlog_CO2e_inten']
-        stars_sq = gpf.get_stars(p_sq)
-        plt.annotate(
-            f"Slope = {beta1_sq:.3f}{stars_sq}",
-            xy=(0.05, 0.95), xycoords='axes fraction',
-            fontsize=11, color='green',
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7)
-        )
-        plt.xlabel("-Δ ln(emissions intensity)")
-        plt.ylabel("Euclidean distance (input-share change)")
-        plt.grid(alpha=0.3)
-        plt.legend(loc='upper right')
-        plt.savefig(f'{self.Directory}/Results/Figures/Reduced_L2.png')
-        plt.show()
+        
         
         
     

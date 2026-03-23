@@ -32,7 +32,7 @@ P.Cleaner(Year_start, Year_mid, Year_end, 0)
 # ---------------- #
 # IO Change Graphs #
 # ---------------- #
-P.IO_Change(Year_start, Year_end)
+P.IO_Change(Year_start, Year_mid, Year_end)
 
 
 # --------------------- #
