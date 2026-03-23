@@ -470,7 +470,6 @@ class Processor:
 
 
 
-    def IO_Change(self, Year_start, Year_end):
     def IO_Change(self, Year_start, Year_mid, Year_end):
         """""
         Plot of Changes in IO Network from Decarbonization
