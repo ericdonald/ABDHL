@@ -973,8 +973,11 @@ class Processor:
         X_em_cit = make_X(['up_pat_cite',          'down_pat_cite'])
 
         model_em        = sm.OLS(Y_em, X_em).fit(**cluster)
+        print(model_em.summary())
         model_em_pat    = sm.OLS(Y_em, X_em_pat).fit(**cluster)
+        print(model_em_pat.summary())
         model_em_cit    = sm.OLS(Y_em, X_em_cit).fit(**cluster)
+        print(model_em_cit.summary())
 
 
         # ------------------ #
@@ -993,13 +996,15 @@ class Processor:
 
         Y_pat_count = pat_df['clean_pat_share']
         model_pat_count_em  = sm.OLS(Y_pat_count, X_pat_em).fit(**cluster_pat)
+        print(model_pat_count_em.summary())
         model_pat_count_pc  = sm.OLS(Y_pat_count, X_pat_pc).fit(**cluster_pat)
-        model_pat_count_cit = sm.OLS(Y_pat_count, X_pat_cit).fit(**cluster_pat)
+        print(model_pat_count_pc.summary())
 
         Y_pat_cite = pat_df['clean_cite_share']
         model_pat_cite_em   = sm.OLS(Y_pat_cite, X_pat_em).fit(**cluster_pat)
-        model_pat_cite_pc   = sm.OLS(Y_pat_cite, X_pat_pc).fit(**cluster_pat)
+        print(model_pat_cite_em.summary())
         model_pat_cite_cit  = sm.OLS(Y_pat_cite, X_pat_cit).fit(**cluster_pat)
+        print(model_pat_cite_cit.summary())
     
         
         # ----------- #
