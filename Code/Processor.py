@@ -866,7 +866,7 @@ class Processor:
         """""
         Upstream and Downstream Incentives for Greenification
         
-        Output: Results/Tables/Fact_Regressions.tex
+        Output: Results/Tables/Network_Regressions.tex
         
         """""
         
@@ -1078,15 +1078,15 @@ class Processor:
         # Print Table #
         # ----------- #
         models = [
-            model_em,
-            model_em_pat_net,
-            model_em_cite_net,
+            model_em_em,
+            model_em_pat,
+            model_em_cit,
             None,
-            model_pat_count,
-            model_pat_count_net,
+            model_count_em,
+            model_count_pc,
             None,
-            model_pat_cite,
-            model_pat_cite_net,
+            model_cite_em,
+            model_cite_cc,
         ]
 
         variables = [
@@ -1125,7 +1125,7 @@ class Processor:
         body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
         body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
 
-        out_path = f'{self.Directory}/Results/Tables/Fact_Regressions.tex'
+        out_path = f'{self.Directory}/Results/Tables/Network_Regressions.tex'
         with open(out_path, 'w') as f:
             f.write(body)
             
