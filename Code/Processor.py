@@ -122,12 +122,12 @@ class Processor:
         # -------- #
         # EXIOBASE #
         # -------- #
-        df = pd.read_csv(
-                '/Users/ericdonald/Downloads/IOT_2008_ixi/air_emissions/F.txt',
-                sep='\t',
-                header=[0, 1],  # two header rows → MultiIndex columns
-                index_col=[0, 1]  # first two columns as row index
-            )
+        # df = pd.read_csv(
+        #         '/Users/ericdonald/Downloads/IOT_2008_ixi/air_emissions/F.txt',
+        #         sep='\t',
+        #         header=[0, 1],  # two header rows → MultiIndex columns
+        #         index_col=[0, 1]  # first two columns as row index
+        #     )
         
 
         # ---------------- #
@@ -720,7 +720,7 @@ class Processor:
                 x_col=x_col
             )
         
-        def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir):
+        def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
             x, y, y_sq, w = r['x'], r['y'], r['y_sq'], r['w']
             x_col  = r['x_col']
             scale  = 1000 / w.max()
@@ -744,6 +744,22 @@ class Processor:
                 leg = ax.legend(loc='upper right')
                 for h in leg.legend_handles:
                     h._sizes = [30]
+                    
+            def annotate_sectors(ax, y_arr):
+                if labels is None:
+                    return
+                w_avg   = pd.Series(w, index=df.index).groupby(df['BLS_Industry'].values).mean()
+                top_idx = w_avg.nlargest(top_n).index
+                mask    = df['BLS_Industry'].isin(top_idx).to_numpy()
+                for xi, yi, label in zip(x[mask], y_arr[mask], labels[mask]):
+                    words = []
+                    for word in str(label).split()[:3]:
+                        if not word.isalpha():
+                            break
+                        words.append(word)
+                    short = ' '.join(words)
+                    ax.annotate(short, (xi, yi), fontsize=9, ha='left',
+                                xytext=(11, 11), textcoords='offset points')
 
             # --- L1 unweighted ---
             fig, ax = plt.subplots(figsize=(8, 6))
@@ -751,6 +767,7 @@ class Processor:
             y_hat_uw = r['m_uw'].params['const'] + r['m_uw'].params[x_col] * x
             ax.plot(x, y_hat_uw, color='red', linewidth=2, label="OLS fit")
             annotate(ax, f"Slope = {r['m_uw'].params[x_col]:.3f}{stars_named(r['m_uw'], x_col)}", 0.95)
+            annotate_sectors(ax, y)
             ax.set_xlabel("-Δ ln(emissions intensity)")
             ax.set_ylabel(ylabel_tv)
             ax.set_ylim(bottom=0)
@@ -765,6 +782,7 @@ class Processor:
             y_hat = r['m'].params['const'] + r['m'].params[x_col] * x
             ax.plot(x, y_hat, color='red', linewidth=2, label="WLS fit")
             annotate(ax, f"Slope = {r['m'].params[x_col]:.3f}{stars_named(r['m'], x_col)}", 0.95)
+            annotate_sectors(ax, y)
             ax.set_xlabel("-Δ ln(emissions intensity)")
             ax.set_ylabel(ylabel_tv)
             ax.set_ylim(bottom=0)
@@ -779,6 +797,7 @@ class Processor:
             y_hat_sq = r['m_sq'].params['const'] + r['m_sq'].params[x_col] * x
             ax.plot(x, y_hat_sq, color='red', linewidth=2, label="WLS fit")
             annotate(ax, f"Slope = {r['m_sq'].params[x_col]:.3f}{stars_named(r['m_sq'], x_col)}", 0.95)
+            annotate_sectors(ax, y_sq)
             ax.set_xlabel("-Δ ln(emissions intensity)")
             ax.set_ylabel(ylabel_sq)
             ax.set_ylim(bottom=0)
@@ -801,6 +820,7 @@ class Processor:
             ax.plot(x_neg_line, y_neg_line, color='cyan',   linewidth=2, label="WLS fit (x<0)")
             ax.plot(x_pos_line, y_pos_line, color='orange', linewidth=2, label="WLS fit (x≥0)")
             annotate(ax, f"Slope (x≥0) = {b_pos:.3f}{stars(r['m_split'], k=1)}", 0.95)
+            annotate_sectors(ax, y)
             ax.set_xlabel("-Δ ln(emissions intensity)")
             ax.set_ylabel(ylabel_tv)
             ax.grid(alpha=0.3)
@@ -816,7 +836,8 @@ class Processor:
         # -------- #
         r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'CO2e_Industry', 'BLS_Industry')
         plot_case(r_base, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
-                  'Baseline', Year_start, Year_mid, Year_end, fig_dir)
+                  'Baseline', Year_start, Year_mid, Year_end, fig_dir,
+                  labels=reg_df['Sector Title'].to_numpy())
         
         
         # ---------------- #
@@ -824,7 +845,8 @@ class Processor:
         # ---------------- #
         r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI', 'BLS_Industry')
         plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
-                  'Leontief', Year_start, Year_mid, Year_end, fig_dir)
+                  'Leontief', Year_start, Year_mid, Year_end, fig_dir,
+                  labels=reg_df['Sector Title'].to_numpy())
         
         
         # ------- #
@@ -833,7 +855,8 @@ class Processor:
         reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
         r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry', 'BLS_Industry')
         plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
-                  'Reduced', Year_start, Year_mid, Year_end, fig_dir)
+                  'Reduced', Year_start, Year_mid, Year_end, fig_dir,
+                  labels=reg_df['Sector Title'].to_numpy())
         
         
         
