@@ -486,8 +486,11 @@ class Processor:
  
         # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
         def drop_and_normalize(IO):
-            IO_r = np.delete(IO[manu, :], self.fossil_cols, axis=1)
-            return IO_r / IO_r.sum(axis=1, keepdims=True)
+            IO_manu = IO[manu, :]
+            IO_r = np.delete(IO_manu, self.fossil_cols, axis=1)
+            num = IO_manu.sum(axis=1, keepdims=True)
+            denom = IO_r.sum(axis=1, keepdims=True)
+            return IO_r * num / denom
 
         IO_start_reduced = drop_and_normalize(self.IO[Year_start])
         IO_mid_reduced   = drop_and_normalize(self.IO[Year_mid])
