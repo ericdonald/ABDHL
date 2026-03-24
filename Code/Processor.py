@@ -117,7 +117,18 @@ class Processor:
         EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
         
         #NAICS 2012
-
+        
+        
+        # -------- #
+        # EXIOBASE #
+        # -------- #
+        df = pd.read_csv(
+                '/Users/ericdonald/Downloads/IOT_2008_ixi/air_emissions/F.txt',
+                sep='\t',
+                header=[0, 1],  # two header rows → MultiIndex columns
+                index_col=[0, 1]  # first two columns as row index
+            )
+        
 
         # ---------------- #
         # NAICS Crosswalks #
@@ -699,7 +710,7 @@ class Processor:
             mask_neg   = x_arr <  0
             x_pos_only = x_arr * mask_pos  # x for positive values, 0 elsewhere
 
-            X_split = sm.add_constant(np.column_stack([x_arr, x_pos_only]))
+            X_split = sm.add_constant(x_pos_only)
             m_split = sm.WLS(y_arr, X_split, w_arr).fit(cov_type='cluster', cov_kwds={'groups': g_arr})
 
             return dict(
@@ -777,17 +788,19 @@ class Processor:
             plt.show()
 
            # --- Split by sign ---
-            x_pos = x[r['mask_pos']]
-            x_neg = x[r['mask_neg']]
-            y_hat_pos = r['m_pos'].params[0] + r['m_pos'].params[1] * x_pos
-            y_hat_neg = r['m_neg'].params[0] + r['m_neg'].params[1] * x_neg
-
+            b0    = r['m_split'].params[0]
+            b_pos = r['m_split'].params[1]
+ 
+            x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                       100)
+            x_pos_line = np.linspace(0,                       x[r['mask_pos']].max(), 100)
+            y_neg_line = b0 * np.ones(100)
+            y_pos_line = b0 + b_pos * x_pos_line
+ 
             fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax)
-            ax.plot(x_pos, y_hat_pos, color='orange', linewidth=2, label="WLS fit (x≥0)")
-            ax.plot(x_neg, y_hat_neg, color='cyan',   linewidth=2, label="WLS fit (x<0)")
-            annotate(ax, f"Slope (x≥0) = {r['m_pos'].params[1]:.3f}{stars(r['m_pos'])}", 0.95)
-            annotate(ax, f"Slope (x<0) = {r['m_neg'].params[1]:.3f}{stars(r['m_neg'])}", 0.883)
+            scatter_periods(ax, y)
+            ax.plot(x_neg_line, y_neg_line, color='cyan',   linewidth=2, label="WLS fit (x<0)")
+            ax.plot(x_pos_line, y_pos_line, color='orange', linewidth=2, label="WLS fit (x≥0)")
+            annotate(ax, f"Slope (x≥0) = {b_pos:.3f}{stars(r['m_split'], k=1)}", 0.95)
             ax.set_xlabel("-Δ ln(emissions intensity)")
             ax.set_ylabel(ylabel_tv)
             ax.grid(alpha=0.3)
