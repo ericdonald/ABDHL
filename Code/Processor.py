@@ -403,7 +403,7 @@ class Processor:
             pat_df = pat_df.merge(compustat_df,
                                 on='gvkey',
                                 how='inner')
-            pat_df = pat_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']],
+            pat_df = pat_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']].drop_duplicates(),
                                 on='naics2022_6',
                                 how='inner')
 
