@@ -245,7 +245,7 @@ class Processor:
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        Ind_CO2_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']],
+        Ind_CO2_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']].drop_duplicates(),
                                     on='BLS_Industry',
                                     how='inner')
         
@@ -257,9 +257,7 @@ class Processor:
                             on=['BLS_Industry', 'Year'],
                             how='inner')
         
-        Ind_CO2_df['CO2e_denom'] = Ind_CO2_df.groupby(['EPA_Sector', 'Year'])['Value_Added'].transform("sum")
-        Ind_CO2_df['CO2e_integrand'] = Ind_CO2_df['Value_Added'] * Ind_CO2_df['CO2e'] / Ind_CO2_df['CO2e_denom']
-        Ind_CO2_df['CO2e_Industry'] = Ind_CO2_df.groupby(['BLS_Industry', 'Year'])['CO2e_integrand'].transform("sum")
+        Ind_CO2_df['CO2e_Industry'] = Ind_CO2_df.groupby(['BLS_Industry', 'Year'])['CO2e'].transform("sum")
         Ind_CO2_df['CO2e_intensity_Industry'] = Ind_CO2_df['CO2e_Industry'] / Ind_CO2_df['Value_Added']
         
         Ind_CO2_df = Ind_CO2_df[['BLS_Industry', 'Year', 'CO2e_Industry', 'CO2e_intensity_Industry']].drop_duplicates()
