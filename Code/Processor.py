@@ -115,19 +115,7 @@ class Processor:
         
         print(f"Flagged industries account for {flagged_emissions / total_emissions:.1%} of total emissions")
         EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
-        
         #NAICS 2012
-        
-        
-        # -------- #
-        # EXIOBASE #
-        # -------- #
-        # df = pd.read_csv(
-        #         '/Users/ericdonald/Downloads/IOT_2008_ixi/air_emissions/F.txt',
-        #         sep='\t',
-        #         header=[0, 1],  # two header rows → MultiIndex columns
-        #         index_col=[0, 1]  # first two columns as row index
-        #     )
         
 
         # ---------------- #
