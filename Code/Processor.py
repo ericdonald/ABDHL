@@ -43,7 +43,7 @@ class Processor:
                      }
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
         self.manu_cols = [7, 94]
-        self.fossil_cols = [6, 7]
+        self.fossil_cols = [6, 7]#, 11] Exclude electricity as well
 
         
         
@@ -70,14 +70,20 @@ class Processor:
             MAKE_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{year}")
 
             U      = USE_df.iloc[:, 1:-3].to_numpy()
-            ind_Y  = np.sum(U, 0)
+            ind_Y  = np.sum(U, 0) #- U[-2,:] Allows exclusion of imports from revenue
             B      = (U[:-3, :] @ np.diag(ind_Y**(-1))).T
 
             M      = MAKE_df.iloc[:, 1:].to_numpy()
             com_Y  = np.sum(M, 0)[:-2]
             A      = (M[:-2, :-2] @ np.diag(com_Y**(-1))).T
 
-            return B @ A
+            IO = B @ A
+            num = IO.sum(axis=1, keepdims=True)
+            #np.fill_diagonal(IO, 0) Allows exclusion of diagonal
+            denom = IO.sum(axis=1, keepdims=True)
+
+            
+            return IO * num / denom
 
         bin_ends = list(range(BLS_year_start, Year_end+1, 5))
         self.IO = {year: compute_IO(year) for year in bin_ends}
@@ -636,8 +642,8 @@ class Processor:
             right += [""] * (m - len(right))
             return "\n".join([f"{left[i]} & {right[i]} \\\\" for i in range(m)])
         
-        largest_dlog_names   = get_sector_names(smallest_dlog_CO2e)
-        smallest_dlog_names  = get_sector_names(largest_dlog_CO2e)
+        largest_dlog_names   = get_sector_names(largest_dlog_CO2e)
+        smallest_dlog_names  = get_sector_names(smallest_dlog_CO2e)
         largest_tv_names     = get_sector_names(largest_tv)
         smallest_tv_names    = get_sector_names(smallest_tv)
         
