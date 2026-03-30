@@ -60,25 +60,18 @@ def expand_bls_row_to_6(row, naics2022_6_universe):
 
 
 
-def map_naics2012_to_2022_6(code2012, naics2012_6_universe, NAICS_2012_2017_df, NAICS_2017_2022_df):
-    code2012 = clean_naics_str(code2012)
-    if pd.isna(code2012):
+def map_naics2017_to_2022_6(code, naics2017_6_universe, NAICS_2017_2022_df):
+    code = clean_naics_str(code)
+    if pd.isna(code):
         return set()
 
-    # Step 1: find 2012 6-digit children
-    children_2012 = children_in_universe(code2012, naics2012_6_universe)
-    if not children_2012:
+    # Step 1: find 2017 6-digit children
+    children_2017 = children_in_universe(code, naics2017_6_universe)
+    if not children_2017:
         return set()
 
-    # Step 2: 2012 → 2017 (6-digit)
-    cw_12_subset = NAICS_2012_2017_df[NAICS_2012_2017_df['NAICS_2012'].isin(children_2012)]
-    naics2017_6 = cw_12_subset['NAICS_2017'].dropna().unique()
-
-    if len(naics2017_6) == 0:
-        return set()
-
-    # Step 3: 2017 → 2022 (6-digit)
-    cw_17_subset = NAICS_2017_2022_df[NAICS_2017_2022_df['NAICS_2017'].isin(naics2017_6)]
+    # Step 2: 2017 → 2022 (6-digit)
+    cw_17_subset = NAICS_2017_2022_df[NAICS_2017_2022_df['NAICS_2017'].isin(children_2017)]
     naics2022_6 = cw_17_subset['NAICS_2022'].dropna().unique()
 
     return set(naics2022_6)

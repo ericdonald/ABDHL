@@ -121,19 +121,15 @@ class Processor:
         
         print(f"Flagged industries account for {flagged_emissions / total_emissions:.1%} of total emissions")
         EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
-        #NAICS 2012
+        #NAICS 2017
         
 
         # ---------------- #
         # NAICS Crosswalks #
         # ---------------- #
-        NAICS_2012_2017_url = "https://www.census.gov/naics/concordances/2012_to_2017_NAICS.xlsx"
         NAICS_2017_2022_url = "https://www.census.gov/naics/concordances/2017_to_2022_NAICS.xlsx"
         headers = {"User-Agent": "Mozilla/5.0"}
 
-        r = api.get(NAICS_2012_2017_url, headers=headers)
-        NAICS_2012_2017_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
-        
         r = api.get(NAICS_2017_2022_url, headers=headers)
         NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
         
@@ -169,16 +165,12 @@ class Processor:
         # -------------------- #
         EPA_df['EPA_Sector'] = EPA_df['Sector'].apply(gpf.clean_naics_str)
         
-        NAICS_2012_2017_df['NAICS_2012'] = NAICS_2012_2017_df['2012 NAICS Code'].apply(gpf.clean_naics_str)
-        NAICS_2012_2017_df['NAICS_2017'] = NAICS_2012_2017_df['2017 NAICS Code'].apply(gpf.clean_naics_str)
-        
         NAICS_2017_2022_df['NAICS_2017'] = NAICS_2017_2022_df['2017 NAICS Code'].apply(gpf.clean_naics_str)
         NAICS_2017_2022_df['NAICS_2022'] = NAICS_2017_2022_df['2022 NAICS Code'].apply(gpf.clean_naics_str)
 
         BLS_Crosswalk_df['NAICS_2022'] = BLS_Crosswalk_df['NAICS_2022'].apply(gpf.clean_naics_str)
         
-        naics2012_6_universe = sorted(NAICS_2012_2017_df['NAICS_2012'].dropna().unique())
-        #naics2017_6_universe = sorted(NAICS_2012_2017_df['NAICS_2017'].dropna().unique())
+        naics2017_6_universe = sorted(NAICS_2017_2022_df['NAICS_2017'].dropna().unique())
         naics2022_6_universe = sorted(NAICS_2017_2022_df['NAICS_2022'].dropna().unique())
         
         
@@ -215,7 +207,7 @@ class Processor:
 
         epa_mapping_rows = []
         for s in EPA_Sectors:
-            mapped_2022_6 = gpf.map_naics2012_to_2022_6(s, naics2012_6_universe, NAICS_2012_2017_df, NAICS_2017_2022_df)
+            mapped_2022_6 = gpf.map_naics2017_to_2022_6(s, naics2017_6_universe, NAICS_2017_2022_df)
             for c in mapped_2022_6:
                 epa_mapping_rows.append((s, c))
         
