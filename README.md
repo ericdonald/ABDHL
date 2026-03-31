@@ -13,7 +13,7 @@ Below is the list of all data sources required for replication. The first group 
   - [Applications](https://patentsview.org/download/data-download-tables)
   - [Citations](https://patentsview.org/download/data-download-tables)
 
-### Contained in Raw Data:
+### Contained in [Raw Data](https://github.com/ericdonald/ABDHL/releases/download/v1.0.0/Raw.Data.zip):
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
 - Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) and [Arora et al. (2021)](https://zenodo.org/records/13619821)
