@@ -396,15 +396,17 @@ class Processor:
             def compute_pat_metrics(df, period):
                 df = df.copy()
                 df['clean']                = df['split_weight'] * df['clean']
+                df['clean_pat_count']      = df.groupby('BLS_Industry')['clean'].transform('sum')
                 df['pat_count']            = df.groupby('BLS_Industry')['split_weight'].transform('sum')
-                df['clean_pat_share']      = df.groupby('BLS_Industry')['clean'].transform('sum') / df['pat_count']
+                df['clean_pat_share']      = df['clean_pat_count'] / df['pat_count']
                 
                 df['weighted_pat_cites']   = df['split_weight'] * df['norm_cites']
                 df['weighted_clean_cites'] = df['clean'] * df['norm_cites']
+                df['clean_pat_cites']      = df.groupby('BLS_Industry')['weighted_clean_cites'].transform('sum')
                 df['pat_cites']            = df.groupby('BLS_Industry')['weighted_pat_cites'].transform('sum')
-                df['clean_cite_share']     = df.groupby('BLS_Industry')['weighted_clean_cites'].transform('sum') / df['pat_cites']
+                df['clean_cite_share']     = df['clean_pat_cites'] / df['pat_cites']
                 
-                return (df[['BLS_Industry', 'clean_pat_share', 'clean_cite_share']]
+                return (df[['BLS_Industry', 'clean_pat_count', 'pat_count', 'clean_pat_share', 'clean_pat_cites', 'pat_cites', 'clean_cite_share']]
                         .drop_duplicates()
                         .assign(period=period))
 
