@@ -1,8 +1,8 @@
 
 #Ignore Folders
-#Raw\ Data/
-#Clean\ Data/
-#Results/
+Raw\ Data/
+Clean\ Data/
+Results/
 Papers/
 Feedback/
 __pycache__/
