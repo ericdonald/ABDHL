@@ -502,7 +502,7 @@ class Processor:
 
         def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, tv_red, tv_sq_red):
             return pd.DataFrame({
-                "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]),
+                "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]+1),
                 "TV_distance":            tv,
                 "TV_sq_distance":         tv_sq,
                 "TV_distance_LI":         tv_LI,
@@ -855,7 +855,8 @@ class Processor:
         """""
         Upstream and Downstream Incentives for Greenification
         
-        Output: Results/Tables/Network_Regressions.tex
+        Output: Results/Tables/Network_Regressions_OLS.tex
+                Results/Tables/Network_Regressions_WLS.tex
         
         """""
         
@@ -1065,17 +1066,17 @@ class Processor:
        
         # Emissions on emissions
         X = make_X(reg_em, ['up_dlog_em',   'down_dlog_em'])
-        print(sm.OLS(Y_em, X).fit(**cl_em).summary())
-        print(wls_fit(Y_em, X, w_em, gr_em).summary())
+        m_em_em_ols  = sm.OLS(Y_em, X).fit(**cl_em)
+        m_em_em_wls  = wls_fit(Y_em, X, w_em, gr_em)
 
         # Emissions on patents
         X = make_X(reg_em, ['up_pat_count', 'down_pat_count'])
-        print(sm.OLS(Y_em, X).fit(**cl_em).summary())
-        print(wls_fit(Y_em, X, w_em, gr_em).summary())
+        m_em_pat_ols = sm.OLS(Y_em, X).fit(**cl_em)
+        m_em_pat_wls = wls_fit(Y_em, X, w_em, gr_em)
 
         X = make_X(reg_em, ['up_pat_cite',  'down_pat_cite'])
-        print(sm.OLS(Y_em, X).fit(**cl_em).summary())
-        print(wls_fit(Y_em, X, w_em, gr_em).summary())
+        m_em_cit_ols = sm.OLS(Y_em, X).fit(**cl_em)
+        m_em_cit_wls = wls_fit(Y_em, X, w_em, gr_em)
         
 
         # ------------------ #
@@ -1097,12 +1098,12 @@ class Processor:
         w_cnt_em   = reg_cnt_em['clean_pat_count']
         gr_cnt_em = reg_cnt_em['BLS_Industry']
         X_cnt_em = make_X(reg_cnt_em, ['up_dlog_em', 'down_dlog_em'])
-        print(sm.OLS(Y_cnt_em, X_cnt_em).fit(**cl_cnt_em).summary())
-        print(wls_fit(Y_cnt_em, X_cnt_em, w_cnt_em, gr_cnt_em).summary())
+        m_cnt_em_ols = sm.OLS(Y_cnt_em, X_cnt_em).fit(**cl_cnt_em)
+        m_cnt_em_wls = wls_fit(Y_cnt_em, X_cnt_em, w_cnt_em, gr_cnt_em)
         # Count on count
         X_cnt = make_X(reg_cnt, ['up_pat_count', 'down_pat_count'])
-        print(sm.OLS(Y_cnt, X_cnt).fit(**cl_cnt).summary())
-        print(wls_fit(Y_cnt, X_cnt, w_cnt, gr_cnt).summary())
+        m_cnt_pc_ols = sm.OLS(Y_cnt, X_cnt).fit(**cl_cnt)
+        m_cnt_pc_wls = wls_fit(Y_cnt, X_cnt, w_cnt, gr_cnt)
 
         
         
@@ -1121,68 +1122,67 @@ class Processor:
         w_cit_em   = reg_cit_em['clean_pat_cites']
         gr_cit_em = reg_cit_em['BLS_Industry']
         X_cit_em = make_X(reg_cit_em, ['up_dlog_em', 'down_dlog_em'])
-        print(sm.OLS(Y_cit_em, X_cit_em).fit(**cl_cit_em).summary())
-        print(wls_fit(Y_cit_em, X_cit_em, w_cit_em, gr_cit_em).summary())
+        m_cit_em_ols = sm.OLS(Y_cit_em, X_cit_em).fit(**cl_cit_em)
+        m_cit_em_wls = wls_fit(Y_cit_em, X_cit_em, w_cit_em, gr_cit_em)
         # Cite on cite
         X_cit = make_X(reg_cit, ['up_pat_cite', 'down_pat_cite'])
-        print(sm.OLS(Y_cit, X_cit).fit(**cl_cit).summary())
-        print(wls_fit(Y_cit, X_cit, w_cit, gr_cit).summary())
+        m_cit_cc_ols = sm.OLS(Y_cit, X_cit).fit(**cl_cit)
+        m_cit_cc_wls = wls_fit(Y_cit, X_cit, w_cit, gr_cit)
     
         
         # ----------- #
         # Print Table #
         # ----------- #
-        models = [
-            model_em_em,
-            model_em_pat,
-            model_em_cit,
-            None,
-            model_count_em,
-            model_count_pc,
-            None,
-            model_cite_em,
-            model_cite_cc,
-        ]
-
         variables = [
-            ('up_dlog_CO2e_inten',  'Upstream CO2e Reduction'),
-            ('down_dlog_CO2e_inten','Downstream CO2e Reduction'),
+            ('up_dlog_em',  'Upstream CO2e Reduction'),
+            ('down_dlog_em','Downstream CO2e Reduction'),
             ('up_pat_count',        'Upstream Clean Patents'),
             ('down_pat_count',      'Downstream Clean Patents'),
             ('up_pat_cite',         'Upstream Clean Citations'),
             ('down_pat_cite',       'Downstream Clean Citations'),
         ]
 
-        body = ''
-        for varname, label in variables:
-            coefs, ses = [], []
+        def build_table(models):
+            # models: list of 7 fitted models, None for spacer columns
+            body = ''
+            for varname, label in variables:
+                coefs, ses = [], []
+                for m in models:
+                    if m is None:
+                        coefs.append('')
+                        ses.append('')
+                    else:
+                        c, s = gpf.fmt_coef(m, varname)
+                        coefs.append(c)
+                        ses.append(s)
+                body += f'{label} & {" & ".join(coefs)} \\\\\n'
+                body += f'& {" & ".join(ses)} \\\\[3pt]\n'
+
+            r2_vals, n_vals = [], []
             for m in models:
                 if m is None:
-                    coefs.append('')
-                    ses.append('')
+                    r2_vals.append('')
+                    n_vals.append('')
                 else:
-                    c, s = gpf.fmt_coef(m, varname)
-                    coefs.append(c)
-                    ses.append(s)
-            body += f'{label} & {" & ".join(coefs)} \\\\\n'
-            body += f'& {" & ".join(ses)} \\\\[3pt]\n'
+                    r2_vals.append(f'{m.rsquared:.3f}')
+                    n_vals.append(str(int(m.nobs)))
 
-        r2_vals, n_vals = [], []
-        for m in models:
-            if m is None:
-                r2_vals.append('')
-                n_vals.append('')
-            else:
-                r2_vals.append(f'{m.rsquared:.3f}')
-                n_vals.append(str(int(m.nobs)))
+            body += '\\midrule\n'
+            body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
+            body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
+            return body
 
-        body += '\\midrule\n'
-        body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
-        body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
+        ols_models = [m_em_em_ols, m_em_pat_ols, m_em_cit_ols, None,
+                      m_cnt_em_ols, m_cnt_pc_ols, None,
+                      m_cit_em_ols, m_cit_cc_ols]
+        wls_models = [m_em_em_wls, m_em_pat_wls, m_em_cit_wls, None,
+                      m_cnt_em_wls, m_cnt_pc_wls, None,
+                      m_cit_em_wls, m_cit_cc_wls]
 
-        out_path = f'{self.Directory}/Results/Tables/Network_Regressions.tex'
-        with open(out_path, 'w') as f:
-            f.write(body)
+        for tag, models in [('OLS', ols_models), ('WLS', wls_models)]:
+            out_path = f'{self.Directory}/Results/Tables/Network_Regressions_{tag}.tex'
+            with open(out_path, 'w') as f:
+                f.write(build_table(models))
             
     
     
