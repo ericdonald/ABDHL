@@ -993,13 +993,13 @@ class Processor:
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def drop_outliers(df, cols, n_std=3):
-            mask = pd.Series(True, index=df.index)
+        def winsorize(df, cols, lower=0.01, upper=0.99):
+            df = df.copy()
             for col in cols:
-                s      = df[col].dropna()
-                is_out = (df[col] - s.mean()).abs() > n_std * s.std()
-                mask  &= ~is_out.fillna(False)  # NaNs are not flagged as outliers
-            return df[mask]
+                lo = df[col].quantile(lower)
+                hi = df[col].quantile(upper)
+                df[col] = df[col].clip(lower=lo, upper=hi)
+            return df
         
         def make_X(df, cols):
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
@@ -1029,25 +1029,25 @@ class Processor:
         # ------------ #
         # Scatterplots #
         # ------------ #
-        scatter_pairs(drop_outliers(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',    'down_dlog_em']),
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',    'down_dlog_em']),
                       'dlog_CO2e_inten', ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Δln Emissions ~ network Δln Emissions', 'sc_em_em')
-        scatter_pairs(drop_outliers(reg_df, ['dlog_CO2e_inten', 'up_pat_count',  'down_pat_count']),
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count',  'down_pat_count']),
                       'dlog_CO2e_inten', ['up_pat_count',  'down_pat_count'],
                       'Manu: Δln Emissions ~ network Pat count',      'sc_em_pat')
-        scatter_pairs(drop_outliers(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',   'down_pat_cite']),
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',   'down_pat_cite']),
                       'dlog_CO2e_inten', ['up_pat_cite',   'down_pat_cite'],
                       'Manu: Δln Emissions ~ network Pat cite',       'sc_em_cite')
-        scatter_pairs(drop_outliers(reg_df, ['clean_pat_share',  'up_dlog_em',   'down_dlog_em']),
+        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',   'down_dlog_em']),
                       'clean_pat_share',  ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Pat count ~ network Δln Emissions',      'sc_pat_em')
-        scatter_pairs(drop_outliers(reg_df, ['clean_pat_share',  'up_pat_count', 'down_pat_count']),
+        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_pat_count', 'down_pat_count']),
                       'clean_pat_share',  ['up_pat_count',  'down_pat_count'],
                       'Manu: Pat count ~ network Pat count',          'sc_pat_pat')
-        scatter_pairs(drop_outliers(reg_df, ['clean_cite_share', 'up_dlog_em',   'down_dlog_em']),
+        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',   'down_dlog_em']),
                       'clean_cite_share', ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Pat cite ~ network Δln Emissions',       'sc_cite_em')
-        scatter_pairs(drop_outliers(reg_df, ['clean_cite_share', 'up_pat_cite',  'down_pat_cite']),
+        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_pat_cite',  'down_pat_cite']),
                       'clean_cite_share', ['up_pat_cite',   'down_pat_cite'],
                       'Manu: Pat cite ~ network Pat cite',            'sc_cite_cite')
 
@@ -1055,7 +1055,7 @@ class Processor:
         # -------------------- #
         # Emission Regressions #
         # -------------------- #
-        reg_em  = drop_outliers(reg_df.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em',
+        reg_em  = winsorize(reg_df.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em',
                                           'up_pat_count',    'down_pat_count',
                                           'up_pat_cite',     'down_pat_cite'])
         cl_em  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_em['BLS_Industry']}}
@@ -1082,7 +1082,7 @@ class Processor:
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        reg_cnt = drop_outliers(reg_df[reg_df['clean_pat_share']  > 0],
+        reg_cnt = winsorize(reg_df[reg_df['clean_pat_share']  > 0],
                                 ['clean_pat_share',  'up_dlog_em',   'down_dlog_em',
                                  'up_pat_count',     'down_pat_count'])
         cl_cnt = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cnt['BLS_Industry']}}
@@ -1107,7 +1107,7 @@ class Processor:
 
         
         
-        reg_cit = drop_outliers(reg_df[reg_df['clean_cite_share'] > 0],
+        reg_cit = winsorize(reg_df[reg_df['clean_cite_share'] > 0],
                                ['clean_cite_share', 'up_dlog_em',   'down_dlog_em',
                                 'up_pat_cite',      'down_pat_cite'])
         cl_cit = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cit['BLS_Industry']}}
