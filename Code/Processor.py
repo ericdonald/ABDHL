@@ -547,6 +547,8 @@ class Processor:
             "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
             "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_start].to_numpy(),
             "CO2e_Industry_LI":   CO2e_lev_LI_start,
+            "ln_CO2e_Industry":      np.log(IO_wide_df['CO2e_Industry', Year_start].to_numpy()),
+            "ln_CO2e_Industry_LI":   np.log(CO2e_lev_LI_start),
             "period": 1})
 
         em_p2 = pd.DataFrame({
@@ -556,6 +558,8 @@ class Processor:
             "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
             "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy(),
             "CO2e_Industry_LI":   CO2e_lev_LI_mid,
+            "ln_CO2e_Industry":      np.log(IO_wide_df['CO2e_Industry', Year_mid].to_numpy()),
+            "ln_CO2e_Industry_LI":   np.log(CO2e_lev_LI_mid),
             "period": 2})
 
         distance_cols = ['BLS_Industry', 'period',
@@ -564,7 +568,7 @@ class Processor:
                          'TV_distance_reduced', 'TV_sq_distance_reduced']
 
         emission_cols = ['BLS_Industry', 'period',
-                         'CO2e_Industry', 'CO2e_Industry_LI',
+                         'CO2e_Industry', 'CO2e_Industry_LI', 'ln_CO2e_Industry', 'ln_CO2e_Industry_LI',
                          'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
 
         em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
@@ -678,43 +682,44 @@ class Processor:
         # ---------------- #
         
         def run_regressions(df, x_col, y_col, y_sq_col, weight_col, group_col):
-            X      = sm.add_constant(df[x_col])
-            Y      = df[y_col]
-            Y_sq   = df[y_sq_col]
             weight = df[weight_col]
             groups = df[group_col]
 
-            m      = sm.WLS(Y,    X, weight).fit(cov_type='cluster', cov_kwds={'groups': groups})
-            m_sq   = sm.WLS(Y_sq, X, weight).fit(cov_type='cluster', cov_kwds={'groups': groups})
-            m_uw   = sm.OLS(Y,    X).fit(cov_type='cluster', cov_kwds={'groups': groups})
+            x_arr    = df[x_col].to_numpy()
+            y_arr    = df[y_col].to_numpy()
+            y_sq_arr = df[y_sq_col].to_numpy()
+            w_arr    = weight.to_numpy()
+            g_arr    = groups.to_numpy()
 
-            x_arr = df[x_col].to_numpy()
-            y_arr = Y.to_numpy()
-            y_sq_arr = Y_sq.to_numpy()
-            w_arr = weight.to_numpy()
-            g_arr = groups.to_numpy()
+            mask_pos = (x_arr >= 0).astype(float)
+            mask_neg = (x_arr <  0).astype(float)
+            X_split  = np.column_stack([
+                mask_neg,           # intercept x < 0
+                mask_pos,           # intercept x >= 0
+                x_arr * mask_neg,   # slope x < 0
+                x_arr * mask_pos,   # slope x >= 0
+            ])
 
-            # Split slope: β_0 + β_1 * x * 1(x>0)
-            mask_pos   = x_arr >= 0
-            mask_neg   = x_arr <  0
-            x_pos_only = x_arr * mask_pos  # x for positive values, 0 elsewhere
-
-            X_split = sm.add_constant(x_pos_only)
-            m_split = sm.WLS(y_arr, X_split, w_arr).fit(cov_type='cluster', cov_kwds={'groups': g_arr})
+            def fit(Y, X, w=None):
+                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': g_arr}}
+                if w is None:
+                    return sm.OLS(Y, X).fit(**cl)
+                return sm.WLS(Y, X, w).fit(**cl)
 
             return dict(
-                m=m, m_sq=m_sq, m_uw=m_uw, m_split=m_split,
+                m_l1_wls     = fit(y_arr,    X_split, w_arr),
+                m_l2_wls     = fit(y_sq_arr, X_split, w_arr),
                 x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
-                mask_pos=mask_pos, mask_neg=mask_neg,
-                x_col=x_col
+                mask_pos=mask_pos.astype(bool), mask_neg=mask_neg.astype(bool),
+                x_col=x_col,
             )
-        
+
         def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
-            x, y, y_sq, w = r['x'], r['y'], r['y_sq'], r['w']
-            x_col  = r['x_col']
-            scale  = 1000 / w.max()
-            stars_named = lambda m, col: gpf.get_stars(m.pvalues[col])
-            stars       = lambda m, k=1: gpf.get_stars(m.pvalues[k])
+            x, y, y_sq = r['x'], r['y'], r['y_sq']
+            w_raw  = np.exp(r['w'])
+            scale  = 1000 / w_raw.max()
+
+            stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
 
             mask_p1 = df['period'].to_numpy() == 1
             mask_p2 = df['period'].to_numpy() == 2
@@ -726,127 +731,75 @@ class Processor:
                     bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7))
 
             def scatter_periods(ax, y_arr):
-                ax.scatter(x[mask_p1], y_arr[mask_p1], s=w[mask_p1]*scale, alpha=0.7, color='purple', label=f"Sectors: ({year_start}–{year_mid})")
-                ax.scatter(x[mask_p2], y_arr[mask_p2], s=w[mask_p2]*scale, alpha=0.7, color='blue',   label=f"Sectors: ({year_mid}–{year_end})")
+                ax.scatter(x[mask_p1], y_arr[mask_p1], s=w_raw[mask_p1]*scale, alpha=0.7, color='purple', label=f"Sectors: ({year_start}–{year_mid})")
+                ax.scatter(x[mask_p2], y_arr[mask_p2], s=w_raw[mask_p2]*scale, alpha=0.7, color='blue',   label=f"Sectors: ({year_mid}–{year_end})")
 
             def fix_legend(ax):
                 leg = ax.legend(loc='upper right')
                 for h in leg.legend_handles:
                     h._sizes = [30]
-                    
+
             def annotate_sectors(ax, y_arr):
                 if labels is None:
                     return
-                w_avg   = pd.Series(w, index=df.index).groupby(df['BLS_Industry'].values).mean()
+                w_avg   = pd.Series(w_raw, index=df.index).groupby(df['BLS_Industry'].values).mean()
                 top_idx = w_avg.nlargest(top_n).index
                 mask    = df['BLS_Industry'].isin(top_idx).to_numpy()
                 for xi, yi, label in zip(x[mask], y_arr[mask], labels[mask]):
-                    words = []
-                    for word in str(label).split()[:3]:
-                        if not word.isalpha():
-                            break
-                        words.append(word)
-                    short = ' '.join(words)
-                    ax.annotate(short, (xi, yi), fontsize=9, ha='left',
+                    words = [w for w in str(label).split()[:3] if w.isalpha()]
+                    ax.annotate(' '.join(words), (xi, yi), fontsize=9, ha='left',
                                 xytext=(11, 11), textcoords='offset points')
 
-            # --- L1 unweighted ---
-            fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax, y)
-            y_hat_uw = r['m_uw'].params['const'] + r['m_uw'].params[x_col] * x
-            ax.plot(x, y_hat_uw, color='red', linewidth=2, label="OLS fit")
-            annotate(ax, f"Slope = {r['m_uw'].params[x_col]:.3f}{stars_named(r['m_uw'], x_col)}", 0.95)
-            annotate_sectors(ax, y)
-            ax.set_xlabel("-Δ ln(emissions intensity)")
-            ax.set_ylabel(ylabel_tv)
-            ax.set_ylim(bottom=0)
-            ax.grid(alpha=0.3)
-            fix_legend(ax)
-            plt.savefig(f'{save_dir}/{prefix}_L1_uw.png')
-            plt.show()
+            def plot_single(m, y_arr, ylabel, fname, estimator_label):
+                b_neg, b_pos, s_neg, s_pos = m.params
+                x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                       100)
+                x_pos_line = np.linspace(0,                       x[r['mask_pos']].max(), 100)
+                fig, ax = plt.subplots(figsize=(8, 6))
+                scatter_periods(ax, y_arr)
+                ax.plot(x_neg_line, b_neg + s_neg * x_neg_line, color='cyan',   linewidth=2, label=f"{estimator_label} fit (x<0)")
+                ax.plot(x_pos_line, b_pos + s_pos * x_pos_line, color='orange', linewidth=2, label=f"{estimator_label} fit (x≥0)")
+                annotate(ax, f"Slope (x<0)  = {s_neg:.3f}{stars_idx(m, 2)}", 0.95)
+                annotate(ax, f"Slope (x≥0) = {s_pos:.3f}{stars_idx(m, 3)}", 0.88)
+                annotate_sectors(ax, y_arr)
+                ax.set_xlabel("-Δ ln(emissions intensity)")
+                ax.set_ylabel(ylabel)
+                ax.grid(alpha=0.3)
+                fix_legend(ax)
+                plt.savefig(f'{save_dir}/{fname}.png')
+                plt.show()
 
-            # --- L1: TV distance ---
-            fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax, y)
-            y_hat = r['m'].params['const'] + r['m'].params[x_col] * x
-            ax.plot(x, y_hat, color='red', linewidth=2, label="WLS fit")
-            annotate(ax, f"Slope = {r['m'].params[x_col]:.3f}{stars_named(r['m'], x_col)}", 0.95)
-            annotate_sectors(ax, y)
-            ax.set_xlabel("-Δ ln(emissions intensity)")
-            ax.set_ylabel(ylabel_tv)
-            ax.set_ylim(bottom=0)
-            ax.grid(alpha=0.3)
-            fix_legend(ax)
-            plt.savefig(f'{save_dir}/{prefix}_L1.png')
-            plt.show()
-
-            # --- L2: 2-norm distance ---
-            fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax, y_sq)
-            y_hat_sq = r['m_sq'].params['const'] + r['m_sq'].params[x_col] * x
-            ax.plot(x, y_hat_sq, color='red', linewidth=2, label="WLS fit")
-            annotate(ax, f"Slope = {r['m_sq'].params[x_col]:.3f}{stars_named(r['m_sq'], x_col)}", 0.95)
-            annotate_sectors(ax, y_sq)
-            ax.set_xlabel("-Δ ln(emissions intensity)")
-            ax.set_ylabel(ylabel_sq)
-            ax.set_ylim(bottom=0)
-            ax.grid(alpha=0.3)
-            fix_legend(ax)
-            plt.savefig(f'{save_dir}/{prefix}_L2.png')
-            plt.show()
-
-           # --- Split by sign ---
-            b0    = r['m_split'].params[0]
-            b_pos = r['m_split'].params[1]
- 
-            x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                       100)
-            x_pos_line = np.linspace(0,                       x[r['mask_pos']].max(), 100)
-            y_neg_line = b0 * np.ones(100)
-            y_pos_line = b0 + b_pos * x_pos_line
- 
-            fig, ax = plt.subplots(figsize=(8, 6))
-            scatter_periods(ax, y)
-            ax.plot(x_neg_line, y_neg_line, color='cyan',   linewidth=2, label="WLS fit (x<0)")
-            ax.plot(x_pos_line, y_pos_line, color='orange', linewidth=2, label="WLS fit (x≥0)")
-            annotate(ax, f"Slope (x≥0) = {b_pos:.3f}{stars(r['m_split'], k=1)}", 0.95)
-            annotate_sectors(ax, y)
-            ax.set_xlabel("-Δ ln(emissions intensity)")
-            ax.set_ylabel(ylabel_tv)
-            ax.grid(alpha=0.3)
-            fix_legend(ax)
-            plt.savefig(f'{save_dir}/{prefix}_split.png')
-            plt.show()
+            plot_single(r['m_l1_wls'], y,    ylabel_tv, f'{prefix}_L1_WLS', 'WLS')
+            plot_single(r['m_l2_wls'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
 
         fig_dir = f'{self.Directory}/Results/Figures'
-        
-        
+        reg_df = gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance',
+                                        'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI',
+                                        'TV_distance_reduced', 'TV_sq_distance_reduced'])
+
         # -------- #
         # Baseline #
         # -------- #
-        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'CO2e_Industry', 'BLS_Industry')
+        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'ln_CO2e_Industry', 'BLS_Industry')
         plot_case(r_base, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
                   'Baseline', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
-        
-        
+
         # ---------------- #
         # Leontief Inverse #
         # ---------------- #
-        r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI', 'BLS_Industry')
+        r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'ln_CO2e_Industry_LI', 'BLS_Industry')
         plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
                   'Leontief', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
-        
-        
+
         # ------- #
         # Reduced #
         # ------- #
         reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
-        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry', 'BLS_Industry')
+        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'ln_CO2e_Industry', 'BLS_Industry')
         plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
                   'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
-        
         
         
         
@@ -993,14 +946,6 @@ class Processor:
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def winsorize(df, cols, lower=0.01, upper=0.99):
-            df = df.copy()
-            for col in cols:
-                lo = df[col].quantile(lower)
-                hi = df[col].quantile(upper)
-                df[col] = df[col].clip(lower=lo, upper=hi)
-            return df
-        
         def make_X(df, cols):
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
             return sm.add_constant(pd.concat([df[cols], fe], axis=1))
@@ -1029,25 +974,25 @@ class Processor:
         # ------------ #
         # Scatterplots #
         # ------------ #
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',    'down_dlog_em']),
+        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',    'down_dlog_em']),
                       'dlog_CO2e_inten', ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Δln Emissions ~ network Δln Emissions', 'sc_em_em')
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count',  'down_pat_count']),
+        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count',  'down_pat_count']),
                       'dlog_CO2e_inten', ['up_pat_count',  'down_pat_count'],
                       'Manu: Δln Emissions ~ network Pat count',      'sc_em_pat')
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',   'down_pat_cite']),
+        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',   'down_pat_cite']),
                       'dlog_CO2e_inten', ['up_pat_cite',   'down_pat_cite'],
                       'Manu: Δln Emissions ~ network Pat cite',       'sc_em_cite')
-        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',   'down_dlog_em']),
+        scatter_pairs(gpf.winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',   'down_dlog_em']),
                       'clean_pat_share',  ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Pat count ~ network Δln Emissions',      'sc_pat_em')
-        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_pat_count', 'down_pat_count']),
+        scatter_pairs(gpf.winsorize(reg_df, ['clean_pat_share',  'up_pat_count', 'down_pat_count']),
                       'clean_pat_share',  ['up_pat_count',  'down_pat_count'],
                       'Manu: Pat count ~ network Pat count',          'sc_pat_pat')
-        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',   'down_dlog_em']),
+        scatter_pairs(gpf.winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',   'down_dlog_em']),
                       'clean_cite_share', ['up_dlog_em',    'down_dlog_em'],
                       'Manu: Pat cite ~ network Δln Emissions',       'sc_cite_em')
-        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_pat_cite',  'down_pat_cite']),
+        scatter_pairs(gpf.winsorize(reg_df, ['clean_cite_share', 'up_pat_cite',  'down_pat_cite']),
                       'clean_cite_share', ['up_pat_cite',   'down_pat_cite'],
                       'Manu: Pat cite ~ network Pat cite',            'sc_cite_cite')
 
@@ -1055,7 +1000,7 @@ class Processor:
         # -------------------- #
         # Emission Regressions #
         # -------------------- #
-        reg_em  = winsorize(reg_df.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em',
+        reg_em  = gpf.winsorize(reg_df.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em',
                                           'up_pat_count',    'down_pat_count',
                                           'up_pat_cite',     'down_pat_cite'])
         cl_em  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_em['BLS_Industry']}}
@@ -1082,7 +1027,7 @@ class Processor:
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        reg_cnt = winsorize(reg_df[reg_df['clean_pat_share']  > 0],
+        reg_cnt = gpf.winsorize(reg_df[reg_df['clean_pat_share']  > 0],
                                 ['clean_pat_share',  'up_dlog_em',   'down_dlog_em',
                                  'up_pat_count',     'down_pat_count'])
         cl_cnt = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cnt['BLS_Industry']}}
@@ -1107,7 +1052,7 @@ class Processor:
 
         
         
-        reg_cit = winsorize(reg_df[reg_df['clean_cite_share'] > 0],
+        reg_cit = gpf.winsorize(reg_df[reg_df['clean_cite_share'] > 0],
                                ['clean_cite_share', 'up_dlog_em',   'down_dlog_em',
                                 'up_pat_cite',      'down_pat_cite'])
         cl_cit = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cit['BLS_Industry']}}

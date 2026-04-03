@@ -99,3 +99,13 @@ def fmt_coef(model, varname):
 
 
 
+def winsorize(df, cols, lower=0.01, upper=0.99):
+    df = df.copy()
+    for col in cols:
+        lo = df[col].quantile(lower)
+        hi = df[col].quantile(upper)
+        df[col] = df[col].clip(lower=lo, upper=hi)
+    return df
+
+
+
