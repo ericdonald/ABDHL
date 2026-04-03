@@ -43,7 +43,7 @@ class Processor:
                      }
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
         self.manu_cols = [7, 93]
-        self.fossil_cols = [7-1, 8-1]#, 12-1] Exclude electricity as well
+        self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
 
         
         
@@ -70,7 +70,7 @@ class Processor:
             MAKE_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{year}")
 
             U      = USE_df.iloc[:, 1:-3].to_numpy()
-            ind_Y  = np.sum(U, 0) #- U[-2,:] Allows exclusion of imports from revenue
+            ind_Y  = np.sum(U, 0) #- U[-2,:] #Allows exclusion of imports from revenue
             B      = (U[:-3, :] @ np.diag(ind_Y**(-1))).T
 
             M      = MAKE_df.iloc[:, 1:].to_numpy()
@@ -79,7 +79,7 @@ class Processor:
 
             IO = B @ A
             num = IO.sum(axis=1, keepdims=True)
-            #np.fill_diagonal(IO, 0) Allows exclusion of diagonal
+            #np.fill_diagonal(IO, 0) #Allows exclusion of diagonal
             denom = IO.sum(axis=1, keepdims=True)
 
             
