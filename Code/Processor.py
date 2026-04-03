@@ -772,9 +772,7 @@ class Processor:
             plot_single(r['m_l2_wls'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
 
         fig_dir = f'{self.Directory}/Results/Figures'
-        reg_df = gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance',
-                                        'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI',
-                                        'TV_distance_reduced', 'TV_sq_distance_reduced'])
+    
 
         # -------- #
         # Baseline #
@@ -940,21 +938,96 @@ class Processor:
         ], ignore_index=True)
         reg_df = reg_df.merge(co2_weights, on=['BLS_Industry', 'period'], how='left')
         
+        reg_df['net_dlog_em']   = reg_df['up_dlog_em']  + reg_df['down_dlog_em']
+        reg_df['net_pat_count'] = reg_df['up_pat_count'] + reg_df['down_pat_count']
+        reg_df['net_pat_cite']  = reg_df['up_pat_cite']  + reg_df['down_pat_cite']
+        
+        reg_df = reg_df.sort_values(['BLS_Industry', 'period'])
+        for col in ['net_dlog_em', 'net_pat_count', 'net_pat_cite',
+                    'up_dlog_em',  'down_dlog_em',
+                    'up_pat_count','down_pat_count',
+                    'up_pat_cite', 'down_pat_cite']:
+            reg_df[f'{col}_lag'] = reg_df.groupby('BLS_Industry')[col].shift(1)
+
 
         # ----------------------------------------------------------------
         
         # Run regressions.
         
         # ----------------------------------------------------------------
+        def winsorize(df, cols, lower=0.1):
+            upper= 1 - lower
+            df = df.copy()
+            for col in cols:
+                lo = df[col].quantile(lower)
+                hi = df[col].quantile(upper)
+                df[col] = df[col].clip(lower=lo, upper=hi)
+            return df
+
         def make_X(df, cols):
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
             return sm.add_constant(pd.concat([df[cols], fe], axis=1))
+        
+        def fit(df, Y_col, x_cols, w_col, em_sub=None):
+            d   = em_sub if em_sub is not None else df
+            cl  = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
+            Y   = d[Y_col]
+            X   = make_X(d, x_cols)
+            w   = np.maximum(np.log(d[w_col]), 0)
+            return sm.WLS(Y, X, w).fit(**cl)
 
-        def wls_fit(Y, X_df, weights, groups):
-            return sm.WLS(Y, X_df, weights=weights).fit(
-                cov_type='cluster', cov_kwds={'groups': groups})
+        # ------------------ #
+        # Estimation Samples #
+        # ------------------ #
+        reg_em = winsorize(
+            reg_df.dropna(subset=['dlog_CO2e_inten']),
+            ['dlog_CO2e_inten',
+             'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
+             'up_pat_count', 'down_pat_count', 'net_pat_count',
+             'up_pat_cite',  'down_pat_cite',  'net_pat_cite'])
+        
+        reg_cnt = winsorize(
+            reg_df[reg_df['clean_pat_share'] > 0],
+            ['clean_pat_share',
+             'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
+             'up_pat_count', 'down_pat_count', 'net_pat_count'])
+        
+        reg_cit = winsorize(
+            reg_df[reg_df['clean_cite_share'] > 0],
+            ['clean_cite_share',
+             'up_dlog_em',  'down_dlog_em',  'net_dlog_em',
+             'up_pat_cite', 'down_pat_cite', 'net_pat_cite'])
 
-        def scatter_pairs(df, y_col, x_cols, title_prefix, fname):
+        reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        
+        lag_em_cols  = ['net_dlog_em_lag',   'net_pat_count_lag', 'net_pat_cite_lag',
+                        'up_dlog_em_lag',    'down_dlog_em_lag',
+                        'up_pat_count_lag',  'down_pat_count_lag',
+                        'up_pat_cite_lag',   'down_pat_cite_lag']
+        reg_em_lag  = winsorize(
+            reg_df.dropna(subset=['dlog_CO2e_inten',
+             'net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag',
+             'net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']),
+            ['dlog_CO2e_inten'] + lag_em_cols)
+        reg_cnt_lag = winsorize(
+            reg_df[reg_df['clean_pat_share'] > 0].dropna(
+                subset=['net_pat_count_lag','up_pat_count_lag', 'down_pat_count_lag']),
+             ['clean_pat_share'] + lag_em_cols)
+        reg_cit_lag = winsorize(
+            reg_df[reg_df['clean_cite_share'] > 0].dropna(
+                subset=['net_pat_cite_lag','up_pat_cite_lag',  'down_pat_cite_lag']),
+             ['clean_cite_share'] + lag_em_cols)
+
+        reg_em_em_lag = reg_em_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
+        reg_cnt_em_lag = reg_cnt_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
+        reg_cit_em_lag = reg_cit_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
+
+            
+        # ------------ #
+        # Scatterplots #
+        # ------------ #
+        def scatter_pairs(df, y_col, x_cols, title_prefix):
             fig, axes = plt.subplots(1, len(x_cols), figsize=(5*len(x_cols), 4),
                                      constrained_layout=True)
             if len(x_cols) == 1:
@@ -971,163 +1044,133 @@ class Processor:
                 ax.set_title(f"{title_prefix}\n{y_col} ~ {x_col}", fontsize=8)
             plt.show(fig)
             
-        # ------------ #
-        # Scatterplots #
-        # ------------ #
-        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',    'down_dlog_em']),
-                      'dlog_CO2e_inten', ['up_dlog_em',    'down_dlog_em'],
-                      'Manu: Δln Emissions ~ network Δln Emissions', 'sc_em_em')
-        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count',  'down_pat_count']),
-                      'dlog_CO2e_inten', ['up_pat_count',  'down_pat_count'],
-                      'Manu: Δln Emissions ~ network Pat count',      'sc_em_pat')
-        scatter_pairs(gpf.winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',   'down_pat_cite']),
-                      'dlog_CO2e_inten', ['up_pat_cite',   'down_pat_cite'],
-                      'Manu: Δln Emissions ~ network Pat cite',       'sc_em_cite')
-        scatter_pairs(gpf.winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',   'down_dlog_em']),
-                      'clean_pat_share',  ['up_dlog_em',    'down_dlog_em'],
-                      'Manu: Pat count ~ network Δln Emissions',      'sc_pat_em')
-        scatter_pairs(gpf.winsorize(reg_df, ['clean_pat_share',  'up_pat_count', 'down_pat_count']),
-                      'clean_pat_share',  ['up_pat_count',  'down_pat_count'],
-                      'Manu: Pat count ~ network Pat count',          'sc_pat_pat')
-        scatter_pairs(gpf.winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',   'down_dlog_em']),
-                      'clean_cite_share', ['up_dlog_em',    'down_dlog_em'],
-                      'Manu: Pat cite ~ network Δln Emissions',       'sc_cite_em')
-        scatter_pairs(gpf.winsorize(reg_df, ['clean_cite_share', 'up_pat_cite',  'down_pat_cite']),
-                      'clean_cite_share', ['up_pat_cite',   'down_pat_cite'],
-                      'Manu: Pat cite ~ network Pat cite',            'sc_cite_cite')
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em']),
+                      'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'],   'Manu: Δln Emissions ~ network Δln Emissions')
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count', 'down_pat_count']),
+                      'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], 'Manu: Δln Emissions ~ network Pat count')
+        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',  'down_pat_cite']),
+                      'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'],  'Manu: Δln Emissions ~ network Pat cite')
+        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',  'down_dlog_em']),
+                      'clean_pat_share',  ['up_dlog_em',  'down_dlog_em'],   'Manu: Pat count ~ network Δln Emissions')
+        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_pat_count','down_pat_count']),
+                      'clean_pat_share',  ['up_pat_count','down_pat_count'], 'Manu: Pat count ~ network Pat count')
+        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',  'down_dlog_em']),
+                      'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],   'Manu: Pat cite ~ network Δln Emissions')
+        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_pat_cite', 'down_pat_cite']),
+                      'clean_cite_share', ['up_pat_cite', 'down_pat_cite'],  'Manu: Pat cite ~ network Pat cite')
 
         
         # -------------------- #
         # Emission Regressions #
         # -------------------- #
-        reg_em  = gpf.winsorize(reg_df.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em',
-                                          'up_pat_count',    'down_pat_count',
-                                          'up_pat_cite',     'down_pat_cite'])
-        cl_em  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_em['BLS_Industry']}}
-        Y_em = reg_em['dlog_CO2e_inten']
-        w_em = reg_em['CO2e_Industry']
-        gr_em = reg_em['BLS_Industry']
-
        
-        # Emissions on emissions
-        X = make_X(reg_em, ['up_dlog_em',   'down_dlog_em'])
-        m_em_em_ols  = sm.OLS(Y_em, X).fit(**cl_em)
-        m_em_em_wls  = wls_fit(Y_em, X, w_em, gr_em)
-
-        # Emissions on patents
-        X = make_X(reg_em, ['up_pat_count', 'down_pat_count'])
-        m_em_pat_ols = sm.OLS(Y_em, X).fit(**cl_em)
-        m_em_pat_wls = wls_fit(Y_em, X, w_em, gr_em)
-
-        X = make_X(reg_em, ['up_pat_cite',  'down_pat_cite'])
-        m_em_cit_ols = sm.OLS(Y_em, X).fit(**cl_em)
-        m_em_cit_wls = wls_fit(Y_em, X, w_em, gr_em)
+        m_em_em   = fit(reg_em, 'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'],   'CO2e_Industry')
+        m_em_pat  = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], 'CO2e_Industry')
+        m_em_cit  = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'],  'CO2e_Industry')
         
-
+        m_em_em_n  = fit(reg_em,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
+        m_em_pat_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
+        m_em_cit_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
+        
+        m_em_em_l  = fit(reg_em_em_lag,  'dlog_CO2e_inten',  ['net_dlog_em_lag'],   'CO2e_Industry')
+        m_em_pat_l = fit(reg_em_lag,  'dlog_CO2e_inten',  ['net_pat_count_lag'], 'CO2e_Industry')
+        m_em_cit_l = fit(reg_em_lag,  'dlog_CO2e_inten',  ['net_pat_cite_lag'],  'CO2e_Industry')
+        
+       
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
-        reg_cnt = gpf.winsorize(reg_df[reg_df['clean_pat_share']  > 0],
-                                ['clean_pat_share',  'up_dlog_em',   'down_dlog_em',
-                                 'up_pat_count',     'down_pat_count'])
-        cl_cnt = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cnt['BLS_Industry']}}
-        Y_cnt  = reg_cnt['clean_pat_share']
-        w_cnt  = reg_cnt['clean_pat_count']
-        gr_cnt = reg_cnt['BLS_Industry']
-
-
-        # Count on emissions
-        reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
-        cl_cnt_em  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cnt_em['BLS_Industry']}}
-        Y_cnt_em  = reg_cnt_em['clean_pat_share']
-        w_cnt_em   = reg_cnt_em['clean_pat_count']
-        gr_cnt_em = reg_cnt_em['BLS_Industry']
-        X_cnt_em = make_X(reg_cnt_em, ['up_dlog_em', 'down_dlog_em'])
-        m_cnt_em_ols = sm.OLS(Y_cnt_em, X_cnt_em).fit(**cl_cnt_em)
-        m_cnt_em_wls = wls_fit(Y_cnt_em, X_cnt_em, w_cnt_em, gr_cnt_em)
-        # Count on count
-        X_cnt = make_X(reg_cnt, ['up_pat_count', 'down_pat_count'])
-        m_cnt_pc_ols = sm.OLS(Y_cnt, X_cnt).fit(**cl_cnt)
-        m_cnt_pc_wls = wls_fit(Y_cnt, X_cnt, w_cnt, gr_cnt)
-
         
+        #Counts
+        m_cnt_em  = fit(reg_cnt, 'clean_pat_share', ['up_dlog_em',   'down_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
+        m_cnt_pc  = fit(reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], 'clean_pat_count')
         
-        reg_cit = gpf.winsorize(reg_df[reg_df['clean_cite_share'] > 0],
-                               ['clean_cite_share', 'up_dlog_em',   'down_dlog_em',
-                                'up_pat_cite',      'down_pat_cite'])
-        cl_cit = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cit['BLS_Industry']}}
-        Y_cit  = reg_cit['clean_cite_share']
-        w_cit  = reg_cit['clean_pat_cites']
-        gr_cit = reg_cit['BLS_Industry']
+        m_cnt_em_n = fit(reg_cnt, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
+        m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
         
-        # Cite on emissions
-        reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
-        cl_cit_em  = {'cov_type': 'cluster', 'cov_kwds': {'groups': reg_cit_em['BLS_Industry']}}
-        Y_cit_em  = reg_cit_em['clean_cite_share']
-        w_cit_em   = reg_cit_em['clean_pat_cites']
-        gr_cit_em = reg_cit_em['BLS_Industry']
-        X_cit_em = make_X(reg_cit_em, ['up_dlog_em', 'down_dlog_em'])
-        m_cit_em_ols = sm.OLS(Y_cit_em, X_cit_em).fit(**cl_cit_em)
-        m_cit_em_wls = wls_fit(Y_cit_em, X_cit_em, w_cit_em, gr_cit_em)
-        # Cite on cite
-        X_cit = make_X(reg_cit, ['up_pat_cite', 'down_pat_cite'])
-        m_cit_cc_ols = sm.OLS(Y_cit, X_cit).fit(**cl_cit)
-        m_cit_cc_wls = wls_fit(Y_cit, X_cit, w_cit, gr_cit)
+        m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_dlog_em_lag'],   'clean_pat_count', em_sub=reg_cnt_em_lag)
+        m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_pat_count_lag'], 'clean_pat_count')
+       
+        #Cites
+        m_cit_em  = fit(reg_cit, 'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],  'clean_pat_cites', em_sub=reg_cit_em)
+        m_cit_cc  = fit(reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'], 'clean_pat_cites')
+        
+        m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em)
+        m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
+        
+        m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'],   'clean_pat_cites', em_sub=reg_cit_em_lag)
+        m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'],  'clean_pat_cites')
     
         
         # ----------- #
         # Print Table #
         # ----------- #
-        variables = [
-            ('up_dlog_em',  'Upstream CO2e Reduction'),
-            ('down_dlog_em','Downstream CO2e Reduction'),
-            ('up_pat_count',        'Upstream Clean Patents'),
-            ('down_pat_count',      'Downstream Clean Patents'),
-            ('up_pat_cite',         'Upstream Clean Citations'),
-            ('down_pat_cite',       'Downstream Clean Citations'),
-        ]
 
-        def build_table(models):
-            # models: list of 7 fitted models, None for spacer columns
+        def build_table(models, variables):
             body = ''
             for varname, label in variables:
                 coefs, ses = [], []
                 for m in models:
                     if m is None:
-                        coefs.append('')
-                        ses.append('')
+                        coefs.append(''); ses.append('')
                     else:
                         c, s = gpf.fmt_coef(m, varname)
-                        coefs.append(c)
-                        ses.append(s)
+                        coefs.append(c); ses.append(s)
                 body += f'{label} & {" & ".join(coefs)} \\\\\n'
                 body += f'& {" & ".join(ses)} \\\\[3pt]\n'
-
             r2_vals, n_vals = [], []
             for m in models:
                 if m is None:
-                    r2_vals.append('')
-                    n_vals.append('')
+                    r2_vals.append(''); n_vals.append('')
                 else:
                     r2_vals.append(f'{m.rsquared:.3f}')
                     n_vals.append(str(int(m.nobs)))
-
-            body += '\\midrule\n'
             body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
-            body += f'Obs & {" & ".join(n_vals)} \\\\\n[-7pt]'
+            body += f'Obs & {" & ".join(n_vals)} \\\\'
             return body
+        
+        def col_order(em_em, em_pat, em_cit, cnt_em, cnt_pc, cit_em, cit_cc):
+            return [em_em, em_pat, em_cit, None, cnt_em, cnt_pc, None, cit_em, cit_cc]
 
-        ols_models = [m_em_em_ols, m_em_pat_ols, m_em_cit_ols, None,
-                      m_cnt_em_ols, m_cnt_pc_ols, None,
-                      m_cit_em_ols, m_cit_cc_ols]
-        wls_models = [m_em_em_wls, m_em_pat_wls, m_em_cit_wls, None,
-                      m_cnt_em_wls, m_cnt_pc_wls, None,
-                      m_cit_em_wls, m_cit_cc_wls]
+        # Table 1: net (sum) current
+        vars_net = [
+            ('net_dlog_em',   'Network Emission Reduction'),
+            ('net_pat_count', 'Network Clean Patents'),
+            ('net_pat_cite',  'Network Clean Citations'),
+        ]
+        t1 = build_table(col_order(m_em_em_n, m_em_pat_n, m_em_cit_n,
+                                   m_cnt_em_n, m_cnt_pc_n,
+                                   m_cit_em_n, m_cit_cc_n), vars_net)
 
-        for tag, models in [('OLS', ols_models), ('WLS', wls_models)]:
+        # Table 2: net (sum) lagged
+        vars_lag = [
+            ('net_dlog_em_lag',   'Network Emission Reduction (lag)'),
+            ('net_pat_count_lag', 'Network Clean Patents (lag)'),
+            ('net_pat_cite_lag',  'Network Clean Citations (lag)'),
+        ]
+        t2 = build_table(col_order(m_em_em_l, m_em_pat_l, m_em_cit_l,
+                                   m_cnt_em_l, m_cnt_pc_l,
+                                   m_cit_em_l, m_cit_cc_l), vars_lag)
+
+        # Table 3: upstream/downstream split current
+        vars_updown = [
+            ('up_dlog_em',    'Upstream Emission Reduction'),
+            ('down_dlog_em',  'Downstream Emission Reduction'),
+            ('up_pat_count',  'Upstream Clean Patents'),
+            ('down_pat_count','Downstream Clean Patents'),
+            ('up_pat_cite',   'Upstream Clean Citations'),
+            ('down_pat_cite', 'Downstream Clean Citations'),
+        ]
+        t3 = build_table(col_order(m_em_em, m_em_pat, m_em_cit,
+                                   m_cnt_em, m_cnt_pc,
+                                   m_cit_em, m_cit_cc), vars_updown)
+
+        for tag, body in [('Net',    t1),
+                          ('Lagged', t2),
+                          ('UpDown', t3)]:
             out_path = f'{self.Directory}/Results/Tables/Network_Regressions_{tag}.tex'
             with open(out_path, 'w') as f:
-                f.write(build_table(models))
+                f.write(body)
             
     
     
