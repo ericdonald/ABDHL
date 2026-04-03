@@ -1136,8 +1136,8 @@ class Processor:
         # Table 1: net (sum) current
         vars_net = [
             ('net_dlog_em',   'Network Emissions Reduction'),
-            ('net_pat_count', 'Network Clean Patents'),
-            ('net_pat_cite',  'Network Clean Citations'),
+            ('net_pat_count', 'Network Green Patents'),
+            ('net_pat_cite',  'Network Green Citations'),
         ]
         t1 = build_table(col_order(m_em_em_n, m_em_pat_n, m_em_cit_n,
                                    m_cnt_em_n, m_cnt_pc_n,
@@ -1146,8 +1146,8 @@ class Processor:
         # Table 2: net (sum) lagged
         vars_lag = [
             ('net_dlog_em_lag',   'Network Emissions Reduction (lag)'),
-            ('net_pat_count_lag', 'Network Clean Patents (lag)'),
-            ('net_pat_cite_lag',  'Network Clean Citations (lag)'),
+            ('net_pat_count_lag', 'Network Green Patents (lag)'),
+            ('net_pat_cite_lag',  'Network Green Citations (lag)'),
         ]
         t2 = build_table(col_order(m_em_em_l, m_em_pat_l, m_em_cit_l,
                                    m_cnt_em_l, m_cnt_pc_l,
@@ -1157,10 +1157,10 @@ class Processor:
         vars_updown = [
             ('up_dlog_em',    'Upstream Emissions Reduction'),
             ('down_dlog_em',  'Downstream Emissions Reduction'),
-            ('up_pat_count',  'Upstream Clean Patents'),
-            ('down_pat_count','Downstream Clean Patents'),
-            ('up_pat_cite',   'Upstream Clean Citations'),
-            ('down_pat_cite', 'Downstream Clean Citations'),
+            ('up_pat_count',  'Upstream Green Patents'),
+            ('down_pat_count','Downstream Green Patents'),
+            ('up_pat_cite',   'Upstream Green Citations'),
+            ('down_pat_cite', 'Downstream Green Citations'),
         ]
         t3 = build_table(col_order(m_em_em, m_em_pat, m_em_cit,
                                    m_cnt_em, m_cnt_pc,
