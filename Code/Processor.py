@@ -1125,8 +1125,9 @@ class Processor:
                 else:
                     r2_vals.append(f'{m.rsquared:.3f}')
                     n_vals.append(str(int(m.nobs)))
+            body += '\midrule'
             body += f'$R^2$ & {" & ".join(r2_vals)} \\\\\n'
-            body += f'Obs & {" & ".join(n_vals)} \\\\'
+            body += f'Obs & {" & ".join(n_vals)} \\'
             return body
         
         def col_order(em_em, em_pat, em_cit, cnt_em, cnt_pc, cit_em, cit_cc):
