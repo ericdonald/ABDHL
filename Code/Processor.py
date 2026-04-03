@@ -1135,7 +1135,7 @@ class Processor:
 
         # Table 1: net (sum) current
         vars_net = [
-            ('net_dlog_em',   'Network Emission Reduction'),
+            ('net_dlog_em',   'Network Emissions Reduction'),
             ('net_pat_count', 'Network Clean Patents'),
             ('net_pat_cite',  'Network Clean Citations'),
         ]
@@ -1145,7 +1145,7 @@ class Processor:
 
         # Table 2: net (sum) lagged
         vars_lag = [
-            ('net_dlog_em_lag',   'Network Emission Reduction (lag)'),
+            ('net_dlog_em_lag',   'Network Emissions Reduction (lag)'),
             ('net_pat_count_lag', 'Network Clean Patents (lag)'),
             ('net_pat_cite_lag',  'Network Clean Citations (lag)'),
         ]
@@ -1155,8 +1155,8 @@ class Processor:
 
         # Table 3: upstream/downstream split current
         vars_updown = [
-            ('up_dlog_em',    'Upstream Emission Reduction'),
-            ('down_dlog_em',  'Downstream Emission Reduction'),
+            ('up_dlog_em',    'Upstream Emissions Reduction'),
+            ('down_dlog_em',  'Downstream Emissions Reduction'),
             ('up_pat_count',  'Upstream Clean Patents'),
             ('down_pat_count','Downstream Clean Patents'),
             ('up_pat_cite',   'Upstream Clean Citations'),
