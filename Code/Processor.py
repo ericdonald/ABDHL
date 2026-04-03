@@ -487,7 +487,7 @@ class Processor:
         def tv_metrics(A, B):
            diff  = np.abs(B - A)
            tv    = 0.5 * diff.sum(axis=1)
-           tv_sq = 0.5 * ((diff**2).sum(axis=1))**(1/2)
+           tv_sq = (0.5 * (diff**2).sum(axis=1))**(1/2)
            return tv, tv_sq
 
         # Period 1: start -> mid
