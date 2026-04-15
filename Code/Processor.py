@@ -707,12 +707,14 @@ class Processor:
         
         
     
-    def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end):
+    def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end, dim=2):
         """""
         Upstream and Downstream Incentives for Greenification
         
-        Output: Results/Tables/Network_Regressions_OLS.tex
-                Results/Tables/Network_Regressions_WLS.tex
+        Output: Results/Tables/Network_Regressions_Net.tex
+                Results/Tables/Network_Regressions_Net_OLS.tex
+                Results/Tables/Network_Regressions_Lagged.tex
+                Results/Tables/Network_Regressions_UpDown.tex
         
         """""
         
@@ -861,7 +863,7 @@ class Processor:
         
         # ----------------------------------------------------------------
         def winsorize(df, cols, lower=0.1):
-            upper= 1 - lower
+            upper = 1 - lower
             df = df.copy()
             for col in cols:
                 lo = df[col].quantile(lower)
@@ -873,13 +875,15 @@ class Processor:
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
             return sm.add_constant(pd.concat([df[cols], fe], axis=1))
         
-        def fit(df, Y_col, x_cols, w_col, em_sub=None):
-            d   = em_sub if em_sub is not None else df
-            cl  = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
-            Y   = d[Y_col]
-            X   = make_X(d, x_cols)
-            w   = np.maximum(np.log(d[w_col]), 0)
-            return sm.WLS(Y, X, w).fit(**cl)
+        def fit(df, Y_col, x_cols, w_col=None, em_sub=None, ols=False):
+           d  = em_sub if em_sub is not None else df
+           cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
+           Y  = d[Y_col]
+           X  = make_X(d, x_cols)
+           if ols:
+               return sm.OLS(Y, X).fit(**cl)
+           w  = d[w_col] ** (1 / dim)
+           return sm.WLS(Y, X, w).fit(**cl)
 
         # ------------------ #
         # Estimation Samples #
@@ -928,42 +932,6 @@ class Processor:
         reg_cnt_em_lag = reg_cnt_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
         reg_cit_em_lag = reg_cit_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
 
-            
-        # ------------ #
-        # Scatterplots #
-        # ------------ #
-        def scatter_pairs(df, y_col, x_cols, title_prefix):
-            fig, axes = plt.subplots(1, len(x_cols), figsize=(5*len(x_cols), 4),
-                                     constrained_layout=True)
-            if len(x_cols) == 1:
-                axes = [axes]
-            for ax, x_col in zip(axes, x_cols):
-                sub = df[[y_col, x_col]].dropna()
-                ax.scatter(sub[x_col], sub[y_col], alpha=0.4, s=20, edgecolors='none')
-                if len(sub) > 2:
-                    m, b = np.polyfit(sub[x_col], sub[y_col], 1)
-                    xr   = np.array([sub[x_col].min(), sub[x_col].max()])
-                    ax.plot(xr, m*xr + b, color='firebrick', linewidth=1.5)
-                ax.set_xlabel(x_col, fontsize=9)
-                ax.set_ylabel(y_col, fontsize=9)
-                ax.set_title(f"{title_prefix}\n{y_col} ~ {x_col}", fontsize=8)
-            plt.show(fig)
-            
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_dlog_em',   'down_dlog_em']),
-                      'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'],   'Manu: Δln Emissions ~ network Δln Emissions')
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_count', 'down_pat_count']),
-                      'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], 'Manu: Δln Emissions ~ network Pat count')
-        scatter_pairs(winsorize(reg_df, ['dlog_CO2e_inten', 'up_pat_cite',  'down_pat_cite']),
-                      'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'],  'Manu: Δln Emissions ~ network Pat cite')
-        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_dlog_em',  'down_dlog_em']),
-                      'clean_pat_share',  ['up_dlog_em',  'down_dlog_em'],   'Manu: Pat count ~ network Δln Emissions')
-        scatter_pairs(winsorize(reg_df, ['clean_pat_share',  'up_pat_count','down_pat_count']),
-                      'clean_pat_share',  ['up_pat_count','down_pat_count'], 'Manu: Pat count ~ network Pat count')
-        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_dlog_em',  'down_dlog_em']),
-                      'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],   'Manu: Pat cite ~ network Δln Emissions')
-        scatter_pairs(winsorize(reg_df, ['clean_cite_share', 'up_pat_cite', 'down_pat_cite']),
-                      'clean_cite_share', ['up_pat_cite', 'down_pat_cite'],  'Manu: Pat cite ~ network Pat cite')
-
         
         # -------------------- #
         # Emission Regressions #
@@ -976,6 +944,10 @@ class Processor:
         m_em_em_n  = fit(reg_em,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
         m_em_pat_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
         m_em_cit_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
+        
+        m_em_em_n_ols  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'],   ols=True)
+        m_em_pat_n_ols = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], ols=True)
+        m_em_cit_n_ols = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'],  ols=True)
         
         m_em_em_l  = fit(reg_em_em_lag,  'dlog_CO2e_inten',  ['net_dlog_em_lag'],   'CO2e_Industry')
         m_em_pat_l = fit(reg_em_lag,  'dlog_CO2e_inten',  ['net_pat_count_lag'], 'CO2e_Industry')
@@ -993,6 +965,9 @@ class Processor:
         m_cnt_em_n = fit(reg_cnt, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
         m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
         
+        m_cnt_em_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em, ols=True)
+        m_cnt_pc_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], ols=True)
+        
         m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_dlog_em_lag'],   'clean_pat_count', em_sub=reg_cnt_em_lag)
         m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_pat_count_lag'], 'clean_pat_count')
        
@@ -1002,6 +977,9 @@ class Processor:
         
         m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em)
         m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
+        
+        m_cit_em_n_ols = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em, ols=True)
+        m_cit_cc_n_ols = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], ols=True)
         
         m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'],   'clean_pat_cites', em_sub=reg_cit_em_lag)
         m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'],  'clean_pat_cites')
@@ -1038,27 +1016,16 @@ class Processor:
         def col_order(em_em, em_pat, em_cit, cnt_em, cnt_pc, cit_em, cit_cc):
             return [em_em, em_pat, em_cit, None, cnt_em, cnt_pc, None, cit_em, cit_cc]
 
-        # Table 1: net (sum) current
         vars_net = [
             ('net_dlog_em',   'Network Emissions Reduction'),
             ('net_pat_count', 'Network Green Patents'),
             ('net_pat_cite',  'Network Green Citations'),
         ]
-        t1 = build_table(col_order(m_em_em_n, m_em_pat_n, m_em_cit_n,
-                                   m_cnt_em_n, m_cnt_pc_n,
-                                   m_cit_em_n, m_cit_cc_n), vars_net)
-
-        # Table 2: net (sum) lagged
         vars_lag = [
             ('net_dlog_em_lag',   'Network Emissions Reduction (lag)'),
             ('net_pat_count_lag', 'Network Green Patents (lag)'),
             ('net_pat_cite_lag',  'Network Green Citations (lag)'),
         ]
-        t2 = build_table(col_order(m_em_em_l, m_em_pat_l, m_em_cit_l,
-                                   m_cnt_em_l, m_cnt_pc_l,
-                                   m_cit_em_l, m_cit_cc_l), vars_lag)
-
-        # Table 3: upstream/downstream split current
         vars_updown = [
             ('up_dlog_em',    'Upstream Emissions Reduction'),
             ('down_dlog_em',  'Downstream Emissions Reduction'),
@@ -1067,13 +1034,25 @@ class Processor:
             ('up_pat_cite',   'Upstream Green Citations'),
             ('down_pat_cite', 'Downstream Green Citations'),
         ]
-        t3 = build_table(col_order(m_em_em, m_em_pat, m_em_cit,
-                                   m_cnt_em, m_cnt_pc,
-                                   m_cit_em, m_cit_cc), vars_updown)
 
-        for tag, body in [('Net',    t1),
-                          ('Lagged', t2),
-                          ('UpDown', t3)]:
+        t_net     = build_table(col_order(m_em_em_n,     m_em_pat_n,     m_em_cit_n,
+                                          m_cnt_em_n,    m_cnt_pc_n,
+                                          m_cit_em_n,    m_cit_cc_n),    vars_net)
+        t_net_ols = build_table(col_order(m_em_em_n_ols, m_em_pat_n_ols, m_em_cit_n_ols,
+                                          m_cnt_em_n_ols,m_cnt_pc_n_ols,
+                                          m_cit_em_n_ols,m_cit_cc_n_ols),vars_net)
+        t_lag     = build_table(col_order(m_em_em_l,     m_em_pat_l,     m_em_cit_l,
+                                          m_cnt_em_l,    m_cnt_pc_l,
+                                          m_cit_em_l,    m_cit_cc_l),    vars_lag)
+        t_updown  = build_table(col_order(m_em_em,       m_em_pat,       m_em_cit,
+                                          m_cnt_em,      m_cnt_pc,
+                                          m_cit_em,      m_cit_cc),      vars_updown)
+
+
+        for tag, body in [('Net',       t_net),
+                          ('Net_OLS',   t_net_ols),
+                          ('Lagged',    t_lag),
+                          ('UpDown',    t_updown)]:
             out_path = f'{self.Directory}/Results/Tables/Network_Regressions_{tag}.tex'
             with open(out_path, 'w') as f:
                 f.write(body)
