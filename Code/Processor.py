@@ -422,23 +422,19 @@ class Processor:
 
 
 
-    def IO_Change(self, Year_start, Year_mid, Year_end):
+    def IO_Change(self, Year_start, Year_mid, Year_end, dim=2):
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output: Results/Tables/sector_extremes_table.tex
-                Results/Figures/Baseline_L1_uw.png
-                Results/Figures/Baseline_L1.png
-                Results/Figures/Baseline_L2.png
-                Results/Figures/Baseline_split.png
-                Results/Figures/Leontief_L1_uw.png
-                Results/Figures/Leontief_L1.png
-                Results/Figures/Leontief_L2.png
-                Results/Figures/Leontief_split.png
-                Results/Figures/Reduced_L1_uw.png
-                Results/Figures/Reduced_L1.png
-                Results/Figures/Reduced_L2.png
-                Results/Figures/Reduced_split.png
+        Output: Results/Figures/Baseline_L1_OLS.png
+                Results/Figures/Baseline_L1_OLS.png
+                Results/Figures/Baseline_L2_WLS.png
+                Results/Figures/Leontief_L1_OLS.png
+                Results/Figures/Leontief_L1_OLS.png
+                Results/Figures/Leontief_L2_WLS.png
+                Results/Figures/Reduced_L1_OLS.png
+                Results/Figures/Reduced_L1_OLS.png
+                Results/Figures/Reduced_L2_WLS.png
         """""
         
         # ----------------------------------------------------------------
@@ -539,16 +535,14 @@ class Processor:
 
         CO2e_lev_LI_start = LI_start_sub @ IO_wide_df['CO2e_Industry', Year_start].to_numpy()
         CO2e_lev_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_Industry', Year_mid].to_numpy()
-
+        
         em_p1 = pd.DataFrame({
             "BLS_Industry":       IO_wide_df.index,
             "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())
                                   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
             "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
-            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_start].to_numpy(),
-            "CO2e_Industry_LI":   CO2e_lev_LI_start,
-            "ln_CO2e_Industry":      np.log(IO_wide_df['CO2e_Industry', Year_start].to_numpy()),
-            "ln_CO2e_Industry_LI":   np.log(CO2e_lev_LI_start),
+            "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_start].to_numpy()**(1/dim),
+            "CO2e_Industry_LI_weight":   CO2e_lev_LI_start**(1/dim),
             "period": 1})
 
         em_p2 = pd.DataFrame({
@@ -556,10 +550,8 @@ class Processor:
             "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())
                                   - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())),
             "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
-            "CO2e_Industry":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy(),
-            "CO2e_Industry_LI":   CO2e_lev_LI_mid,
-            "ln_CO2e_Industry":      np.log(IO_wide_df['CO2e_Industry', Year_mid].to_numpy()),
-            "ln_CO2e_Industry_LI":   np.log(CO2e_lev_LI_mid),
+            "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy()**(1/dim),
+            "CO2e_Industry_LI_weight":   CO2e_lev_LI_mid**(1/dim),
             "period": 2})
 
         distance_cols = ['BLS_Industry', 'period',
@@ -568,7 +560,7 @@ class Processor:
                          'TV_distance_reduced', 'TV_sq_distance_reduced']
 
         emission_cols = ['BLS_Industry', 'period',
-                         'CO2e_Industry', 'CO2e_Industry_LI', 'ln_CO2e_Industry', 'ln_CO2e_Industry_LI',
+                         'CO2e_Industry_weight', 'CO2e_Industry_LI_weight',
                          'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
 
         em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
@@ -576,100 +568,12 @@ class Processor:
                           em_df[emission_cols].drop_duplicates(),
                           on=['BLS_Industry', 'period'],
                           how='inner')
-
         
-        # ------------- #
-        # List Extremes #
-        # ------------- #
         reg_df = reg_df.merge(BLS_Crosswalk_df[["BLS_Industry", "Sector Title"]].drop_duplicates(),
                                 on="BLS_Industry",
                                 how="left"
                             )
-    
-        largest_CO2e = (reg_df[reg_df["period"] == 1].sort_values("CO2e_Industry", ascending=False)
-              .head(5)[["BLS_Industry", "Sector Title", "CO2e_Industry"]]
-              .apply(tuple, axis=1)
-              .tolist()
-            )
-        
-        largest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=False)
-              .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
-              .apply(tuple, axis=1)
-              .tolist()
-            )
-        
-        smallest_dlog_CO2e = (reg_df.sort_values("dlog_CO2e_inten", ascending=True)
-              .head(5)[["BLS_Industry", "Sector Title", "dlog_CO2e_inten"]]
-              .apply(tuple, axis=1)
-              .tolist()
-            )
-        
-        largest_tv = (reg_df.sort_values("TV_distance", ascending=False)
-              .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
-              .apply(tuple, axis=1)
-              .tolist()
-            )
-        
-        smallest_tv = (reg_df.sort_values("TV_distance", ascending=True)
-              .head(5)[["BLS_Industry", "Sector Title", "TV_distance"]]
-              .apply(tuple, axis=1)
-              .tolist()
-            )
-        
-        def get_sector_names(extreme_list):
-            return [x[1] for x in extreme_list]
-        
-        def latex_escape(s):
-            return (s.replace("\\", r"\textbackslash ")
-                     .replace("&", r"\&")
-                     .replace("%", r"\%")
-                     .replace("$", r"\$")
-                     .replace("#", r"\#")
-                     .replace("_", r"\_")
-                     .replace("{", r"\{")
-                     .replace("}", r"\}")
-                     .replace("~", r"\textasciitilde ")
-                     .replace("^", r"\textasciicircum "))
-        
-        def make_two_col_rows(left_list, right_list, n=5):
-            left = [latex_escape(x) for x in left_list[:n]]
-            right = [latex_escape(x) for x in right_list[:n]]
-            # If one side is shorter for any reason, pad with blanks
-            m = max(len(left), len(right))
-            left += [""] * (m - len(left))
-            right += [""] * (m - len(right))
-            return "\n".join([f"{left[i]} & {right[i]} \\\\" for i in range(m)])
-        
-        largest_dlog_names   = get_sector_names(largest_dlog_CO2e)
-        smallest_dlog_names  = get_sector_names(smallest_dlog_CO2e)
-        largest_tv_names     = get_sector_names(largest_tv)
-        smallest_tv_names    = get_sector_names(smallest_tv)
-        
-        latex_table = rf"""
-        \begin{{table}}[ht]
-        \centering
-        \begin{{tabular}}{{p{{6cm}} p{{6cm}}}}
-        \toprule
-        \multicolumn{{2}}{{c}}{{\textbf{{Emission Intensity Reduction}}}} \\
-        \midrule
-        \textbf{{Largest}} & \textbf{{Smallest}} \\
-        \midrule
-        {make_two_col_rows(largest_dlog_names, smallest_dlog_names, n=5)}
-        \midrule
-        \multicolumn{{2}}{{c}}{{\textbf{{Input Share Change}}}} \\
-        \midrule
-        \textbf{{Largest}} & \textbf{{Smallest}} \\
-        \midrule
-        {make_two_col_rows(largest_tv_names, smallest_tv_names, n=5)}
-        \bottomrule
-        \end{{tabular}}
-        \end{{table}}
-        """
-        
-        output_path = f'{self.Directory}/Results/Tables/sector_extremes_table.tex'
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(latex_table)
 
         # ----------------------------------------------------------------
 
@@ -707,6 +611,7 @@ class Processor:
                 return sm.WLS(Y, X, w).fit(**cl)
 
             return dict(
+                m_l1_ols     = fit(y_arr,    X_split),
                 m_l1_wls     = fit(y_arr,    X_split, w_arr),
                 m_l2_wls     = fit(y_sq_arr, X_split, w_arr),
                 x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
@@ -716,7 +621,7 @@ class Processor:
 
         def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
             x, y, y_sq = r['x'], r['y'], r['y_sq']
-            w_raw  = np.exp(r['w'])
+            w_raw  = (r['w'])**dim
             scale  = 1000 / w_raw.max()
 
             stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
@@ -768,6 +673,7 @@ class Processor:
                 plt.savefig(f'{save_dir}/{fname}.png')
                 plt.show()
 
+            plot_single(r['m_l1_ols'], y,    ylabel_tv, f'{prefix}_L1_OLS', 'OLS')
             plot_single(r['m_l1_wls'], y,    ylabel_tv, f'{prefix}_L1_WLS', 'WLS')
             plot_single(r['m_l2_wls'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
 
@@ -777,7 +683,7 @@ class Processor:
         # -------- #
         # Baseline #
         # -------- #
-        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'ln_CO2e_Industry', 'BLS_Industry')
+        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'CO2e_Industry_weight', 'BLS_Industry')
         plot_case(r_base, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
                   'Baseline', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
@@ -785,7 +691,7 @@ class Processor:
         # ---------------- #
         # Leontief Inverse #
         # ---------------- #
-        r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'ln_CO2e_Industry_LI', 'BLS_Industry')
+        r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI_weight', 'BLS_Industry')
         plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
                   'Leontief', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
@@ -794,11 +700,10 @@ class Processor:
         # Reduced #
         # ------- #
         reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
-        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'ln_CO2e_Industry', 'BLS_Industry')
+        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
         plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
                   'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
-        
         
         
     
