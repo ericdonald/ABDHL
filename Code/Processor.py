@@ -422,7 +422,7 @@ class Processor:
 
 
 
-    def IO_Change(self, Year_start, Year_mid, Year_end, dim=2):
+    def IO_Change(self, Year_start, Year_mid, Year_end, dim=3):
         """""
         Plot of Changes in IO Network from Decarbonization
     
@@ -707,7 +707,7 @@ class Processor:
         
         
     
-    def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end, dim=2):
+    def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end, dim=3):
         """""
         Upstream and Downstream Incentives for Greenification
         
