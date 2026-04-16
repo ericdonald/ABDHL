@@ -426,15 +426,12 @@ class Processor:
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output: Results/Figures/Baseline_L1_OLS.png
-                Results/Figures/Baseline_L1_OLS.png
-                Results/Figures/Baseline_L2_WLS.png
-                Results/Figures/Leontief_L1_OLS.png
-                Results/Figures/Leontief_L1_OLS.png
-                Results/Figures/Leontief_L2_WLS.png
-                Results/Figures/Reduced_L1_OLS.png
-                Results/Figures/Reduced_L1_OLS.png
+        Output: Results/Figures/Reduced_L1_OLS.png
+                Results/Figures/Reduced_L1_WLS.png
                 Results/Figures/Reduced_L2_WLS.png
+                Results/Figures/Leontief_L1_OLS.png
+                Results/Figures/Leontief_L1_WLS.png
+                Results/Figures/Leontief_L2_WLS.png
         """""
         
         # ----------------------------------------------------------------
@@ -457,11 +454,6 @@ class Processor:
         LI_start = np.linalg.inv(I - self.IO[Year_start])
         LI_mid   = np.linalg.inv(I - self.IO[Year_mid])
         LI_end   = np.linalg.inv(I - self.IO[Year_end])
- 
-        # Baseline: non-service rows, all columns
-        IO_start_manu = self.IO[Year_start][manu, :]
-        IO_mid_manu   = self.IO[Year_mid][manu, :]
-        IO_end_manu   = self.IO[Year_end][manu, :]
  
         # Leontief: non-service rows, all columns
         LI_start_manu = LI_start[manu, :]
@@ -487,29 +479,25 @@ class Processor:
            return tv, tv_sq
 
         # Period 1: start -> mid
-        tv_p1,         tv_sq_p1         = tv_metrics(IO_start_manu,    IO_mid_manu)
         tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start_manu,    LI_mid_manu)
         tv_red_p1,     tv_sq_red_p1     = tv_metrics(IO_start_reduced, IO_mid_reduced)
 
         # Period 2: mid -> end
-        tv_p2,         tv_sq_p2         = tv_metrics(IO_mid_manu,    IO_end_manu)
         tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid_manu,   LI_end_manu)
         tv_red_p2,     tv_sq_red_p2     = tv_metrics(IO_mid_reduced, IO_end_reduced)
 
-        def make_IO_df(tv, tv_sq, tv_LI, tv_sq_LI, tv_red, tv_sq_red):
+        def make_IO_df(tv_LI, tv_sq_LI, tv_red, tv_sq_red):
             return pd.DataFrame({
                 "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]+1),
-                "TV_distance":            tv,
-                "TV_sq_distance":         tv_sq,
                 "TV_distance_LI":         tv_LI,
                 "TV_sq_distance_LI":      tv_sq_LI,
                 "TV_distance_reduced":    tv_red,
                 "TV_sq_distance_reduced": tv_sq_red})
 
-        IO_df_p1 = make_IO_df(tv_p1, tv_sq_p1, tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
+        IO_df_p1 = make_IO_df(tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
         IO_df_p1['period'] = 1
 
-        IO_df_p2 = make_IO_df(tv_p2, tv_sq_p2, tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
+        IO_df_p2 = make_IO_df(tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
         IO_df_p2['period'] = 2
 
         IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
@@ -555,7 +543,6 @@ class Processor:
             "period": 2})
 
         distance_cols = ['BLS_Industry', 'period',
-                         'TV_distance',         'TV_sq_distance',
                          'TV_distance_LI',      'TV_sq_distance_LI',
                          'TV_distance_reduced', 'TV_sq_distance_reduced']
 
@@ -680,12 +667,13 @@ class Processor:
         fig_dir = f'{self.Directory}/Results/Figures'
     
 
-        # -------- #
-        # Baseline #
-        # -------- #
-        r_base = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance', 'TV_sq_distance', 'CO2e_Industry_weight', 'BLS_Industry')
-        plot_case(r_base, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
-                  'Baseline', Year_start, Year_mid, Year_end, fig_dir,
+        # ------- #
+        # Reduced #
+        # ------- #
+        reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
+        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
+        plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
+                  'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
 
         # ---------------- #
@@ -694,15 +682,6 @@ class Processor:
         r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI_weight', 'BLS_Industry')
         plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
                   'Leontief', Year_start, Year_mid, Year_end, fig_dir,
-                  labels=reg_df['Sector Title'].to_numpy())
-
-        # ------- #
-        # Reduced #
-        # ------- #
-        reduced_df = reg_df.dropna(subset=['TV_distance_reduced', 'TV_sq_distance_reduced'])
-        r_red = run_regressions(reduced_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
-        plot_case(r_red, reduced_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
-                  'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
         
         
