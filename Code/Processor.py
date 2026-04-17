@@ -724,6 +724,7 @@ class Processor:
         Upstream and Downstream Incentives for Greenification
         
         Output: Results/Tables/Network_Regressions_Net.tex
+                Results/Tables/Network_Regressions_Net_full.tex
                 Results/Tables/Network_Regressions_Net_OLS.tex
                 Results/Tables/Network_Regressions_Lagged.tex
                 Results/Tables/Network_Regressions_UpDown.tex
@@ -737,9 +738,10 @@ class Processor:
         # ----------------------------------------------------------------
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
 
-
+       
         # ----------- #
         # Build Panel #
         # ----------- #
@@ -748,15 +750,14 @@ class Processor:
             np.fill_diagonal(self.IO[year], 0)
 
         J = self.IO[Year_end].shape[0]
-
-        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
-        IO_wide_df = IO_wide_df.dropna()
-
+        
         manu_mask = np.zeros(J, dtype=bool)
         manu_slice = slice(self.manu_cols[0]-1, self.manu_cols[1])
         manu_mask[manu_slice] = True
-
-        idx1 = IO_wide_df.index.to_numpy(dtype=int)
+        
+        IO_wide_df_full = Ind_CO2_df_full.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+        IO_wide_df_full = IO_wide_df_full.dropna()
+        idx_full = IO_wide_df_full.index.to_numpy(dtype=int)
         
         def build_manu_IO(IO_matrix):
             A              = IO_matrix.copy()
@@ -766,16 +767,17 @@ class Processor:
             denom          = row_totals_excl[manu_slice, np.newaxis]
             safe_denom     = np.where(denom == 0, 1, denom)
             return A_manu / safe_denom
-
+        
         manu_IO = {year: build_manu_IO(self.IO[year]) for year in bin_ends}
+        manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
+        manu_mask_wide_full = np.isin(idx_full, manu_idx_all)
 
-        manu_idx1_full = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
-        M              = len(manu_idx1_full)
-        manu_mask_wide = np.isin(idx1, manu_idx1_full)
-        manu_idx1      = idx1[manu_mask_wide]
-        manu_embed_idx = np.searchsorted(manu_idx1_full, manu_idx1)
-
-        def compute_network_effect(IO_manu, z_wide, prefix):
+        def compute_network_effect(IO_manu, z_wide, prefix, idx):            
+            M              = len(manu_idx_all)
+            manu_mask_wide = np.isin(idx, manu_idx_all)
+            manu_idx      = idx[manu_mask_wide]
+            manu_embed_idx = np.searchsorted(manu_idx_all, manu_idx)
+            
             I      = np.eye(M)
             LI     = np.linalg.inv(I - IO_manu)
             z_full = np.zeros(M)
@@ -784,28 +786,41 @@ class Processor:
                 f"up_{prefix}":   ((LI - I)   @ z_full)[manu_embed_idx],
                 f"down_{prefix}": ((LI - I).T @ z_full)[manu_embed_idx],
             }
-       
+        
         
         # --------- #
         # Emissions #
         # --------- #
-        dlog_p1 = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
-        dlog_p2 = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
-        
-        def make_em_period(dlog, IO_manu, year_label):
-            net = compute_network_effect(IO_manu, np.maximum(dlog[manu_mask_wide], 0), 'dlog_em')
-            base = pd.DataFrame({
-                "BLS_Industry":    IO_wide_df.index,
-                "period":          year_label,
-                "dlog_CO2e_inten": dlog,
-            })
-            manu_df = pd.DataFrame({"BLS_Industry": IO_wide_df.index[manu_mask_wide], **net})
-            return base.merge(manu_df, on='BLS_Industry', how='left')
+        def em_panel(Ind_CO2_df):
+            
+            IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+            IO_wide_df = IO_wide_df.dropna()
+            idx = IO_wide_df.index.to_numpy(dtype=int)
 
-        em_df = pd.concat([
-            make_em_period(dlog_p1, manu_IO[Year_mid], Year_mid),
-            make_em_period(dlog_p2, manu_IO[Year_end], Year_end),
-        ], ignore_index=True)
+            dlog_p1 = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
+            dlog_p2 = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
+                        
+            manu_mask_wide = np.isin(idx, manu_idx_all)
+            
+            def make_em_period(dlog, IO_manu, year_label):
+                net = compute_network_effect(IO_manu, np.maximum(dlog[manu_mask_wide], 0), 'dlog_em', idx)
+                base = pd.DataFrame({
+                    "BLS_Industry":    IO_wide_df.index,
+                    "period":          year_label,
+                    "dlog_CO2e_inten": dlog,
+                })
+                manu_df = pd.DataFrame({"BLS_Industry": IO_wide_df.index[manu_mask_wide], **net})
+                return base.merge(manu_df, on='BLS_Industry', how='left')
+    
+            em_df = pd.concat([
+                make_em_period(dlog_p1, manu_IO[Year_mid], Year_mid),
+                make_em_period(dlog_p2, manu_IO[Year_end], Year_end),
+            ], ignore_index=True)
+            
+            return em_df
+        
+        em_df = em_panel(Ind_CO2_df)
+        em_df_full = em_panel(Ind_CO2_df_full)
 
 
         # ------- #
@@ -816,13 +831,13 @@ class Processor:
             pat_yr = Ind_Pat_df[Ind_Pat_df['period'] == year].copy()
             if pat_yr.empty:
                 continue
-            pat_yr  = pat_yr.set_index('BLS_Industry').reindex(IO_wide_df.index).reset_index()
+            pat_yr  = pat_yr.set_index('BLS_Industry').reindex(IO_wide_df_full.index).reset_index()
             pc_raw  = pat_yr['clean_pat_share'].to_numpy()
             cc_raw  = pat_yr['clean_cite_share'].to_numpy()
-            net_pc  = compute_network_effect(manu_IO[year], pc_raw[manu_mask_wide], 'pat_count')
-            net_cc  = compute_network_effect(manu_IO[year], cc_raw[manu_mask_wide], 'pat_cite')
+            net_pc  = compute_network_effect(manu_IO[year], pc_raw[manu_mask_wide_full], 'pat_count', idx_full)
+            net_cc  = compute_network_effect(manu_IO[year], cc_raw[manu_mask_wide_full], 'pat_cite', idx_full)
             manu_pat_df = pd.DataFrame({
-                "BLS_Industry":    IO_wide_df.index[manu_mask_wide],
+                "BLS_Industry":    IO_wide_df_full.index[manu_mask_wide_full],
                 **net_pc, **net_cc,
             })
             cpc_weight = pat_yr['clean_pat_count'].to_numpy()
@@ -831,7 +846,7 @@ class Processor:
             cc_weight = pat_yr['pat_cites'].to_numpy()
             
             base_pat = pd.DataFrame({
-                "BLS_Industry":    IO_wide_df.index,
+                "BLS_Industry":    IO_wide_df_full.index,
                 "period":          year,
                 "clean_pat_share": pc_raw,
                 "clean_cite_share":cc_raw,
@@ -848,26 +863,31 @@ class Processor:
         # ----- #
         # Merge #
         # ----- #
-        reg_df = pat_df.merge(em_df, on=['BLS_Industry', 'period'], how='left')
-        reg_df = reg_df[reg_df['BLS_Industry'].isin(manu_idx1)].copy()
+        def reg_panel(em_df, co2_df):
+            reg_df = pat_df.merge(em_df, on=['BLS_Industry', 'period'], how='left')
+            reg_df = reg_df[reg_df['BLS_Industry'].isin(manu_idx_all)].copy()
+    
+            co2_weights = pd.concat([
+                co2_df.loc[co2_df['Year'] == y - 5, ['BLS_Industry', 'CO2e_Industry']].assign(period=y)
+                for y in bin_ends
+            ], ignore_index=True)
+            reg_df = reg_df.merge(co2_weights, on=['BLS_Industry', 'period'], how='left')
+            
+            reg_df['net_dlog_em']   = reg_df['up_dlog_em']  + reg_df['down_dlog_em']
+            reg_df['net_pat_count'] = reg_df['up_pat_count'] + reg_df['down_pat_count']
+            reg_df['net_pat_cite']  = reg_df['up_pat_cite']  + reg_df['down_pat_cite']
+            
+            reg_df = reg_df.sort_values(['BLS_Industry', 'period'])
+            for col in ['net_dlog_em', 'net_pat_count', 'net_pat_cite',
+                        'up_dlog_em',  'down_dlog_em',
+                        'up_pat_count','down_pat_count',
+                        'up_pat_cite', 'down_pat_cite']:
+                reg_df[f'{col}_lag'] = reg_df.groupby('BLS_Industry')[col].shift(1)
+                
+            return reg_df
 
-        co2_weights = pd.concat([
-            Ind_CO2_df.loc[Ind_CO2_df['Year'] == y - 5, ['BLS_Industry', 'CO2e_Industry']].assign(period=y)
-            for y in bin_ends
-        ], ignore_index=True)
-        reg_df = reg_df.merge(co2_weights, on=['BLS_Industry', 'period'], how='left')
-        
-        reg_df['net_dlog_em']   = reg_df['up_dlog_em']  + reg_df['down_dlog_em']
-        reg_df['net_pat_count'] = reg_df['up_pat_count'] + reg_df['down_pat_count']
-        reg_df['net_pat_cite']  = reg_df['up_pat_cite']  + reg_df['down_pat_cite']
-        
-        reg_df = reg_df.sort_values(['BLS_Industry', 'period'])
-        for col in ['net_dlog_em', 'net_pat_count', 'net_pat_cite',
-                    'up_dlog_em',  'down_dlog_em',
-                    'up_pat_count','down_pat_count',
-                    'up_pat_cite', 'down_pat_cite']:
-            reg_df[f'{col}_lag'] = reg_df.groupby('BLS_Industry')[col].shift(1)
-
+        reg_df = reg_panel(em_df, Ind_CO2_df)
+        reg_df_full = reg_panel(em_df_full, Ind_CO2_df_full)
 
         # ----------------------------------------------------------------
         
@@ -913,6 +933,28 @@ class Processor:
         reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
         reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
         
+        reg_em_full = gpf.winsorize(
+            reg_df_full.dropna(subset=['dlog_CO2e_inten']),
+            ['dlog_CO2e_inten',
+             'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
+             'up_pat_count', 'down_pat_count', 'net_pat_count',
+             'up_pat_cite',  'down_pat_cite',  'net_pat_cite'])
+        
+        reg_cnt_full = gpf.winsorize(
+            reg_df_full[reg_df_full['clean_pat_share'] > 0],
+            ['clean_pat_share',
+             'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
+             'up_pat_count', 'down_pat_count', 'net_pat_count'])
+        
+        reg_cit_full = gpf.winsorize(
+            reg_df_full[reg_df_full['clean_cite_share'] > 0],
+            ['clean_cite_share',
+             'up_dlog_em',  'down_dlog_em',  'net_dlog_em',
+             'up_pat_cite', 'down_pat_cite', 'net_pat_cite'])
+
+        reg_cnt_em_full = reg_cnt_full.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        reg_cit_em_full = reg_cit_full.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        
         lag_em_cols  = ['net_dlog_em_lag',   'net_pat_count_lag', 'net_pat_cite_lag',
                         'up_dlog_em_lag',    'down_dlog_em_lag',
                         'up_pat_count_lag',  'down_pat_count_lag',
@@ -931,9 +973,18 @@ class Processor:
                 subset=['net_pat_cite_lag','up_pat_cite_lag',  'down_pat_cite_lag']),
              ['clean_cite_share'] + lag_em_cols)
 
-        reg_em_em_lag = reg_em_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
-        reg_cnt_em_lag = reg_cnt_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
-        reg_cit_em_lag = reg_cit_lag.dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag'])
+        reg_em_em_lag = gpf.winsorize(
+            reg_df.dropna(subset=['dlog_CO2e_inten',
+             'net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+            ['dlog_CO2e_inten'] + lag_em_cols)
+        reg_cnt_em_lag = gpf.winsorize(
+            reg_df[reg_df['clean_pat_share'] > 0].dropna(
+                subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+             ['clean_pat_share'] + lag_em_cols)
+        reg_cit_em_lag = gpf.winsorize(
+            reg_df[reg_df['clean_cite_share'] > 0].dropna(
+                subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+             ['clean_cite_share'] + lag_em_cols)
 
         
         # -------------------- #
@@ -947,6 +998,10 @@ class Processor:
         m_em_em_n  = fit(reg_em,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
         m_em_pat_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
         m_em_cit_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
+        
+        m_em_em_n_full  = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
+        m_em_pat_n_full = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
+        m_em_cit_n_full = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
         
         m_em_em_n_ols  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'],   ols=True)
         m_em_pat_n_ols = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], ols=True)
@@ -968,6 +1023,9 @@ class Processor:
         m_cnt_em_n = fit(reg_cnt, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
         m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
         
+        m_cnt_em_n_full = fit(reg_cnt_full, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em_full)
+        m_cnt_pc_n_full = fit(reg_cnt_full, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
+        
         m_cnt_em_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em, ols=True)
         m_cnt_pc_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], ols=True)
         
@@ -980,6 +1038,9 @@ class Processor:
         
         m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em)
         m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
+        
+        m_cit_em_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em_full)
+        m_cit_cc_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
         
         m_cit_em_n_ols = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em, ols=True)
         m_cit_cc_n_ols = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], ols=True)
@@ -1041,6 +1102,9 @@ class Processor:
         t_net     = build_table(col_order(m_em_em_n,     m_em_pat_n,     m_em_cit_n,
                                           m_cnt_em_n,    m_cnt_pc_n,
                                           m_cit_em_n,    m_cit_cc_n),    vars_net)
+        t_net_full = build_table(col_order(m_em_em_n_full,     m_em_pat_n_full,     m_em_cit_n_full,
+                                          m_cnt_em_n_full,    m_cnt_pc_n_full,
+                                          m_cit_em_n_full,    m_cit_cc_n_full),    vars_net)
         t_net_ols = build_table(col_order(m_em_em_n_ols, m_em_pat_n_ols, m_em_cit_n_ols,
                                           m_cnt_em_n_ols,m_cnt_pc_n_ols,
                                           m_cit_em_n_ols,m_cit_cc_n_ols),vars_net)
@@ -1053,6 +1117,7 @@ class Processor:
 
 
         for tag, body in [('Net',       t_net),
+                          ('Net_full',  t_net_full),
                           ('Net_OLS',   t_net_ols),
                           ('Lagged',    t_lag),
                           ('UpDown',    t_updown)]:
