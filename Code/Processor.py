@@ -53,6 +53,7 @@ class Processor:
         
         Output: Clean Data/BLS_Crosswalk.pkl
                 Clean Data/Ind_CO2.pkl
+                Clean Data/Ind_CO2_full.pkl
                 Clean Data/Ind_Pat.pkl
         """""
         
@@ -106,21 +107,6 @@ class Processor:
         
         EPA_df['CO2e'] = EPA_df.groupby(['Sector', 'Year'])['FlowAmount_CO2e'].transform("sum")
         EPA_df = EPA_df[['Sector', 'Year', 'CO2e']].drop_duplicates()
-        
-        jump_mask = (
-            EPA_df
-            .sort_values(['Sector', 'Year'])
-            .groupby('Sector')['CO2e']
-            .transform(lambda x: x.apply(np.log).diff().abs())
-            ) > np.log(1.5)
-    
-        flagged_industries = EPA_df['Sector'][jump_mask].unique()
-        
-        total_emissions = EPA_df['CO2e'].sum()
-        flagged_emissions = EPA_df[EPA_df['Sector'].isin(flagged_industries)]['CO2e'].sum()
-        
-        print(f"Flagged industries account for {flagged_emissions / total_emissions:.1%} of total emissions")
-        EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
         #NAICS 2017
         
 
@@ -231,24 +217,44 @@ class Processor:
         # ------------------ #
         # Allocate Emissions #
         # ------------------ #
-        Ind_CO2_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']].drop_duplicates(),
-                                    on='BLS_Industry',
-                                    how='inner')
+        jump_mask = (
+            EPA_df
+            .sort_values(['Sector', 'Year'])
+            .groupby('Sector')['CO2e']
+            .transform(lambda x: x.apply(np.log).diff().abs())
+            ) > np.log(1.5)
+    
+        flagged_industries = EPA_df['Sector'][jump_mask].unique()
         
-        Ind_CO2_df = Ind_CO2_df.merge(EPA_df,
-                            on='EPA_Sector',
-                            how='inner')
+        total_emissions = EPA_df['CO2e'].sum()
+        flagged_emissions = EPA_df[EPA_df['Sector'].isin(flagged_industries)]['CO2e'].sum()
         
-        Ind_CO2_df = Ind_CO2_df.merge(VA_panel,
-                            on=['BLS_Industry', 'Year'],
-                            how='inner')
+        print(f"Flagged industries account for {flagged_emissions / total_emissions:.1%} of total emissions")
+        EPS_full_df = EPA_df.copy()
+        EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
         
-        Ind_CO2_df['CO2e_Industry'] = Ind_CO2_df.groupby(['BLS_Industry', 'Year'])['CO2e'].transform("sum")
-        Ind_CO2_df['CO2e_intensity_Industry'] = Ind_CO2_df['CO2e_Industry'] / Ind_CO2_df['Value_Added']
-        
-        Ind_CO2_df = Ind_CO2_df[['BLS_Industry', 'Year', 'CO2e_Industry', 'CO2e_intensity_Industry']].drop_duplicates()
+        def Ind_em_panel(EPA_df):
+            Ind_CO2_df = IO_df.merge(EPA_BLS_Crosswalk[['EPA_Sector', 'BLS_Industry']].drop_duplicates(),
+                                        on='BLS_Industry',
+                                        how='inner')
+            
+            Ind_CO2_df = Ind_CO2_df.merge(EPA_df,
+                                on='EPA_Sector',
+                                how='inner')
+            
+            Ind_CO2_df = Ind_CO2_df.merge(VA_panel,
+                                on=['BLS_Industry', 'Year'],
+                                how='inner')
+            
+            Ind_CO2_df['CO2e_Industry'] = Ind_CO2_df.groupby(['BLS_Industry', 'Year'])['CO2e'].transform("sum")
+            Ind_CO2_df['CO2e_intensity_Industry'] = Ind_CO2_df['CO2e_Industry'] / Ind_CO2_df['Value_Added']
+            
+            Ind_CO2_df = Ind_CO2_df[['BLS_Industry', 'Year', 'CO2e_Industry', 'CO2e_intensity_Industry']].drop_duplicates()
+            
+            return Ind_CO2_df
 
-        Ind_CO2_df.to_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        Ind_em_panel(EPA_df).to_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        Ind_em_panel(EPS_full_df).to_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
         
         
         # ----------------------------------------------------------------
@@ -432,6 +438,12 @@ class Processor:
                 Results/Figures/Leontief_L1_OLS.png
                 Results/Figures/Leontief_L1_WLS.png
                 Results/Figures/Leontief_L2_WLS.png
+                Results/Figures/Reduced_full_L1_OLS.png
+                Results/Figures/Reduced_full_L1_WLS.png
+                Results/Figures/Reduced_full_L2_WLS.png
+                Results/Figures/Leontief_full_L1_OLS.png
+                Results/Figures/Leontief_full_L1_WLS.png
+                Results/Figures/Leontief_full_L2_WLS.png
         """""
         
         # ----------------------------------------------------------------
@@ -442,124 +454,128 @@ class Processor:
         
         BLS_Crosswalk_df = pd.read_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
 
         
-        # ------------------- #
-        # Input-Output Matrix #
-        # ------------------- #
-        J       = self.IO[Year_start].shape[0]
-        manu    = slice(self.manu_cols[0]-1, self.manu_cols[1])  # 0-indexed rows for non-service industries
- 
-        I        = np.eye(J)
-        LI_start = np.linalg.inv(I - self.IO[Year_start])
-        LI_mid   = np.linalg.inv(I - self.IO[Year_mid])
-        LI_end   = np.linalg.inv(I - self.IO[Year_end])
- 
-        # Leontief: non-service rows, all columns
-        LI_start_manu = LI_start[manu, :]
-        LI_mid_manu   = LI_mid[manu, :]
-        LI_end_manu   = LI_end[manu, :]
- 
-        # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
-        def drop_and_normalize(IO):
-            IO_manu = IO[manu, :]
-            IO_r = np.delete(IO_manu, self.fossil_cols, axis=1)
-            num = IO_manu.sum(axis=1, keepdims=True)
-            denom = IO_r.sum(axis=1, keepdims=True)
-            return IO_r * num / denom
-
-        IO_start_reduced = drop_and_normalize(self.IO[Year_start])
-        IO_mid_reduced   = drop_and_normalize(self.IO[Year_mid])
-        IO_end_reduced   = drop_and_normalize(self.IO[Year_end])
-
-        def tv_metrics(A, B):
-           diff  = np.abs(B - A)
-           tv    = 0.5 * diff.sum(axis=1)
-           tv_sq = (0.5 * (diff**2).sum(axis=1))**(1/2)
-           return tv, tv_sq
-
-        # Period 1: start -> mid
-        tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start_manu,    LI_mid_manu)
-        tv_red_p1,     tv_sq_red_p1     = tv_metrics(IO_start_reduced, IO_mid_reduced)
-
-        # Period 2: mid -> end
-        tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid_manu,   LI_end_manu)
-        tv_red_p2,     tv_sq_red_p2     = tv_metrics(IO_mid_reduced, IO_end_reduced)
-
-        def make_IO_df(tv_LI, tv_sq_LI, tv_red, tv_sq_red):
-            return pd.DataFrame({
-                "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]+1),
-                "TV_distance_LI":         tv_LI,
-                "TV_sq_distance_LI":      tv_sq_LI,
-                "TV_distance_reduced":    tv_red,
-                "TV_sq_distance_reduced": tv_sq_red})
-
-        IO_df_p1 = make_IO_df(tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
-        IO_df_p1['period'] = 1
-
-        IO_df_p2 = make_IO_df(tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
-        IO_df_p2['period'] = 2
-
-        IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
-
-        
-        # ------------------ #
-        # Allocate Emissions #
-        # ------------------ #
-        IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year",
-                                       values=['CO2e_intensity_Industry', 'CO2e_Industry'])
-        IO_wide_df = IO_wide_df.dropna()
-
-        idx1 = IO_wide_df.index.to_numpy(dtype=int)
-        idx0 = idx1 - 1
-
-        LI_start_sub = LI_start[np.ix_(idx0, idx0)]
-        LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
-        LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
-
-        CO2e_LI_start = LI_start_sub @ IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()
-        CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()
-        CO2e_LI_end   = LI_end_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()
-
-        CO2e_lev_LI_start = LI_start_sub @ IO_wide_df['CO2e_Industry', Year_start].to_numpy()
-        CO2e_lev_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_Industry', Year_mid].to_numpy()
-        
-        em_p1 = pd.DataFrame({
-            "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())
-                                  - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
-            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
-            "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_start].to_numpy()**(1/dim),
-            "CO2e_Industry_LI_weight":   CO2e_lev_LI_start**(1/dim),
-            "period": 1})
-
-        em_p2 = pd.DataFrame({
-            "BLS_Industry":       IO_wide_df.index,
-            "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())
-                                  - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())),
-            "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
-            "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy()**(1/dim),
-            "CO2e_Industry_LI_weight":   CO2e_lev_LI_mid**(1/dim),
-            "period": 2})
-
-        distance_cols = ['BLS_Industry', 'period',
-                         'TV_distance_LI',      'TV_sq_distance_LI',
-                         'TV_distance_reduced', 'TV_sq_distance_reduced']
-
-        emission_cols = ['BLS_Industry', 'period',
-                         'CO2e_Industry_weight', 'CO2e_Industry_LI_weight',
-                         'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
-
-        em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
-        reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
-                          em_df[emission_cols].drop_duplicates(),
-                          on=['BLS_Industry', 'period'],
-                          how='inner')
-        
-        reg_df = reg_df.merge(BLS_Crosswalk_df[["BLS_Industry", "Sector Title"]].drop_duplicates(),
-                                on="BLS_Industry",
-                                how="left"
-                            )
+        def IO_panel(Ind_CO2_df):
+            # ------------------- #
+            # Input-Output Matrix #
+            # ------------------- #
+            J       = self.IO[Year_start].shape[0]
+            manu    = slice(self.manu_cols[0]-1, self.manu_cols[1])  # 0-indexed rows for non-service industries
+     
+            I        = np.eye(J)
+            LI_start = np.linalg.inv(I - self.IO[Year_start])
+            LI_mid   = np.linalg.inv(I - self.IO[Year_mid])
+            LI_end   = np.linalg.inv(I - self.IO[Year_end])
+     
+            # Leontief: non-service rows, all columns
+            LI_start_manu = LI_start[manu, :]
+            LI_mid_manu   = LI_mid[manu, :]
+            LI_end_manu   = LI_end[manu, :]
+     
+            # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
+            def drop_and_normalize(IO):
+                IO_manu = IO[manu, :]
+                IO_r = np.delete(IO_manu, self.fossil_cols, axis=1)
+                num = IO_manu.sum(axis=1, keepdims=True)
+                denom = IO_r.sum(axis=1, keepdims=True)
+                return IO_r * num / denom
+    
+            IO_start_reduced = drop_and_normalize(self.IO[Year_start])
+            IO_mid_reduced   = drop_and_normalize(self.IO[Year_mid])
+            IO_end_reduced   = drop_and_normalize(self.IO[Year_end])
+    
+            def tv_metrics(A, B):
+               diff  = np.abs(B - A)
+               tv    = 0.5 * diff.sum(axis=1)
+               tv_sq = (0.5 * (diff**2).sum(axis=1))**(1/2)
+               return tv, tv_sq
+    
+            # Period 1: start -> mid
+            tv_LI_p1,      tv_sq_LI_p1      = tv_metrics(LI_start_manu,    LI_mid_manu)
+            tv_red_p1,     tv_sq_red_p1     = tv_metrics(IO_start_reduced, IO_mid_reduced)
+    
+            # Period 2: mid -> end
+            tv_LI_p2,      tv_sq_LI_p2      = tv_metrics(LI_mid_manu,   LI_end_manu)
+            tv_red_p2,     tv_sq_red_p2     = tv_metrics(IO_mid_reduced, IO_end_reduced)
+    
+            def make_IO_df(tv_LI, tv_sq_LI, tv_red, tv_sq_red):
+                return pd.DataFrame({
+                    "BLS_Industry":           np.arange(self.manu_cols[0], self.manu_cols[1]+1),
+                    "TV_distance_LI":         tv_LI,
+                    "TV_sq_distance_LI":      tv_sq_LI,
+                    "TV_distance_reduced":    tv_red,
+                    "TV_sq_distance_reduced": tv_sq_red})
+    
+            IO_df_p1 = make_IO_df(tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
+            IO_df_p1['period'] = 1
+    
+            IO_df_p2 = make_IO_df(tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
+            IO_df_p2['period'] = 2
+    
+            IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
+    
+            
+            # ------------------ #
+            # Allocate Emissions #
+            # ------------------ #
+            IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year",
+                                           values=['CO2e_intensity_Industry', 'CO2e_Industry'])
+            IO_wide_df = IO_wide_df.dropna()
+    
+            idx1 = IO_wide_df.index.to_numpy(dtype=int)
+            idx0 = idx1 - 1
+    
+            LI_start_sub = LI_start[np.ix_(idx0, idx0)]
+            LI_mid_sub   = LI_mid[np.ix_(idx0, idx0)]
+            LI_end_sub   = LI_end[np.ix_(idx0, idx0)]
+    
+            CO2e_LI_start = LI_start_sub @ IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy()
+            CO2e_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy()
+            CO2e_LI_end   = LI_end_sub   @ IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy()
+    
+            CO2e_lev_LI_start = LI_start_sub @ IO_wide_df['CO2e_Industry', Year_start].to_numpy()
+            CO2e_lev_LI_mid   = LI_mid_sub   @ IO_wide_df['CO2e_Industry', Year_mid].to_numpy()
+            
+            em_p1 = pd.DataFrame({
+                "BLS_Industry":       IO_wide_df.index,
+                "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())
+                                      - np.log(IO_wide_df['CO2e_intensity_Industry', Year_start].to_numpy())),
+                "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
+                "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_start].to_numpy()**(1/dim),
+                "CO2e_Industry_LI_weight":   CO2e_lev_LI_start**(1/dim),
+                "period": 1})
+    
+            em_p2 = pd.DataFrame({
+                "BLS_Industry":       IO_wide_df.index,
+                "dlog_CO2e_inten":    -(np.log(IO_wide_df['CO2e_intensity_Industry', Year_end].to_numpy())
+                                      - np.log(IO_wide_df['CO2e_intensity_Industry', Year_mid].to_numpy())),
+                "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
+                "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy()**(1/dim),
+                "CO2e_Industry_LI_weight":   CO2e_lev_LI_mid**(1/dim),
+                "period": 2})
+    
+            distance_cols = ['BLS_Industry', 'period',
+                             'TV_distance_LI',      'TV_sq_distance_LI',
+                             'TV_distance_reduced', 'TV_sq_distance_reduced']
+    
+            emission_cols = ['BLS_Industry', 'period',
+                             'CO2e_Industry_weight', 'CO2e_Industry_LI_weight',
+                             'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
+    
+            em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
+            reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
+                              em_df[emission_cols].drop_duplicates(),
+                              on=['BLS_Industry', 'period'],
+                              how='inner')
+            
+            reg_df = reg_df.merge(BLS_Crosswalk_df[["BLS_Industry", "Sector Title"]].drop_duplicates(),
+                                    on="BLS_Industry",
+                                    how="left"
+                                )
+            
+            return reg_df
 
 
         # ----------------------------------------------------------------
@@ -665,7 +681,7 @@ class Processor:
             plot_single(r['m_l2_wls'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
 
         fig_dir = f'{self.Directory}/Results/Figures'
-    
+        reg_df = IO_panel(Ind_CO2_df)
 
         # ------- #
         # Reduced #
@@ -684,6 +700,24 @@ class Processor:
                   labels=reg_df['Sector Title'].to_numpy())
         
         
+        # ---------- #
+        # Winsorized #
+        # ---------- #
+        reg_df_full = IO_panel(Ind_CO2_df_full)
+        reg_df_full = gpf.winsorize(reg_df_full,
+            ['dlog_CO2e_inten'])
+        
+        r_red = run_regressions(reg_df_full, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
+        plot_case(r_red, reg_df_full, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
+                  'Reduced_full', Year_start, Year_mid, Year_end, fig_dir,
+                  labels=reg_df_full['Sector Title'].to_numpy())
+
+        r_LI = run_regressions(reg_df_full, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI_weight', 'BLS_Industry')
+        plot_case(r_LI, reg_df_full, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
+                  'Leontief_full', Year_start, Year_mid, Year_end, fig_dir,
+                  labels=reg_df_full['Sector Title'].to_numpy())
+    
+    
     
     def Up_Down_Green(self, BLS_year_start, Year_start, Year_mid, Year_end, dim=3):
         """""
@@ -840,15 +874,6 @@ class Processor:
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def winsorize(df, cols, lower=0.1):
-            upper = 1 - lower
-            df = df.copy()
-            for col in cols:
-                lo = df[col].quantile(lower)
-                hi = df[col].quantile(upper)
-                df[col] = df[col].clip(lower=lo, upper=hi)
-            return df
-
         def make_X(df, cols):
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
             return sm.add_constant(pd.concat([df[cols], fe], axis=1))
@@ -866,20 +891,20 @@ class Processor:
         # ------------------ #
         # Estimation Samples #
         # ------------------ #
-        reg_em = winsorize(
+        reg_em = gpf.winsorize(
             reg_df.dropna(subset=['dlog_CO2e_inten']),
             ['dlog_CO2e_inten',
              'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
              'up_pat_count', 'down_pat_count', 'net_pat_count',
              'up_pat_cite',  'down_pat_cite',  'net_pat_cite'])
         
-        reg_cnt = winsorize(
+        reg_cnt = gpf.winsorize(
             reg_df[reg_df['clean_pat_share'] > 0],
             ['clean_pat_share',
              'up_dlog_em',   'down_dlog_em',   'net_dlog_em',
              'up_pat_count', 'down_pat_count', 'net_pat_count'])
         
-        reg_cit = winsorize(
+        reg_cit = gpf.winsorize(
             reg_df[reg_df['clean_cite_share'] > 0],
             ['clean_cite_share',
              'up_dlog_em',  'down_dlog_em',  'net_dlog_em',
@@ -892,16 +917,16 @@ class Processor:
                         'up_dlog_em_lag',    'down_dlog_em_lag',
                         'up_pat_count_lag',  'down_pat_count_lag',
                         'up_pat_cite_lag',   'down_pat_cite_lag']
-        reg_em_lag  = winsorize(
+        reg_em_lag  = gpf.winsorize(
             reg_df.dropna(subset=['dlog_CO2e_inten',
              'net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag',
              'net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']),
             ['dlog_CO2e_inten'] + lag_em_cols)
-        reg_cnt_lag = winsorize(
+        reg_cnt_lag = gpf.winsorize(
             reg_df[reg_df['clean_pat_share'] > 0].dropna(
                 subset=['net_pat_count_lag','up_pat_count_lag', 'down_pat_count_lag']),
              ['clean_pat_share'] + lag_em_cols)
-        reg_cit_lag = winsorize(
+        reg_cit_lag = gpf.winsorize(
             reg_df[reg_df['clean_cite_share'] > 0].dropna(
                 subset=['net_pat_cite_lag','up_pat_cite_lag',  'down_pat_cite_lag']),
              ['clean_cite_share'] + lag_em_cols)
