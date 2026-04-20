@@ -42,6 +42,7 @@ class Processor:
                      'Sulfur hexafluoride': 22800
                      }
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
+        self.ICE_classes = ["Y02T10/10", "Y02T10/30", "Y02T10/30", "Y02T10/40"]
         self.manu_cols = [7, 93]
         self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
 
@@ -304,7 +305,11 @@ class Processor:
                                     | relevant_df["cpc_group5"].isin(codes)
                                     | relevant_df["cpc_group6"].isin(codes)).astype(np.int8)
             
+            ice_codes = set(self.ICE_classes)
+            relevant_df['ice'] = relevant_df["cpc_subclass"].isin(ice_codes).astype(np.int8)
+            
             relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
+            relevant_df['clean'] = relevant_df['clean'] - relevant_df.groupby("patent_id")['ice'].transform("max")
             relevant_df = relevant_df[['patent_id', 'year', 'clean']].drop_duplicates()
                     
                     
