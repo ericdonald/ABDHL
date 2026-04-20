@@ -56,6 +56,7 @@ class Processor:
                 Clean Data/Ind_CO2.pkl
                 Clean Data/Ind_CO2_full.pkl
                 Clean Data/Ind_Pat.pkl
+                Clean Data/Ind_Pat_full.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -308,9 +309,9 @@ class Processor:
             ice_codes = set(self.ICE_classes)
             relevant_df['ice'] = relevant_df["cpc_subclass"].isin(ice_codes).astype(np.int8)
             
-            relevant_df['clean'] = relevant_df.groupby("patent_id")['clean'].transform("max")
-            relevant_df['clean'] = relevant_df['clean'] - relevant_df.groupby("patent_id")['ice'].transform("max")
-            relevant_df = relevant_df[['patent_id', 'year', 'clean']].drop_duplicates()
+            relevant_df['clean_full'] = relevant_df.groupby("patent_id")['clean'].transform("max")
+            relevant_df['clean'] = relevant_df['clean_full'] - relevant_df.groupby("patent_id")['ice'].transform("max")
+            relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full']].drop_duplicates()
                     
                     
             # --------------------- #
@@ -404,9 +405,9 @@ class Processor:
                                 on='naics2022_6',
                                 how='inner')
 
-            def compute_pat_metrics(df, period):
+            def compute_pat_metrics(df, period, _f=''):
                 df = df.copy()
-                df['clean']                = df['split_weight'] * df['clean']
+                df['clean']                = df['split_weight'] * df[f'clean{_f}']
                 df['clean_pat_count']      = df.groupby('BLS_Industry')['clean'].transform('sum')
                 df['pat_count']            = df.groupby('BLS_Industry')['split_weight'].transform('sum')
                 df['clean_pat_share']      = df['clean_pat_count'] / df['pat_count']
@@ -423,13 +424,16 @@ class Processor:
 
             bin_starts = range(BLS_year_start-5, Year_end, 5) 
             frames = []
+            frames_full = []
+            _f = '_full'
             for i, start in enumerate(bin_starts):
                 end = start + 5 
                 bin_df = pat_df[(pat_df['year'] > start) & (pat_df['year'] <= end)]
-                frames.append(compute_pat_metrics(bin_df, period=end))
+                frames.append(compute_pat_metrics(bin_df, end))
+                frames_full.append(compute_pat_metrics(bin_df, end, _f))
 
-            pat_df = pd.concat(frames, ignore_index=True)
-            pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+            pd.concat(frames, ignore_index=True).to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+            pd.concat(frames_full, ignore_index=True).to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
 
 
 
@@ -744,8 +748,8 @@ class Processor:
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
-        Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
-        Ind_Pat_df = Ind_Pat_df_full[Ind_Pat_df_full['BLS_Industry'] != 71]
+        Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
 
        
         # ----------- #
