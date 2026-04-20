@@ -739,7 +739,8 @@ class Processor:
         
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
-        Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_Pat_df = Ind_Pat_df_full[Ind_Pat_df_full['BLS_Industry'] != 71]
 
        
         # ----------- #
@@ -793,28 +794,35 @@ class Processor:
         # --------- #
         def em_panel(Ind_CO2_df):
             
-            IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year", values='CO2e_intensity_Industry')
+            IO_wide_df = Ind_CO2_df.pivot(index="BLS_Industry", columns="Year",
+                                   values=['CO2e_intensity_Industry', 'CO2e_Industry'])
             IO_wide_df = IO_wide_df.dropna()
             idx = IO_wide_df.index.to_numpy(dtype=int)
-
-            dlog_p1 = -(np.log(IO_wide_df[Year_mid].to_numpy()) - np.log(IO_wide_df[Year_start].to_numpy()))
-            dlog_p2 = -(np.log(IO_wide_df[Year_end].to_numpy()) - np.log(IO_wide_df[Year_mid].to_numpy()))
+        
+            dlog_p1 = -(np.log(IO_wide_df['CO2e_intensity_Industry'][Year_mid].to_numpy())
+                      - np.log(IO_wide_df['CO2e_intensity_Industry'][Year_start].to_numpy()))
+            dlog_p2 = -(np.log(IO_wide_df['CO2e_intensity_Industry'][Year_end].to_numpy())
+                      - np.log(IO_wide_df['CO2e_intensity_Industry'][Year_mid].to_numpy()))
+        
+            ind_em_p1 = IO_wide_df['CO2e_Industry'][Year_start].to_numpy()
+            ind_em_p2 = IO_wide_df['CO2e_Industry'][Year_mid].to_numpy()
                         
             manu_mask_wide = np.isin(idx, manu_idx_all)
             
-            def make_em_period(dlog, IO_manu, year_label):
+            def make_em_period(dlog, ind_em, IO_manu, year_label):
                 net = compute_network_effect(IO_manu, np.maximum(dlog[manu_mask_wide], 0), 'dlog_em', idx)
                 base = pd.DataFrame({
                     "BLS_Industry":    IO_wide_df.index,
                     "period":          year_label,
                     "dlog_CO2e_inten": dlog,
+                    "CO2e_Industry":   ind_em,
                 })
                 manu_df = pd.DataFrame({"BLS_Industry": IO_wide_df.index[manu_mask_wide], **net})
                 return base.merge(manu_df, on='BLS_Industry', how='left')
     
             em_df = pd.concat([
-                make_em_period(dlog_p1, manu_IO[Year_mid], Year_mid),
-                make_em_period(dlog_p2, manu_IO[Year_end], Year_end),
+                make_em_period(dlog_p1, ind_em_p1, manu_IO[Year_mid], Year_mid),
+                make_em_period(dlog_p2, ind_em_p2, manu_IO[Year_end], Year_end),
             ], ignore_index=True)
             
             return em_df
@@ -826,52 +834,50 @@ class Processor:
         # ------- #
         # Patents #
         # ------- #
-        pat_frames = []
-        for year in bin_ends:
-            pat_yr = Ind_Pat_df[Ind_Pat_df['period'] == year].copy()
-            if pat_yr.empty:
-                continue
-            pat_yr  = pat_yr.set_index('BLS_Industry').reindex(IO_wide_df_full.index).reset_index()
-            pc_raw  = pat_yr['clean_pat_share'].to_numpy()
-            cc_raw  = pat_yr['clean_cite_share'].to_numpy()
-            net_pc  = compute_network_effect(manu_IO[year], pc_raw[manu_mask_wide_full], 'pat_count', idx_full)
-            net_cc  = compute_network_effect(manu_IO[year], cc_raw[manu_mask_wide_full], 'pat_cite', idx_full)
-            manu_pat_df = pd.DataFrame({
-                "BLS_Industry":    IO_wide_df_full.index[manu_mask_wide_full],
-                **net_pc, **net_cc,
-            })
-            cpc_weight = pat_yr['clean_pat_count'].to_numpy()
-            pc_weight = pat_yr['pat_count'].to_numpy()
-            ccc_weight = pat_yr['clean_pat_cites'].to_numpy()
-            cc_weight = pat_yr['pat_cites'].to_numpy()
-            
-            base_pat = pd.DataFrame({
-                "BLS_Industry":    IO_wide_df_full.index,
-                "period":          year,
-                "clean_pat_share": pc_raw,
-                "clean_cite_share":cc_raw,
-                "clean_pat_count":cpc_weight,
-                "pat_count":pc_weight,
-                "clean_pat_cites":ccc_weight,
-                "pat_cites":cc_weight,
-            })
-            pat_frames.append(base_pat.merge(manu_pat_df, on='BLS_Industry', how='left'))
-
-        pat_df = pd.concat(pat_frames, ignore_index=True)
+        def pat_panel(Ind_Pat_df):
+            pat_frames = []
+            for year in bin_ends:
+                pat_yr = Ind_Pat_df[Ind_Pat_df['period'] == year].copy()
+                if pat_yr.empty:
+                    continue
+                pat_yr  = pat_yr.set_index('BLS_Industry').reindex(IO_wide_df_full.index).reset_index()
+                pc_raw  = pat_yr['clean_pat_share'].to_numpy()
+                cc_raw  = pat_yr['clean_cite_share'].to_numpy()
+                net_pc  = compute_network_effect(manu_IO[year], pc_raw[manu_mask_wide_full], 'pat_count', idx_full)
+                net_cc  = compute_network_effect(manu_IO[year], cc_raw[manu_mask_wide_full], 'pat_cite', idx_full)
+                manu_pat_df = pd.DataFrame({
+                    "BLS_Industry":    IO_wide_df_full.index[manu_mask_wide_full],
+                    **net_pc, **net_cc,
+                })
+                cpc_weight = pat_yr['clean_pat_count'].to_numpy()
+                pc_weight = pat_yr['pat_count'].to_numpy()
+                ccc_weight = pat_yr['clean_pat_cites'].to_numpy()
+                cc_weight = pat_yr['pat_cites'].to_numpy()
+                
+                base_pat = pd.DataFrame({
+                    "BLS_Industry":    IO_wide_df_full.index,
+                    "period":          year,
+                    "clean_pat_share": pc_raw,
+                    "clean_cite_share":cc_raw,
+                    "clean_pat_count":cpc_weight,
+                    "pat_count":pc_weight,
+                    "clean_pat_cites":ccc_weight,
+                    "pat_cites":cc_weight,
+                })
+                pat_frames.append(base_pat.merge(manu_pat_df, on='BLS_Industry', how='left'))
+    
+            return pd.concat(pat_frames, ignore_index=True)
+        
+        pat_df = pat_panel(Ind_Pat_df)
+        pat_df_full = pat_panel(Ind_Pat_df_full)
         
 
         # ----- #
         # Merge #
         # ----- #
-        def reg_panel(em_df, co2_df):
+        def reg_panel(em_df, pat_df):
             reg_df = pat_df.merge(em_df, on=['BLS_Industry', 'period'], how='left')
             reg_df = reg_df[reg_df['BLS_Industry'].isin(manu_idx_all)].copy()
-    
-            co2_weights = pd.concat([
-                co2_df.loc[co2_df['Year'] == y - 5, ['BLS_Industry', 'CO2e_Industry']].assign(period=y)
-                for y in bin_ends
-            ], ignore_index=True)
-            reg_df = reg_df.merge(co2_weights, on=['BLS_Industry', 'period'], how='left')
             
             reg_df['net_dlog_em']   = reg_df['up_dlog_em']  + reg_df['down_dlog_em']
             reg_df['net_pat_count'] = reg_df['up_pat_count'] + reg_df['down_pat_count']
@@ -886,8 +892,9 @@ class Processor:
                 
             return reg_df
 
-        reg_df = reg_panel(em_df, Ind_CO2_df)
-        reg_df_full = reg_panel(em_df_full, Ind_CO2_df_full)
+        reg_df = reg_panel(em_df, pat_df)
+        reg_df_full = reg_panel(em_df_full, pat_df_full)
+
 
         # ----------------------------------------------------------------
         
@@ -907,6 +914,7 @@ class Processor:
                return sm.OLS(Y, X).fit(**cl)
            w  = d[w_col] ** (1 / dim)
            return sm.WLS(Y, X, w).fit(**cl)
+
 
         # ------------------ #
         # Estimation Samples #
@@ -966,11 +974,11 @@ class Processor:
             ['dlog_CO2e_inten'] + lag_em_cols)
         reg_cnt_lag = gpf.winsorize(
             reg_df[reg_df['clean_pat_share'] > 0].dropna(
-                subset=['net_pat_count_lag','up_pat_count_lag', 'down_pat_count_lag']),
+                subset=['net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag']),
              ['clean_pat_share'] + lag_em_cols)
         reg_cit_lag = gpf.winsorize(
             reg_df[reg_df['clean_cite_share'] > 0].dropna(
-                subset=['net_pat_cite_lag','up_pat_cite_lag',  'down_pat_cite_lag']),
+                subset=['net_pat_cite_lag', 'up_pat_cite_lag',  'down_pat_cite_lag']),
              ['clean_cite_share'] + lag_em_cols)
 
         reg_em_em_lag = gpf.winsorize(
