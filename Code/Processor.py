@@ -432,8 +432,12 @@ class Processor:
                 frames.append(compute_pat_metrics(bin_df, end))
                 frames_full.append(compute_pat_metrics(bin_df, end, _f))
 
-            pd.concat(frames, ignore_index=True).to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
-            pd.concat(frames_full, ignore_index=True).to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
+            pat_df = pd.concat(frames, ignore_index=True)
+            pat_df = pat_df[pat_df['BLS_Industry'] != 71]
+            pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+            
+            pat_df_full = pd.concat(frames_full, ignore_index=True)
+            pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
 
 
 
