@@ -602,37 +602,35 @@ class Processor:
         # ---------------- #
         
         def run_regressions(df, x_col, y_col, y_sq_col, weight_col, group_col):
-            weight = df[weight_col]
-            groups = df[group_col]
+            mask_pos = df[x_col] >= 0
+            mask_neg = df[x_col] <  0
 
-            x_arr    = df[x_col].to_numpy()
-            y_arr    = df[y_col].to_numpy()
-            y_sq_arr = df[y_sq_col].to_numpy()
-            w_arr    = weight.to_numpy()
-            g_arr    = groups.to_numpy()
+            df_pos = df[mask_pos]
+            df_neg = df[mask_neg]
 
-            mask_pos = (x_arr >= 0).astype(float)
-            mask_neg = (x_arr <  0).astype(float)
-            X_split  = np.column_stack([
-                mask_neg,           # intercept x < 0
-                mask_pos,           # intercept x >= 0
-                x_arr * mask_neg,   # slope x < 0
-                x_arr * mask_pos,   # slope x >= 0
-            ])
-
-            def fit(Y, X, w=None):
-                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': g_arr}}
+            def fit(sub, Y_col, w=None):
+                Y  = sub[Y_col].to_numpy()
+                X  = sm.add_constant(sub[x_col].to_numpy())
+                g  = sub[group_col].to_numpy()
+                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': g}}
                 if w is None:
                     return sm.OLS(Y, X).fit(**cl)
-                return sm.WLS(Y, X, w).fit(**cl)
+                return sm.WLS(Y, X, sub[w].to_numpy()).fit(**cl)
 
             return dict(
-                m_l1_ols     = fit(y_arr,    X_split),
-                m_l1_wls     = fit(y_arr,    X_split, w_arr),
-                m_l2_wls     = fit(y_sq_arr, X_split, w_arr),
-                x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
-                mask_pos=mask_pos.astype(bool), mask_neg=mask_neg.astype(bool),
-                x_col=x_col,
+                m_l1_ols_pos = fit(df_pos, y_col),
+                m_l1_ols_neg = fit(df_neg, y_col),
+                m_l1_wls_pos = fit(df_pos, y_col,    weight_col),
+                m_l1_wls_neg = fit(df_neg, y_col,    weight_col),
+                m_l2_wls_pos = fit(df_pos, y_sq_col, weight_col),
+                m_l2_wls_neg = fit(df_neg, y_sq_col, weight_col),
+                x        = df[x_col].to_numpy(),
+                y        = df[y_col].to_numpy(),
+                y_sq     = df[y_sq_col].to_numpy(),
+                w        = df[weight_col].to_numpy(),
+                mask_pos = mask_pos.to_numpy(),
+                mask_neg = mask_neg.to_numpy(),
+                x_col    = x_col,
             )
 
         def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
@@ -671,16 +669,17 @@ class Processor:
                     ax.annotate(' '.join(words), (xi, yi), fontsize=9, ha='left',
                                 xytext=(11, 11), textcoords='offset points')
 
-            def plot_single(m, y_arr, ylabel, fname, estimator_label):
-                b_neg, b_pos, s_neg, s_pos = m.params
-                x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                       100)
+            def plot_single(m_pos, m_neg, y_arr, ylabel, fname, estimator_label):
+                b_neg, s_neg = m_neg.params[0], m_neg.params[1]
+                b_pos, s_pos = m_pos.params[0], m_pos.params[1]
+                x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                        100)
                 x_pos_line = np.linspace(0,                       x[r['mask_pos']].max(), 100)
                 fig, ax = plt.subplots(figsize=(8, 6))
                 scatter_periods(ax, y_arr)
                 ax.plot(x_neg_line, b_neg + s_neg * x_neg_line, color='cyan',   linewidth=2, label=f"{estimator_label} fit (x<0)")
                 ax.plot(x_pos_line, b_pos + s_pos * x_pos_line, color='orange', linewidth=2, label=f"{estimator_label} fit (x≥0)")
-                annotate(ax, f"Slope (x<0)  = {s_neg:.3f}{stars_idx(m, 2)}", 0.95)
-                annotate(ax, f"Slope (x≥0) = {s_pos:.3f}{stars_idx(m, 3)}", 0.88)
+                annotate(ax, f"Slope (x<0)  = {s_neg:.3f}{stars_idx(m_neg, 1)}", 0.95)
+                annotate(ax, f"Slope (x≥0) = {s_pos:.3f}{stars_idx(m_pos, 1)}", 0.88)
                 annotate_sectors(ax, y_arr)
                 ax.set_xlabel("-Δ ln(emissions intensity)")
                 ax.set_ylabel(ylabel)
@@ -689,9 +688,9 @@ class Processor:
                 plt.savefig(f'{save_dir}/{fname}.png')
                 plt.show()
 
-            plot_single(r['m_l1_ols'], y,    ylabel_tv, f'{prefix}_L1_OLS', 'OLS')
-            plot_single(r['m_l1_wls'], y,    ylabel_tv, f'{prefix}_L1_WLS', 'WLS')
-            plot_single(r['m_l2_wls'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
+            plot_single(r['m_l1_ols_pos'], r['m_l1_ols_neg'], y,    ylabel_tv, f'{prefix}_L1_OLS', 'OLS')
+            plot_single(r['m_l1_wls_pos'], r['m_l1_wls_neg'], y,    ylabel_tv, f'{prefix}_L1_WLS', 'WLS')
+            plot_single(r['m_l2_wls_pos'], r['m_l2_wls_neg'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
 
         fig_dir = f'{self.Directory}/Results/Figures'
         reg_df = IO_panel(Ind_CO2_df)
