@@ -448,15 +448,23 @@ class Processor:
         Output: Results/Figures/Reduced_L1_OLS.png
                 Results/Figures/Reduced_L1_WLS.png
                 Results/Figures/Reduced_L2_WLS.png
+                Results/Figures/Reduced_L1_WLS_FE.png
+                Results/Figures/Reduced_L2_WLS_FE.png
                 Results/Figures/Leontief_L1_OLS.png
                 Results/Figures/Leontief_L1_WLS.png
                 Results/Figures/Leontief_L2_WLS.png
+                Results/Figures/Leontief_L1_WLS_FE.png
+                Results/Figures/Leontief_L2_WLS_FE.png
                 Results/Figures/Reduced_full_L1_OLS.png
                 Results/Figures/Reduced_full_L1_WLS.png
                 Results/Figures/Reduced_full_L2_WLS.png
+                Results/Figures/Reduced_full_L1_WLS_FE.png
+                Results/Figures/Reduced_full_L2_WLS_FE.png
                 Results/Figures/Leontief_full_L1_OLS.png
                 Results/Figures/Leontief_full_L1_WLS.png
                 Results/Figures/Leontief_full_L2_WLS.png
+                Results/Figures/Leontief_full_L1_WLS_FE.png
+                Results/Figures/Leontief_full_L2_WLS_FE.png
         """""
         
         # ----------------------------------------------------------------
@@ -605,37 +613,55 @@ class Processor:
             mask_pos = df[x_col] >= 0
             mask_neg = df[x_col] <  0
 
-            df_pos = df[mask_pos]
-            df_neg = df[mask_neg]
+            x_arr    = df[x_col].to_numpy()
+            y_arr    = df[y_col].to_numpy()
+            y_sq_arr = df[y_sq_col].to_numpy()
+            w_arr    = df[weight_col].to_numpy()
+            g_arr    = df[group_col].to_numpy()
 
-            def fit(sub, Y_col, w=None):
-                Y  = sub[Y_col].to_numpy()
-                X  = sm.add_constant(sub[x_col].to_numpy())
-                g  = sub[group_col].to_numpy()
-                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': g}}
+            X_kink = sm.add_constant(np.column_stack([
+                x_arr * mask_neg.to_numpy(),
+                x_arr * mask_pos.to_numpy(),
+            ]))
+
+            period_fe = (df['period'].to_numpy() == 2).astype(float)
+            X_fe = np.column_stack([
+                np.ones(len(x_arr)),
+                period_fe,
+                x_arr * mask_neg.to_numpy(),
+                x_arr * mask_pos.to_numpy(),
+            ])
+
+            def resid_on_fe(v):
+                means = np.where(period_fe == 0,
+                                 v[period_fe == 0].mean(),
+                                 v[period_fe == 1].mean())
+                return v - means
+
+            def fit(Y, X, w=None):
+                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': g_arr}}
                 if w is None:
                     return sm.OLS(Y, X).fit(**cl)
-                return sm.WLS(Y, X, sub[w].to_numpy()).fit(**cl)
+                return sm.WLS(Y, X, w).fit(**cl)
 
             return dict(
-                m_l1_ols_pos = fit(df_pos, y_col),
-                m_l1_ols_neg = fit(df_neg, y_col),
-                m_l1_wls_pos = fit(df_pos, y_col,    weight_col),
-                m_l1_wls_neg = fit(df_neg, y_col,    weight_col),
-                m_l2_wls_pos = fit(df_pos, y_sq_col, weight_col),
-                m_l2_wls_neg = fit(df_neg, y_sq_col, weight_col),
-                x        = df[x_col].to_numpy(),
-                y        = df[y_col].to_numpy(),
-                y_sq     = df[y_sq_col].to_numpy(),
-                w        = df[weight_col].to_numpy(),
+                m_l1_ols_kink = fit(y_arr,    X_kink),
+                m_l1_wls_kink = fit(y_arr,    X_kink, w_arr),
+                m_l2_wls_kink = fit(y_sq_arr, X_kink, w_arr),
+                m_l1_wls_fe   = fit(y_arr,    X_fe,   w_arr),
+                m_l2_wls_fe   = fit(y_sq_arr, X_fe,   w_arr),
+                x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
+                x_resid  = resid_on_fe(x_arr),
+                y_resid  = resid_on_fe(y_arr),
+                y_sq_resid = resid_on_fe(y_sq_arr),
                 mask_pos = mask_pos.to_numpy(),
                 mask_neg = mask_neg.to_numpy(),
-                x_col    = x_col,
             )
 
-        def plot_case(r, df, ylabel_tv, ylabel_sq, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
-            x, y, y_sq = r['x'], r['y'], r['y_sq']
-            w_raw  = (r['w'])**dim
+        def plot_case(r, df, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
+            x, y, y_sq           = r['x'], r['y'], r['y_sq']
+            x_res, y_res, yq_res = r['x_resid'], r['y_resid'], r['y_sq_resid']
+            w_raw  = r['w'] ** dim
             scale  = 1000 / w_raw.max()
 
             stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
@@ -644,54 +670,60 @@ class Processor:
             mask_p2 = df['period'].to_numpy() == 2
 
             def annotate(ax, text, y_frac):
-                ax.annotate(
-                    text, xy=(0.05, y_frac), xycoords='axes fraction',
-                    fontsize=11, color='green',
-                    bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7))
+                ax.annotate(text, xy=(0.05, y_frac), xycoords='axes fraction',
+                            fontsize=11, color='green',
+                            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.7))
 
-            def scatter_periods(ax, y_arr):
-                ax.scatter(x[mask_p1], y_arr[mask_p1], s=w_raw[mask_p1]*scale, alpha=0.7, color='purple', label=f"Sectors: ({year_start}–{year_mid})")
-                ax.scatter(x[mask_p2], y_arr[mask_p2], s=w_raw[mask_p2]*scale, alpha=0.7, color='blue',   label=f"Sectors: ({year_mid}–{year_end})")
+            def scatter_periods(ax, x_vals, y_arr):
+                ax.scatter(x_vals[mask_p1], y_arr[mask_p1], s=w_raw[mask_p1]*scale, alpha=0.7, color='purple', label=f"Sectors: ({year_start}–{year_mid})")
+                ax.scatter(x_vals[mask_p2], y_arr[mask_p2], s=w_raw[mask_p2]*scale, alpha=0.7, color='blue',   label=f"Sectors: ({year_mid}–{year_end})")
 
             def fix_legend(ax):
                 leg = ax.legend(loc='upper right')
                 for h in leg.legend_handles:
                     h._sizes = [30]
 
-            def annotate_sectors(ax, y_arr):
+            def annotate_sectors(ax, x_vals, y_arr):
                 if labels is None:
                     return
                 w_avg   = pd.Series(w_raw, index=df.index).groupby(df['BLS_Industry'].values).mean()
                 top_idx = w_avg.nlargest(top_n).index
                 mask    = df['BLS_Industry'].isin(top_idx).to_numpy()
-                for xi, yi, label in zip(x[mask], y_arr[mask], labels[mask]):
+                for xi, yi, label in zip(x_vals[mask], y_arr[mask], labels[mask]):
                     words = [w for w in str(label).split()[:3] if w.isalpha()]
                     ax.annotate(' '.join(words), (xi, yi), fontsize=9, ha='left',
                                 xytext=(11, 11), textcoords='offset points')
 
-            def plot_single(m_pos, m_neg, y_arr, ylabel, fname, estimator_label):
-                b_neg, s_neg = m_neg.params[0], m_neg.params[1]
-                b_pos, s_pos = m_pos.params[0], m_pos.params[1]
-                x_neg_line = np.linspace(x[r['mask_neg']].min(), 0,                        100)
-                x_pos_line = np.linspace(0,                       x[r['mask_pos']].max(), 100)
+            def plot_single(m, y_arr, x_vals, fname, estimator_label,
+                            b_idx=0, neg_idx=1, pos_idx=2, residualized=False):
+                b   = 0 if b_idx is None else m.params[b_idx]
+                s_n = m.params[neg_idx]
+                s_p = m.params[pos_idx]
+                xn  = np.linspace(x_vals[r['mask_neg']].min(), 0,                          100)
+                xp  = np.linspace(0,                            x_vals[r['mask_pos']].max(), 100)
                 fig, ax = plt.subplots(figsize=(8, 6))
-                scatter_periods(ax, y_arr)
-                ax.plot(x_neg_line, b_neg + s_neg * x_neg_line, color='cyan',   linewidth=2, label=f"{estimator_label} fit (x<0)")
-                ax.plot(x_pos_line, b_pos + s_pos * x_pos_line, color='orange', linewidth=2, label=f"{estimator_label} fit (x≥0)")
-                annotate(ax, f"Slope (x<0)  = {s_neg:.3f}{stars_idx(m_neg, 1)}", 0.95)
-                annotate(ax, f"Slope (x≥0) = {s_pos:.3f}{stars_idx(m_pos, 1)}", 0.88)
-                annotate_sectors(ax, y_arr)
-                ax.set_xlabel("-Δ ln(emissions intensity)")
+                scatter_periods(ax, x_vals, y_arr)
+                ax.plot(xn, b + s_n*xn, color='cyan',   linewidth=2, label=f"{estimator_label} fit (x<0)")
+                ax.plot(xp, b + s_p*xp, color='orange', linewidth=2, label=f"{estimator_label} fit (x≥0)")
+                annotate(ax, f"Slope (x<0)  = {s_n:.3f}{stars_idx(m, neg_idx)}", 0.95)
+                annotate(ax, f"Slope (x≥0) = {s_p:.3f}{stars_idx(m, pos_idx)}", 0.88)
+                annotate_sectors(ax, x_vals, y_arr)
+                xlabel = "Log Emissions Intensity Reduction" + (" (residualized)" if residualized else "")
+                ylabel = "Change in Input Shares"            + (" (residualized)" if residualized else "")
+                ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 ax.grid(alpha=0.3)
                 fix_legend(ax)
                 plt.savefig(f'{save_dir}/{fname}.png')
                 plt.show()
 
-            plot_single(r['m_l1_ols_pos'], r['m_l1_ols_neg'], y,    ylabel_tv, f'{prefix}_L1_OLS', 'OLS')
-            plot_single(r['m_l1_wls_pos'], r['m_l1_wls_neg'], y,    ylabel_tv, f'{prefix}_L1_WLS', 'WLS')
-            plot_single(r['m_l2_wls_pos'], r['m_l2_wls_neg'], y_sq, ylabel_sq, f'{prefix}_L2_WLS', 'WLS')
+            plot_single(r['m_l1_ols_kink'], y,    x,    f'{prefix}_L1_OLS', 'OLS')
+            plot_single(r['m_l1_wls_kink'], y,    x,    f'{prefix}_L1_WLS', 'WLS')
+            plot_single(r['m_l2_wls_kink'], y_sq, x,    f'{prefix}_L2_WLS', 'WLS')
 
+            plot_single(r['m_l1_wls_fe'], y_res,  x_res, f'{prefix}_L1_WLS_FE', 'WLS', b_idx=None, neg_idx=2, pos_idx=3, residualized=True)
+            plot_single(r['m_l2_wls_fe'], yq_res, x_res, f'{prefix}_L2_WLS_FE', 'WLS', b_idx=None, neg_idx=2, pos_idx=3, residualized=True)
+        
         fig_dir = f'{self.Directory}/Results/Figures'
         reg_df = IO_panel(Ind_CO2_df)
 
@@ -699,16 +731,14 @@ class Processor:
         # Reduced #
         # ------- #
         r_red = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
-        plot_case(r_red, reg_df, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
-                  'Reduced', Year_start, Year_mid, Year_end, fig_dir,
+        plot_case(r_red, reg_df, 'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
 
         # ---------------- #
         # Leontief Inverse #
         # ---------------- #
         r_LI = run_regressions(reg_df, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI_weight', 'BLS_Industry')
-        plot_case(r_LI, reg_df, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
-                  'Leontief', Year_start, Year_mid, Year_end, fig_dir,
+        plot_case(r_LI, reg_df, 'Leontief', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
         
         
@@ -720,13 +750,11 @@ class Processor:
             ['dlog_CO2e_inten'])
         
         r_red = run_regressions(reg_df_full, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
-        plot_case(r_red, reg_df_full, 'TV distance (input-share change, ex. fossil fuels)', 'Euclidean distance (input-share change, ex. fossil fuels)',
-                  'Reduced_full', Year_start, Year_mid, Year_end, fig_dir,
+        plot_case(r_red, reg_df_full, 'Reduced_full', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df_full['Sector Title'].to_numpy())
 
         r_LI = run_regressions(reg_df_full, 'dlog_CO2e_inten_LI', 'TV_distance_LI', 'TV_sq_distance_LI', 'CO2e_Industry_LI_weight', 'BLS_Industry')
-        plot_case(r_LI, reg_df_full, 'TV distance (input-share change)', 'Euclidean distance (input-share change)',
-                  'Leontief_full', Year_start, Year_mid, Year_end, fig_dir,
+        plot_case(r_LI, reg_df_full, 'Leontief_full', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df_full['Sector Title'].to_numpy())
     
     
