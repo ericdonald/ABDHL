@@ -445,26 +445,22 @@ class Processor:
         """""
         Plot of Changes in IO Network from Decarbonization
     
-        Output: Results/Figures/Reduced_L1_OLS.png
-                Results/Figures/Reduced_L1_WLS.png
-                Results/Figures/Reduced_L2_WLS.png
-                Results/Figures/Reduced_L1_WLS_FE.png
-                Results/Figures/Reduced_L2_WLS_FE.png
-                Results/Figures/Leontief_L1_OLS.png
+        Output: Results/Figures/Reduced_L1_WLS.png
+                Results/Figures/Reduced_L1_OLS.png
+                Results/Figures/Reduced_L2_OLS.png
+                Results/Figures/Reduced_L1_OLS_FE.png
                 Results/Figures/Leontief_L1_WLS.png
-                Results/Figures/Leontief_L2_WLS.png
-                Results/Figures/Leontief_L1_WLS_FE.png
-                Results/Figures/Leontief_L2_WLS_FE.png
-                Results/Figures/Reduced_full_L1_OLS.png
+                Results/Figures/Leontief_L1_OLS.png
+                Results/Figures/Leontief_L2_OLS.png
+                Results/Figures/Leontief_L1_OLS_FE.png
                 Results/Figures/Reduced_full_L1_WLS.png
-                Results/Figures/Reduced_full_L2_WLS.png
-                Results/Figures/Reduced_full_L1_WLS_FE.png
-                Results/Figures/Reduced_full_L2_WLS_FE.png
-                Results/Figures/Leontief_full_L1_OLS.png
+                Results/Figures/Reduced_full_L1_OLS.png
+                Results/Figures/Reduced_full_L2_OLS.png
+                Results/Figures/Reduced_full_L1_OLS_FE.png
                 Results/Figures/Leontief_full_L1_WLS.png
-                Results/Figures/Leontief_full_L2_WLS.png
-                Results/Figures/Leontief_full_L1_WLS_FE.png
-                Results/Figures/Leontief_full_L2_WLS_FE.png
+                Results/Figures/Leontief_full_L1_OLS.png
+                Results/Figures/Leontief_full_L2_OLS.png
+                Results/Figures/Leontief_full_L1_OLS_FE.png
         """""
         
         # ----------------------------------------------------------------
@@ -647,12 +643,11 @@ class Processor:
             return dict(
                 m_l1_ols_kink = fit(y_arr,    X_kink),
                 m_l1_wls_kink = fit(y_arr,    X_kink, w_arr),
-                m_l2_wls_kink = fit(y_sq_arr, X_kink, w_arr),
-                m_l1_wls_fe   = fit(y_arr,    X_fe,   w_arr),
-                m_l2_wls_fe   = fit(y_sq_arr, X_fe,   w_arr),
+                m_l2_ols_kink = fit(y_sq_arr, X_kink),
+                m_l1_ols_fe   = fit(y_arr,    X_fe),
                 x=x_arr, y=y_arr, y_sq=y_sq_arr, w=w_arr,
-                x_resid  = resid_on_fe(x_arr),
-                y_resid  = resid_on_fe(y_arr),
+                x_resid    = resid_on_fe(x_arr),
+                y_resid    = resid_on_fe(y_arr),
                 y_sq_resid = resid_on_fe(y_sq_arr),
                 mask_pos = mask_pos.to_numpy(),
                 mask_neg = mask_neg.to_numpy(),
@@ -660,7 +655,7 @@ class Processor:
 
         def plot_case(r, df, prefix, year_start, year_mid, year_end, save_dir, labels=None, top_n=1):
             x, y, y_sq           = r['x'], r['y'], r['y_sq']
-            x_res, y_res, yq_res = r['x_resid'], r['y_resid'], r['y_sq_resid']
+            x_res, y_res = r['x_resid'], r['y_resid']
             w_raw  = r['w'] ** dim
             scale  = 1000 / w_raw.max()
 
@@ -695,11 +690,11 @@ class Processor:
                                 xytext=(11, 11), textcoords='offset points')
 
             def plot_single(m, y_arr, x_vals, fname, estimator_label,
-                            b_idx=0, neg_idx=1, pos_idx=2, residualized=False):
+                            b_idx=0, neg_idx=1, pos_idx=2):
                 b   = 0 if b_idx is None else m.params[b_idx]
                 s_n = m.params[neg_idx]
                 s_p = m.params[pos_idx]
-                xn  = np.linspace(x_vals[r['mask_neg']].min(), 0,                          100)
+                xn  = np.linspace(x_vals[r['mask_neg']].min(), 0,                           100)
                 xp  = np.linspace(0,                            x_vals[r['mask_pos']].max(), 100)
                 fig, ax = plt.subplots(figsize=(8, 6))
                 scatter_periods(ax, x_vals, y_arr)
@@ -708,8 +703,8 @@ class Processor:
                 annotate(ax, f"Slope (x<0)  = {s_n:.3f}{stars_idx(m, neg_idx)}", 0.95)
                 annotate(ax, f"Slope (x≥0) = {s_p:.3f}{stars_idx(m, pos_idx)}", 0.88)
                 annotate_sectors(ax, x_vals, y_arr)
-                xlabel = "Log Emissions Intensity Reduction" + (" (residualized)" if residualized else "")
-                ylabel = "Change in Input Shares"            + (" (residualized)" if residualized else "")
+                xlabel = "Log Emissions Intensity Reduction" 
+                ylabel = "Change in Input Shares"
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 ax.grid(alpha=0.3)
@@ -717,12 +712,10 @@ class Processor:
                 plt.savefig(f'{save_dir}/{fname}.png')
                 plt.show()
 
-            plot_single(r['m_l1_ols_kink'], y,    x,    f'{prefix}_L1_OLS', 'OLS')
             plot_single(r['m_l1_wls_kink'], y,    x,    f'{prefix}_L1_WLS', 'WLS')
-            plot_single(r['m_l2_wls_kink'], y_sq, x,    f'{prefix}_L2_WLS', 'WLS')
-
-            plot_single(r['m_l1_wls_fe'], y_res,  x_res, f'{prefix}_L1_WLS_FE', 'WLS', b_idx=None, neg_idx=2, pos_idx=3, residualized=True)
-            plot_single(r['m_l2_wls_fe'], yq_res, x_res, f'{prefix}_L2_WLS_FE', 'WLS', b_idx=None, neg_idx=2, pos_idx=3, residualized=True)
+            plot_single(r['m_l1_ols_kink'], y,    x,    f'{prefix}_L1_OLS', 'OLS')
+            plot_single(r['m_l2_ols_kink'], y_sq, x,    f'{prefix}_L2_OLS', 'OLS')
+            plot_single(r['m_l1_ols_fe'],   y_res, x_res, f'{prefix}_L1_OLS_FE', 'OLS', b_idx=None, neg_idx=2, pos_idx=3)
         
         fig_dir = f'{self.Directory}/Results/Figures'
         reg_df = IO_panel(Ind_CO2_df)
@@ -765,7 +758,7 @@ class Processor:
         
         Output: Results/Tables/Network_Regressions_Net.tex
                 Results/Tables/Network_Regressions_Net_full.tex
-                Results/Tables/Network_Regressions_Net_OLS.tex
+                Results/Tables/Network_Regressions_Net_WLS.tex
                 Results/Tables/Network_Regressions_Lagged.tex
                 Results/Tables/Network_Regressions_UpDown.tex
         
@@ -945,15 +938,15 @@ class Processor:
             fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
             return sm.add_constant(pd.concat([df[cols], fe], axis=1))
         
-        def fit(df, Y_col, x_cols, w_col=None, em_sub=None, ols=False):
-           d  = em_sub if em_sub is not None else df
-           cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
-           Y  = d[Y_col]
-           X  = make_X(d, x_cols)
-           if ols:
-               return sm.OLS(Y, X).fit(**cl)
-           w  = d[w_col] ** (1 / dim)
-           return sm.WLS(Y, X, w).fit(**cl)
+        def fit(df, Y_col, x_cols, w_col=None, em_sub=None):
+            d  = em_sub if em_sub is not None else df
+            cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
+            Y  = d[Y_col]
+            X  = make_X(d, x_cols)
+            if w_col is None:
+                return sm.OLS(Y, X).fit(**cl)
+            w = d[w_col] ** (1 / dim)
+            return sm.WLS(Y, X, w).fit(**cl)
 
 
         # ------------------ #
@@ -1039,62 +1032,77 @@ class Processor:
         # Emission Regressions #
         # -------------------- #
        
-        m_em_em   = fit(reg_em, 'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'],   'CO2e_Industry')
-        m_em_pat  = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], 'CO2e_Industry')
-        m_em_cit  = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'],  'CO2e_Industry')
-        
-        m_em_em_n  = fit(reg_em,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
-        m_em_pat_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
-        m_em_cit_n = fit(reg_em,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
-        
-        m_em_em_n_full  = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_dlog_em'],   'CO2e_Industry')
-        m_em_pat_n_full = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_pat_count'], 'CO2e_Industry')
-        m_em_cit_n_full = fit(reg_em_full,  'dlog_CO2e_inten',  ['net_pat_cite'],  'CO2e_Industry')
-        
-        m_em_em_n_ols  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'],   ols=True)
-        m_em_pat_n_ols = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], ols=True)
-        m_em_cit_n_ols = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'],  ols=True)
-        
-        m_em_em_l  = fit(reg_em_em_lag,  'dlog_CO2e_inten',  ['net_dlog_em_lag'],   'CO2e_Industry')
-        m_em_pat_l = fit(reg_em_lag,  'dlog_CO2e_inten',  ['net_pat_count_lag'], 'CO2e_Industry')
-        m_em_cit_l = fit(reg_em_lag,  'dlog_CO2e_inten',  ['net_pat_cite_lag'],  'CO2e_Industry')
+        # Up/down split
+        m_em_em  = fit(reg_em, 'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'])
+        m_em_pat = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'])
+        m_em_cit = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'])
+
+        # Net current
+        m_em_em_n  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'])
+        m_em_pat_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'])
+        m_em_cit_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'])
+
+        # Net current WLS robustness
+        m_em_em_n_wls  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'],   'CO2e_Industry')
+        m_em_pat_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], 'CO2e_Industry')
+        m_em_cit_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'],  'CO2e_Industry')
+
+        # Net current full sample
+        m_em_em_n_full  = fit(reg_em_full, 'dlog_CO2e_inten', ['net_dlog_em'])
+        m_em_pat_n_full = fit(reg_em_full, 'dlog_CO2e_inten', ['net_pat_count'])
+        m_em_cit_n_full = fit(reg_em_full, 'dlog_CO2e_inten', ['net_pat_cite'])
+
+        # Net lagged
+        m_em_em_l  = fit(reg_em_em_lag, 'dlog_CO2e_inten', ['net_dlog_em_lag'])
+        m_em_pat_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_count_lag'])
+        m_em_cit_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_cite_lag'])
+
         
        
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
         
-        #Counts
-        m_cnt_em  = fit(reg_cnt, 'clean_pat_share', ['up_dlog_em',   'down_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
-        m_cnt_pc  = fit(reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], 'clean_pat_count')
-        
-        m_cnt_em_n = fit(reg_cnt, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
-        m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
-        
-        m_cnt_em_n_full = fit(reg_cnt_full, 'clean_pat_share',  ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em_full)
-        m_cnt_pc_n_full = fit(reg_cnt_full, 'clean_pat_share',  ['net_pat_count'], 'clean_pat_count')
-        
-        m_cnt_em_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em, ols=True)
-        m_cnt_pc_n_ols = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], ols=True)
-        
-        m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_dlog_em_lag'],   'clean_pat_count', em_sub=reg_cnt_em_lag)
-        m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share',  ['net_pat_count_lag'], 'clean_pat_count')
-       
-        #Cites
-        m_cit_em  = fit(reg_cit, 'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],  'clean_pat_cites', em_sub=reg_cit_em)
-        m_cit_cc  = fit(reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'], 'clean_pat_cites')
-        
-        m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em)
-        m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
-        
-        m_cit_em_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_dlog_em'],   'clean_pat_cites', em_sub=reg_cit_em_full)
-        m_cit_cc_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_pat_cite'],  'clean_pat_cites')
-        
-        m_cit_em_n_ols = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em, ols=True)
-        m_cit_cc_n_ols = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], ols=True)
-        
-        m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'],   'clean_pat_cites', em_sub=reg_cit_em_lag)
-        m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'],  'clean_pat_cites')
+        # Counts — up/down split
+        m_cnt_em = fit(reg_cnt, 'clean_pat_share', ['up_dlog_em',   'down_dlog_em'],   em_sub=reg_cnt_em)
+        m_cnt_pc = fit(reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'])
+
+        # Counts — net current
+        m_cnt_em_n = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em)
+        m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'])
+
+        # Counts — net current WLS robustness
+        m_cnt_em_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
+        m_cnt_pc_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], 'clean_pat_count')
+
+        # Counts — net current full sample
+        m_cnt_em_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em_full)
+        m_cnt_pc_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_pat_count'])
+
+        # Counts — net lagged
+        m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'],   em_sub=reg_cnt_em_lag)
+        m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'])
+
+        # Cites — up/down split
+        m_cit_em = fit(reg_cit, 'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],  em_sub=reg_cit_em)
+        m_cit_cc = fit(reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'])
+
+        # Cites — net current
+        m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em)
+        m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'])
+
+        # Cites — net current WLS robustness
+        m_cit_em_n_wls = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  'clean_pat_cites', em_sub=reg_cit_em)
+        m_cit_cc_n_wls = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], 'clean_pat_cites')
+
+        # Cites — net current full sample
+        m_cit_em_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em_full)
+        m_cit_cc_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_pat_cite'])
+
+        # Cites — net lagged
+        m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'],  em_sub=reg_cit_em_lag)
+        m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'])
+
     
         
         # ----------- #
@@ -1153,9 +1161,9 @@ class Processor:
         t_net_full = build_table(col_order(m_em_em_n_full,     m_em_pat_n_full,     m_em_cit_n_full,
                                           m_cnt_em_n_full,    m_cnt_pc_n_full,
                                           m_cit_em_n_full,    m_cit_cc_n_full),    vars_net)
-        t_net_ols = build_table(col_order(m_em_em_n_ols, m_em_pat_n_ols, m_em_cit_n_ols,
-                                          m_cnt_em_n_ols,m_cnt_pc_n_ols,
-                                          m_cit_em_n_ols,m_cit_cc_n_ols),vars_net)
+        t_net_wls = build_table(col_order(m_em_em_n_wls, m_em_pat_n_wls, m_em_cit_n_wls,
+                                          m_cnt_em_n_wls,m_cnt_pc_n_wls,
+                                          m_cit_em_n_wls,m_cit_cc_n_wls),vars_net)
         t_lag     = build_table(col_order(m_em_em_l,     m_em_pat_l,     m_em_cit_l,
                                           m_cnt_em_l,    m_cnt_pc_l,
                                           m_cit_em_l,    m_cit_cc_l),    vars_lag)
@@ -1166,7 +1174,7 @@ class Processor:
 
         for tag, body in [('Net',       t_net),
                           ('Net_full',  t_net_full),
-                          ('Net_OLS',   t_net_ols),
+                          ('Net_WLS',   t_net_wls),
                           ('Lagged',    t_lag),
                           ('UpDown',    t_updown)]:
             out_path = f'{self.Directory}/Results/Tables/Network_Regressions_{tag}.tex'
