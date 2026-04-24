@@ -43,7 +43,7 @@ class Processor:
                      }
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
         self.ICE_classes = ["Y02T10/10", "Y02T10/30", "Y02T10/30", "Y02T10/40"]
-        self.manu_cols = [7, 93]
+        self.manu_cols = [1, 93]
         self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
 
         
