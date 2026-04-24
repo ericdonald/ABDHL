@@ -1040,8 +1040,8 @@ class Processor:
             }
 
         stat_vars = [
-            ('dlog_CO2e_inten', 'Emissions Intensity Reduction', reg_em),
-            ('net_dlog_em',     'Network Emissions Intensity Reduction',   reg_em),
+            ('dlog_CO2e_inten', 'Log Emissions Intensity Reduction', reg_em),
+            ('net_dlog_em',     'Network Log Emissions Intensity Reduction',   reg_em),
             ('clean_pat_share', 'Green Patent Share',                  reg_cnt),
             ('net_pat_count',   'Network Green Patent Share',               reg_cnt),
             ('clean_cite_share','Green Citation Share',                reg_cit),
@@ -1171,18 +1171,18 @@ class Processor:
             return [em_em, em_pat, em_cit, None, cnt_em, cnt_pc, None, cit_em, cit_cc]
 
         vars_net = [
-            ('net_dlog_em',   'Network Emissions Reduction'),
+            ('net_dlog_em',   'Network Log Emissions Intensity Reduction'),
             ('net_pat_count', 'Network Green Patents'),
             ('net_pat_cite',  'Network Green Citations'),
         ]
         vars_lag = [
-            ('net_dlog_em_lag',   'Network Emissions Reduction (lag)'),
+            ('net_dlog_em_lag',   'Network Log Emissions Intensity Reduction (lag)'),
             ('net_pat_count_lag', 'Network Green Patents (lag)'),
             ('net_pat_cite_lag',  'Network Green Citations (lag)'),
         ]
         vars_updown = [
-            ('up_dlog_em',    'Upstream Emissions Reduction'),
-            ('down_dlog_em',  'Downstream Emissions Reduction'),
+            ('up_dlog_em',    'Upstream Log Emissions Intensity Reduction'),
+            ('down_dlog_em',  'Downstream Log Emissions Intensity Reduction'),
             ('up_pat_count',  'Upstream Green Patents'),
             ('down_pat_count','Downstream Green Patents'),
             ('up_pat_cite',   'Upstream Green Citations'),
