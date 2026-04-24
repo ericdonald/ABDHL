@@ -756,7 +756,8 @@ class Processor:
         """""
         Upstream and Downstream Incentives for Greenification
         
-        Output: Results/Tables/Network_Regressions_Net.tex
+        Output: Results/Tables/Summary_Stats.tex
+                Results/Tables/Network_Regressions_Net.tex
                 Results/Tables/Network_Regressions_Net_full.tex
                 Results/Tables/Network_Regressions_Net_WLS.tex
                 Results/Tables/Network_Regressions_Lagged.tex
@@ -1027,6 +1028,39 @@ class Processor:
                 subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
              ['clean_cite_share'] + lag_em_cols)
 
+
+        # ------------------- #
+        # Summary Stats Table #
+        # ------------------- #
+        def summary_stats(s):
+            return {
+                'Mean': s.mean(),
+                'SD':   s.std(),
+                'IQR':  s.quantile(0.75) - s.quantile(0.25),
+            }
+
+        stat_vars = [
+            ('dlog_CO2e_inten', 'Emissions Intensity Reduction', reg_em),
+            ('net_dlog_em',     'Network Emissions Intensity Reduction',   reg_em),
+            ('clean_pat_share', 'Green Patent Share',                  reg_cnt),
+            ('net_pat_count',   'Network Green Patent Share',               reg_cnt),
+            ('clean_cite_share','Green Citation Share',                reg_cit),
+            ('net_pat_cite',    'Network Green Citation Share',             reg_cit),
+        ]
+
+        rows = []
+        for col, label, df in stat_vars:
+            s    = df[col].dropna()
+            stat = summary_stats(s)
+            rows.append((label, stat['Mean'], stat['SD'], stat['IQR'], len(s)))
+
+        body = ''
+        for label, mean, sd, iqr, n in rows:
+            body += f'{label} & {mean:.3f} & {sd:.3f} & {iqr:.3f} & {n} \\\\\n'
+
+        out_path = f'{self.Directory}/Results/Tables/Summary_Stats.tex'
+        with open(out_path, 'w') as f:
+            f.write(body)
         
         # -------------------- #
         # Emission Regressions #
