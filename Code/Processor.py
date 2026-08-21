@@ -48,13 +48,18 @@ class Processor:
 
         
         
-    def Cleaner(self, BLS_year_start, Year_start, Year_mid, Year_end, patents=1):
+    def Cleaner(self, BLS_year_start, Year_start, Year_mid, Year_end, API, pats):
         """""
         Clean Data
         
-        Output: Clean Data/BLS_Crosswalk.pkl
+        Output: Raw Data/EPA.pkl
+                Raw Data/NAICS.pkl
+                Clean Data/BLS_Crosswalk.pkl
                 Clean Data/Ind_CO2.pkl
                 Clean Data/Ind_CO2_full.pkl
+                Raw Data/CPC.pkl
+                Raw Data/PV_applications.pkl
+                Raw Data/citations.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
         """""
@@ -99,9 +104,12 @@ class Processor:
         # ----------------------- #
         # EPA Emissions by Sector #
         # ----------------------- #
-        EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1531141/GHGs_by_Detailed_Sector_US_2012-2022.xlsx"
-
-        EPA_df = pd.read_excel(EPA_url, sheet_name="Main")    
+        if API == 1:
+            EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1531141/GHGs_by_Detailed_Sector_US_2012-2022.xlsx"
+            EPA_df = pd.read_excel(EPA_url, sheet_name="Main")
+            EPA_df.to_pickle(f'{self.Directory}/Raw Data/EPA.pkl')
+        else:
+            EPA_df = pd.read_pickle(f'{self.Directory}/Raw Data/EPA.pkl')
         
         EPA_df = EPA_df[EPA_df['Flowable'].isin(self.CO2e.keys())].copy()
         EPA_df['GWP'] = EPA_df['Flowable'].map(self.CO2e)
@@ -115,11 +123,14 @@ class Processor:
         # ---------------- #
         # NAICS Crosswalks #
         # ---------------- #
-        NAICS_2017_2022_url = "https://www.census.gov/naics/concordances/2017_to_2022_NAICS.xlsx"
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        r = api.get(NAICS_2017_2022_url, headers=headers)
-        NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
+        if API == 1:
+            NAICS_2017_2022_url = "https://www.census.gov/naics/concordances/2017_to_2022_NAICS.xlsx"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            r = api.get(NAICS_2017_2022_url, headers=headers)
+            NAICS_2017_2022_df = pd.read_excel(io.BytesIO(r.content), skiprows=2)
+            NAICS_2017_2022_df.to_pickle(f'{self.Directory}/Raw Data/NAICS.pkl')
+        else:
+            NAICS_2017_2022_df = pd.read_pickle(f'{self.Directory}/Raw Data/NAICS.pkl')
         
         
         # ----------------- #
@@ -264,24 +275,32 @@ class Processor:
         # Build industry patenting cross-section.
 
         # ----------------------------------------------------------------
-        if patents==1:
+        if pats==1:
             # --------------------- #
             # PatentsView CPC Codes #
             # --------------------- #
-            CPC_df = gpf.Extract_PatentsView('g_cpc_current')
-            
-            CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
+            if API == 1:
+                CPC_df = gpf.Extract_PatentsView('g_cpc_current')
+                
+                CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
+                CPC_df.to_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
+            else:
+                CPC_df = pd.read_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
                     
             
             # ------------------------ #
             # PatentsView Applications #
             # ------------------------ #
-            PV_applications_df = gpf.Extract_PatentsView('g_application')
-            
-            PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
-            PV_applications_df = PV_applications_df.dropna(subset=["year"])
-            PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
-            PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
+            if API == 1:
+                PV_applications_df = gpf.Extract_PatentsView('g_application')
+                
+                PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
+                PV_applications_df = PV_applications_df.dropna(subset=["year"])
+                PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
+                PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
+                PV_applications_df.to_pickle(f'{self.Directory}/Raw Data/PV_applications.pkl')
+            else:
+                PV_applications_df = pd.read_pickle(f'{self.Directory}/Raw Data/PV_applications.pkl')
             
             
             # ------------------ #
@@ -317,10 +336,14 @@ class Processor:
             # --------------------- #
             # PatentsView Citations #
             # --------------------- #
-            citations_df = gpf.Extract_PatentsView('g_us_patent_citation')
-            
-            citations_df['patent_id'] = citations_df['patent_id'].astype(str)
-            citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
+            if API == 1:
+                citations_df = gpf.Extract_PatentsView('g_us_patent_citation')
+                
+                citations_df['patent_id'] = citations_df['patent_id'].astype(str)
+                citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
+                citations_df.to_pickle(f'{self.Directory}/Raw Data/citations.pkl')
+            else:
+                citations_df = pd.read_pickle(f'{self.Directory}/Raw Data/citations.pkl')
             
             
             # ------------------------- #
