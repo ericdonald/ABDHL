@@ -720,6 +720,7 @@ class Processor:
         fig_dir = f'{self.Directory}/Results/Figures'
         reg_df = IO_panel(Ind_CO2_df)
 
+
         # ------- #
         # Reduced #
         # ------- #
@@ -935,15 +936,19 @@ class Processor:
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def make_X(df, cols):
-            fe = pd.get_dummies(df['period'], drop_first=True, dtype=float)
-            return sm.add_constant(pd.concat([df[cols], fe], axis=1))
+        def make_X(df, cols, time_fe, ind_fe):
+            parts = [df[cols]]
+            if time_fe:
+                parts.append(pd.get_dummies(df['period'],       drop_first=True, dtype=float))
+            if ind_fe:
+                parts.append(pd.get_dummies(df['BLS_Industry'], drop_first=True, dtype=float))
+            return sm.add_constant(pd.concat(parts, axis=1))
         
-        def fit(df, Y_col, x_cols, w_col=None, em_sub=None):
+        def fit(df, Y_col, x_cols, time_fe=False, ind_fe=False, w_col=None, em_sub=None):
             d  = em_sub if em_sub is not None else df
             cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
             Y  = d[Y_col]
-            X  = make_X(d, x_cols)
+            X  = make_X(d, x_cols, time_fe, ind_fe)
             if w_col is None:
                 return sm.OLS(Y, X).fit(**cl)
             w = d[w_col] ** (1 / dim)
@@ -1062,82 +1067,81 @@ class Processor:
         with open(out_path, 'w') as f:
             f.write(body)
         
+        
         # -------------------- #
         # Emission Regressions #
         # -------------------- #
        
         # Up/down split
-        m_em_em  = fit(reg_em, 'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'])
-        m_em_pat = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'])
-        m_em_cit = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'])
+        m_em_em  = fit(reg_em, 'dlog_CO2e_inten', ['up_dlog_em',   'down_dlog_em'], time_fe=True)
+        m_em_pat = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], time_fe=True)
+        m_em_cit = fit(reg_em, 'dlog_CO2e_inten', ['up_pat_cite',  'down_pat_cite'], time_fe=True)
 
         # Net current
-        m_em_em_n  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'])
-        m_em_pat_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'])
-        m_em_cit_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'])
+        m_em_em_n  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], time_fe=True)
+        m_em_pat_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], time_fe=True)
+        m_em_cit_n = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], time_fe=True)
 
         # Net current WLS robustness
-        m_em_em_n_wls  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'],   'CO2e_Industry')
-        m_em_pat_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], 'CO2e_Industry')
-        m_em_cit_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'],  'CO2e_Industry')
+        m_em_em_n_wls  = fit(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], time_fe=True,   w_col='CO2e_Industry')
+        m_em_pat_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_count'], time_fe=True, w_col='CO2e_Industry')
+        m_em_cit_n_wls = fit(reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], time_fe=True,  w_col='CO2e_Industry')
 
         # Net current full sample
-        m_em_em_n_full  = fit(reg_em_full, 'dlog_CO2e_inten', ['net_dlog_em'])
-        m_em_pat_n_full = fit(reg_em_full, 'dlog_CO2e_inten', ['net_pat_count'])
+        m_em_em_n_full  = fit(reg_em_full, 'dlog_CO2e_inten', ['net_dlog_em'], time_fe=True)
+        m_em_pat_n_full = fit(reg_em_full, 'dlog_CO2e_inten', ['net_pat_count'], time_fe=True)
         m_em_cit_n_full = fit(reg_em_full, 'dlog_CO2e_inten', ['net_pat_cite'])
 
         # Net lagged
-        m_em_em_l  = fit(reg_em_em_lag, 'dlog_CO2e_inten', ['net_dlog_em_lag'])
-        m_em_pat_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_count_lag'])
-        m_em_cit_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_cite_lag'])
+        m_em_em_l  = fit(reg_em_em_lag, 'dlog_CO2e_inten', ['net_dlog_em_lag'], time_fe=True)
+        m_em_pat_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_count_lag'], time_fe=True)
+        m_em_cit_l = fit(reg_em_lag,    'dlog_CO2e_inten', ['net_pat_cite_lag'], time_fe=True)
 
-        
        
         # ------------------ #
         # Patent Regressions #
         # ------------------ #
         
         # Counts — up/down split
-        m_cnt_em = fit(reg_cnt, 'clean_pat_share', ['up_dlog_em',   'down_dlog_em'],   em_sub=reg_cnt_em)
-        m_cnt_pc = fit(reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'])
+        m_cnt_em = fit(reg_cnt, 'clean_pat_share', ['up_dlog_em',   'down_dlog_em'], time_fe=True, em_sub=reg_cnt_em)
+        m_cnt_pc = fit(reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], time_fe=True)
 
         # Counts — net current
-        m_cnt_em_n = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em)
-        m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'])
+        m_cnt_em_n = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'], time_fe=True, em_sub=reg_cnt_em)
+        m_cnt_pc_n = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], time_fe=True)
 
         # Counts — net current WLS robustness
-        m_cnt_em_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'],   'clean_pat_count', em_sub=reg_cnt_em)
-        m_cnt_pc_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], 'clean_pat_count')
+        m_cnt_em_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_dlog_em'], time_fe=True,   w_col='clean_pat_count', em_sub=reg_cnt_em)
+        m_cnt_pc_n_wls = fit(reg_cnt, 'clean_pat_share', ['net_pat_count'], time_fe=True, w_col='clean_pat_count')
 
         # Counts — net current full sample
-        m_cnt_em_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_dlog_em'],   em_sub=reg_cnt_em_full)
-        m_cnt_pc_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_pat_count'])
+        m_cnt_em_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_dlog_em'], time_fe=True, em_sub=reg_cnt_em_full)
+        m_cnt_pc_n_full = fit(reg_cnt_full, 'clean_pat_share', ['net_pat_count'], time_fe=True)
 
         # Counts — net lagged
-        m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'],   em_sub=reg_cnt_em_lag)
-        m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'])
+        m_cnt_em_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'], time_fe=True, em_sub=reg_cnt_em_lag)
+        m_cnt_pc_l = fit(reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'], time_fe=True)
 
         # Cites — up/down split
-        m_cit_em = fit(reg_cit, 'clean_cite_share', ['up_dlog_em',  'down_dlog_em'],  em_sub=reg_cit_em)
-        m_cit_cc = fit(reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'])
+        m_cit_em = fit(reg_cit, 'clean_cite_share', ['up_dlog_em',  'down_dlog_em'], time_fe=True, em_sub=reg_cit_em)
+        m_cit_cc = fit(reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'], time_fe=True)
 
         # Cites — net current
-        m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em)
-        m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'])
+        m_cit_em_n = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'], time_fe=True, em_sub=reg_cit_em)
+        m_cit_cc_n = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], time_fe=True)
 
         # Cites — net current WLS robustness
-        m_cit_em_n_wls = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'],  'clean_pat_cites', em_sub=reg_cit_em)
-        m_cit_cc_n_wls = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], 'clean_pat_cites')
+        m_cit_em_n_wls = fit(reg_cit, 'clean_cite_share', ['net_dlog_em'], time_fe=True,  w_col='clean_pat_cites', em_sub=reg_cit_em)
+        m_cit_cc_n_wls = fit(reg_cit, 'clean_cite_share', ['net_pat_cite'], time_fe=True, w_col='clean_pat_cites')
 
         # Cites — net current full sample
-        m_cit_em_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_dlog_em'],  em_sub=reg_cit_em_full)
-        m_cit_cc_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_pat_cite'])
+        m_cit_em_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_dlog_em'], time_fe=True, em_sub=reg_cit_em_full)
+        m_cit_cc_n_full = fit(reg_cit_full, 'clean_cite_share', ['net_pat_cite'], time_fe=True)
 
         # Cites — net lagged
-        m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'],  em_sub=reg_cit_em_lag)
-        m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'])
+        m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'], time_fe=True, em_sub=reg_cit_em_lag)
+        m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'], time_fe=True)
 
-    
         
         # ----------- #
         # Print Table #
