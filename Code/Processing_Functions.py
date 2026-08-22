@@ -11,14 +11,18 @@ import requests, zipfile, io
 
 
 
-def Extract_PatentsView(Table):
+def Extract_PatentsView(Table, ODP_API_Key):
     "Download and Extract a PatentsView Bulk Table"
     
-    url = f"https://s3.amazonaws.com/data.patentsview.org/download/{Table}.tsv.zip"
-
-    r = requests.get(url, stream=True)
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "X-API-KEY": ODP_API_Key
+    }
+    
+    url = f"https://api.uspto.gov/api/v1/datasets/products/files/PVGPATDIS/{Table}.tsv.zip"
+    r = requests.get(url, headers=headers, stream=True)
     r.raise_for_status()
-
+    
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         tsv_name = f"{Table}.tsv"
         with z.open(tsv_name) as f:

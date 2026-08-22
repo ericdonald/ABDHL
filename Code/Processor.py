@@ -45,6 +45,16 @@ class Processor:
         self.ICE_classes = ["Y02T10/10", "Y02T10/30", "Y02T10/30", "Y02T10/40"]
         self.manu_cols = [1, 93]
         self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
+        
+        keys_path = self.Directory / ".keys"
+        keys = {}
+        with open(keys_path) as f:
+            for line in f:
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    keys[k.strip()] = v.strip()
+        
+        self.USPTO_API = keys.get("USPTO_API")
 
         
         
@@ -280,7 +290,7 @@ class Processor:
             # PatentsView CPC Codes #
             # --------------------- #
             if API == 1:
-                CPC_df = gpf.Extract_PatentsView('g_cpc_current')
+                CPC_df = gpf.Extract_PatentsView('g_cpc_current', self.USPTO_API)
                 
                 CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
                 CPC_df.to_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
@@ -292,7 +302,7 @@ class Processor:
             # PatentsView Applications #
             # ------------------------ #
             if API == 1:
-                PV_applications_df = gpf.Extract_PatentsView('g_application')
+                PV_applications_df = gpf.Extract_PatentsView('g_application', self.USPTO_API)
                 
                 PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
                 PV_applications_df = PV_applications_df.dropna(subset=["year"])
@@ -337,7 +347,7 @@ class Processor:
             # PatentsView Citations #
             # --------------------- #
             if API == 1:
-                citations_df = gpf.Extract_PatentsView('g_us_patent_citation')
+                citations_df = gpf.Extract_PatentsView('g_us_patent_citation', self.USPTO_API)
                 
                 citations_df['patent_id'] = citations_df['patent_id'].astype(str)
                 citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
