@@ -2,13 +2,24 @@
 
 ## Data Sources:
 
-Below is the list of all data sources required for replication. The first group are those programmatically retrieved via APIs or direct download, the second group are those contained in the Raw Data folder, and the third group are those that require the user to have a license. The links below are for reference only; a user does not need to visit these sites to extract the data.
+Below is the list of all data sources required for replication. All necessary data files are included in the Raw Data folder, so the replication code can be run immediately with `API=0`. Setting `API=1` will re-download the data from the original sources, which may produce small numerical differences if the underlying databases have been updated since the archived data was collected.
 
-### API/Web Acessible:
+The first group are those that can be programmatically retrieved via APIs or direct download, the second group are those contained exclusively in the Raw Data folder and do not make use of API, and the third group are those that require the user to have a license. The links below are for reference only; a user does not need to visit these sites to extract the data.
+
+To make use of the API commands, the user will need to make a `.keys` file with the following lines:
+
+```
+USPTO_API = XX
+```
+
+where `XX` is the user's API key for the relevant data source.
+
+### API/Web Accessible:
 
 - EPA [Emissions by Sector](https://catalog.data.gov/dataset/2012-2022-national-level-greenhouse-gas-emission-totals-by-industry)
 - Census [NAICS Concordances](https://www.census.gov/naics/?68967)
 - PatentsView
+  - [Assignee](https://patentsview.org/download/data-download-tables)
   - [CPC Codes](https://patentsview.org/download/data-download-tables)
   - [Applications](https://patentsview.org/download/data-download-tables)
   - [Citations](https://patentsview.org/download/data-download-tables)
@@ -36,5 +47,19 @@ All of the replication codes run on Python `3.12.11`. Prior to running the codes
 | statsmodels | 0.14.6 |
 
 ## Description of Code:
+
+### Setup Instructions
+
+Before running the code, create the following folders in the repository root:
+
+```
+Raw Data/
+Clean Data/
+Results/
+Results/Tables/
+Results/Figures/
+```
+
+Download the [raw data](), unzip, and place the file(s) directly in `Raw Data/`.
 
 ## List of Tables and Figures:
