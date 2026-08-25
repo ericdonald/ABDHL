@@ -571,7 +571,18 @@ class Processor:
             ind_pat_shares_pre_df['pat_cites'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['cite_weight'].transform('sum')
             ind_pat_shares_pre_df['cpc_cite_share'] = ind_pat_shares_pre_df['cpc_pat_cites'] / ind_pat_shares_pre_df['pat_cites']
             
-            ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+            ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+            panel_idx = pd.MultiIndex.from_product(
+                [sorted(cpc4_df['cpc_subclass'].unique()), sorted(ind_pat_shares_pre_df['BLS_Industry'].unique())],
+                names=['cpc_subclass', 'BLS_Industry'])
+            ind_pat_shares_pre_df = (ind_pat_shares_pre_df.set_index(['cpc_subclass', 'BLS_Industry'])
+                                    .reindex(panel_idx)
+                                    .fillna(0.0)
+                                    .reset_index()
+                          [['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']]
+                          .sort_values(['BLS_Industry', 'cpc_subclass'])
+                          .reset_index(drop=True))
+            
             ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
             
 
