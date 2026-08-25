@@ -299,8 +299,8 @@ class Processor:
             else:
                 PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
                 
-                Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]
-                del PV_assignee_df
+            Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]
+            del PV_assignee_df
 
         
             # --------------------- #
@@ -314,7 +314,7 @@ class Processor:
             else:
                 CPC_df = pd.read_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
                 
-                cpc4_df = CPC_df[['patent_id', 'cpc_subclass']].drop_duplicates()
+            cpc4_df = CPC_df[['patent_id', 'cpc_subclass']].drop_duplicates()
 
                     
             
