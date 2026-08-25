@@ -34,6 +34,12 @@ pats = 0
 P.Cleaner(BLS_year_start, Year_start, Year_mid, Year_end, API, pats)
 
 
+# ----------------- #
+# Build Instruments #
+# ----------------- #
+P.Instruments()
+
+
 # ---------------- #
 # IO Change Graphs #
 # ---------------- #

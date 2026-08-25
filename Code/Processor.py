@@ -585,6 +585,50 @@ class Processor:
             
             ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
             
+            
+            
+    def Instruments(self):
+        """""
+        Create Three Series of Greenification Shocks
+    
+        Output: Clean Data/govt_shocks.pkl
+        """""
+        
+        # ----------------------------------------------------------------
+
+        # Build instrument dataframes.
+
+        # ----------------------------------------------------------------
+        
+        Gov_CPC_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
+        ind_pat_shares_pre_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
+        
+        
+        # ------------------------ #
+        # Government Patent Shocks #
+        # ------------------------ #
+        govt_shocks_df = pd.merge(Gov_CPC_df,
+                                    ind_pat_shares_pre_df,
+                                    on='cpc_subclass',
+                                    how='inner'
+                                    )
+        
+        govt_shocks_df['weighted_pat_shock'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
+        govt_shocks_df['total_pat_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
+        
+        govt_shocks_df['weighted_pat_shock_clean'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count'] * govt_shocks_df['clean']
+        govt_shocks_df['total_pat_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
+        
+        govt_shocks_df['weighted_cite_shock'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
+        govt_shocks_df['total_cite_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
+        
+        govt_shocks_df['weighted_cite_shock_clean'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites'] * govt_shocks_df['clean']
+        govt_shocks_df['total_cite_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
+        
+        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_shock', 
+                                         'total_pat_shock_clean', 'total_cite_shock', 'total_cite_shock_clean']].drop_duplicates()
+        govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/govt_shocks.pkl')
+
 
 
     def IO_Change(self, Year_start, Year_mid, Year_end, dim=3):
