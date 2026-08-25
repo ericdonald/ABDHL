@@ -28,7 +28,7 @@ BLS_year_start, Year_start, Year_mid, Year_end = (1997, 2012, 2017, 2022)
 # ---------- #
 API = 0
 pats = 0
-#Set to 1 for first run
+#Set to 1 for new API download
 
 
 P.Cleaner(BLS_year_start, Year_start, Year_mid, Year_end, API, pats)
