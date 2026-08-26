@@ -71,10 +71,14 @@ class Processor:
                 Raw Data/CPC.pkl
                 Raw Data/applications.pkl
                 Raw Data/citations.pkl
+                Raw Data/Patent_Inventors.pkl
+                Raw Data/Inventor_Locations.pkl
+                Clean Data/state_rd_price.pkl
                 Clean Data/Gov_CPC.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
                 Clean Data/Ind_Pat_Shares_Pre.pkl
+                Clean Data/Tech_Loc_Shares.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -368,7 +372,6 @@ class Processor:
                                        on='location_id',
                                        how='inner'
                                         )
-            PV_inventors_df.to_pickle(f'{self.Directory}/Clean Data/Patent_Inventors.pkl')
             
             del PV_location_df
             
@@ -456,7 +459,7 @@ class Processor:
                                  on='patent_id',
                                  how='inner'
                                  )
-            gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('size')
+            gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('count')
             
             gov_cpc_df = gov_cpc_df[~((gov_cpc_df['clean'] == 0)
                                       & (gov_cpc_df['clean_full'] == 1)
@@ -527,7 +530,7 @@ class Processor:
             compustat_df = compustat_df[(compustat_df['fic']=="USA") & (compustat_df['final']=="Y")]
             terry_cols = ['at', 'ppent', 'emp', 'capxv', 'sale', 'xrd']
             compustat_df = compustat_df[compustat_df[terry_cols].gt(0).all(axis=1)]
-            compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('size') > 1]
+            compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('count') > 1]
             compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
             
             compustat_df = compustat_df[(compustat_df["year"] <= Year_end)]
@@ -593,7 +596,7 @@ class Processor:
                                              on='patent_id',
                                              how='inner'
                                              )
-            ind_pat_shares_pre_df['pat_weight'] = 1.0 / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('size')
+            ind_pat_shares_pre_df['pat_weight'] = ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
             
             ind_pat_shares_pre_df = ind_pat_shares_pre_df[~((ind_pat_shares_pre_df['clean'] == 0)
                                                               & (ind_pat_shares_pre_df['clean_full'] == 1)
@@ -627,6 +630,43 @@ class Processor:
             # ---------------------------- #
             # Location Distribution by CPC #
             # ---------------------------- #
+            tech_loc_df = pat_df.copy()
+            
+            tech_loc_df = pd.merge(tech_loc_df,
+                                    cpc4_df,
+                                    on='patent_id',
+                                    how='inner'
+                                    )
+            
+            tech_loc_df = pd.merge(tech_loc_df,
+                                    PV_inventors_df,
+                                    on='patent_id',
+                                    how='inner'
+                                    )
+            
+            tech_loc_df['pat_authors'] = tech_loc_df.groupby(['patent_id', 'gvkey', 'patent_type'])['inventor_id'].transform('count')
+            tech_loc_df['pat_weight'] = tech_loc_df['split_weight'] / tech_loc_df['pat_authors']
+            tech_loc_df['cite_weight'] = tech_loc_df['norm_cites'] * tech_loc_df['split_weight'] / tech_loc_df['pat_authors']
+            
+            tech_loc_frames = []
+            for start in range(BLS_year_start-5, Year_end, 5):
+                end = start + 5
+                bin_df = tech_loc_df[(tech_loc_df['year'] > start) & (tech_loc_df['year'] <= end)]
+                
+                bin_df['cpc_fips_pat_count'] = bin_df.groupby(['cpc_subclass', 'state_fips'])['pat_weight'].transform('sum')
+                bin_df['cpc_pat_count'] = bin_df.groupby('cpc_subclass')['pat_weight'].transform('sum')
+                bin_df['cpc_fips_pat_share'] = bin_df['cpc_fips_pat_count'] / bin_df['cpc_pat_count']
+                
+                bin_df['cpc_fips_pat_cites'] = bin_df.groupby(['cpc_subclass', 'state_fips'])['cite_weight'].transform('sum')
+                bin_df['cpc_pat_cites'] = bin_df.groupby('cpc_subclass')['cite_weight'].transform('sum')
+                bin_df['cpc_fips_cite_share'] = bin_df['cpc_fips_pat_cites'] / bin_df['cpc_pat_cites']
+                
+                tech_loc_frames.append(bin_df[['cpc_subclass', 'state_fips', 'pat_count', 'cpc_fips_pat_share', 'cpc_fips_cite_share']]
+                                        .drop_duplicates()
+                                        .assign(period=end))
+                
+            tech_loc_df = pd.concat(tech_loc_frames, ignore_index=True)
+            tech_loc_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Loc_Shares.pkl')
             
             
             
