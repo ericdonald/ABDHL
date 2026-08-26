@@ -802,6 +802,22 @@ class Processor:
         
         
         ####### Exploration
+        shock_cols = [
+            'total_pat_govt_shock',        'total_cite_govt_shock',
+            'total_pat_govt_shock_clean',  'total_cite_govt_shock_clean',
+            'total_pat_RD_shock',          'total_cite_RD_shock',
+            'total_pat_RD_shock_clean',    'total_cite_RD_shock_clean',
+        ]
+
+        def add_lags(df, cols, lags=(1,), step=5):
+            out = df.copy()
+            for L in lags:
+                lagged = df[['BLS_Industry', 'period'] + cols].copy()
+                lagged['period'] = lagged['period'] + step * L
+                lagged = lagged.rename(columns={c: f'{c}_L{L}' for c in cols})
+                out = out.merge(lagged, on=['BLS_Industry', 'period'], how='left')
+            return out
+        
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         
         pat_panel_df = pd.merge(govt_shocks_df,
@@ -809,6 +825,8 @@ class Processor:
                                 on=['period', 'BLS_Industry'],
                                 how='inner'
                                 )
+        
+        pat_panel_df = add_lags(pat_panel_df, shock_cols, lags=(1,))
         
         pat_panel_df = pd.merge(pat_panel_df,
                                 Ind_Pat_df,
@@ -820,29 +838,34 @@ class Processor:
         pat_panel_df['entity'] = pat_panel_df['BLS_Industry'].astype(str)
         pat_panel_df = pat_panel_df.set_index(['entity','period']).sort_index()
     
-        m_pats_govt = gpf.run_reg(pat_panel_df['pat_count'], pat_panel_df['total_pat_govt_shock'], 'panel')
-        m_cites_govt = gpf.run_reg(pat_panel_df['pat_cites'], pat_panel_df['total_cite_govt_shock'], 'panel')
+        specs = {
+            'pats_govt':        ('pat_count',       'total_pat_govt_shock'),
+            'cites_govt':       ('pat_cites',       'total_cite_govt_shock'),
+            'pats_clean_govt':  ('clean_pat_count', 'total_pat_govt_shock_clean'),
+            'cites_clean_govt': ('clean_pat_cites', 'total_cite_govt_shock_clean'),
+            'pats_RD':          ('pat_count',       'total_pat_RD_shock'),
+            'cites_RD':         ('pat_cites',       'total_cite_RD_shock'),
+            'pats_clean_RD':    ('clean_pat_count', 'total_pat_RD_shock_clean'),
+            'cites_clean_RD':   ('clean_pat_cites', 'total_cite_RD_shock_clean'),
+        }
+
+        models = {}
+        for name, (y, x) in specs.items():
+            for suffix in ('', '_L1'):
+                models[f'm_{name}{suffix}'] = gpf.run_reg(pat_panel_df[y],
+                                                          pat_panel_df[x + suffix],
+                                                          'panel')
+                
+        _it = iter(models.items())
+
+        def n():
+            name, mod = next(_it)
+            print(f'\n=== {name} ===')
+            print(mod.summary)
+            
+        n()
         
-        m_pats_clean_govt = gpf.run_reg(pat_panel_df['clean_pat_count'], pat_panel_df['total_pat_govt_shock_clean'], 'panel')
-        m_cites_clean_govt = gpf.run_reg(pat_panel_df['clean_pat_cites'], pat_panel_df['total_cite_govt_shock_clean'], 'panel')
-        
-        m_pats_RD = gpf.run_reg(pat_panel_df['pat_count'], pat_panel_df['total_pat_RD_shock'], 'panel')
-        m_cites_RD = gpf.run_reg(pat_panel_df['pat_cites'], pat_panel_df['total_cite_RD_shock'], 'panel')
-        
-        m_pats_clean_RD = gpf.run_reg(pat_panel_df['clean_pat_count'], pat_panel_df['total_pat_RD_shock_clean'], 'panel')
-        m_cites_clean_RD = gpf.run_reg(pat_panel_df['clean_pat_cites'], pat_panel_df['total_cite_RD_shock_clean'], 'panel')
-        
-        m_pats_govt.summary
-        m_cites_govt.summary
-        
-        m_pats_clean_govt.summary
-        m_cites_clean_govt.summary
-        
-        m_pats_RD.summary
-        m_cites_RD.summary
-        
-        m_pats_clean_RD.summary
-        m_cites_clean_RD.summary
+    
 
 
 
