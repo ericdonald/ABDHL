@@ -688,19 +688,19 @@ class Processor:
                                     )
         
         govt_shocks_df['weighted_pat_shock'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
-        govt_shocks_df['total_pat_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
+        govt_shocks_df['total_pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
         
         govt_shocks_df['weighted_pat_shock_clean'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count'] * govt_shocks_df['clean']
-        govt_shocks_df['total_pat_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
+        govt_shocks_df['total_pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
         
         govt_shocks_df['weighted_cite_shock'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
-        govt_shocks_df['total_cite_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
+        govt_shocks_df['total_cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
         
         govt_shocks_df['weighted_cite_shock_clean'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites'] * govt_shocks_df['clean']
-        govt_shocks_df['total_cite_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
+        govt_shocks_df['total_cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
         
-        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_shock', 
-                                         'total_pat_shock_clean', 'total_cite_shock', 'total_cite_shock_clean']].drop_duplicates()
+        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_govt_shock', 
+                                         'total_pat_govt_shock_clean', 'total_cite_govt_shock', 'total_cite_govt_shock_clean']].drop_duplicates()
         govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/govt_shocks.pkl')
         
         
@@ -785,20 +785,64 @@ class Processor:
                                     )
         
         RD_shocks_df['weighted_pat_shock'] = RD_shocks_df['cpc_pat_share'] * RD_shocks_df['pat_count_hat']
-        RD_shocks_df['total_pat_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
+        RD_shocks_df['total_pat_RD_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
         
         RD_shocks_df['weighted_pat_shock_clean'] = RD_shocks_df['cpc_pat_share'] * RD_shocks_df['pat_count_hat'] * RD_shocks_df['clean']
-        RD_shocks_df['total_pat_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
+        RD_shocks_df['total_pat_RD_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
         
         RD_shocks_df['weighted_cite_shock'] = RD_shocks_df['cpc_cite_share'] * RD_shocks_df['pat_cites_hat']
-        RD_shocks_df['total_cite_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
+        RD_shocks_df['total_cite_RD_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
         
         RD_shocks_df['weighted_cite_shock_clean'] = RD_shocks_df['cpc_cite_share'] * RD_shocks_df['pat_cites_hat'] * RD_shocks_df['clean']
-        RD_shocks_df['total_cite_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
+        RD_shocks_df['total_cite_RD_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
         
-        RD_shocks_df = RD_shocks_df[['BLS_Industry', 'period', 'total_pat_shock', 
-                                         'total_pat_shock_clean', 'total_cite_shock', 'total_cite_shock_clean']].drop_duplicates()
+        RD_shocks_df = RD_shocks_df[['BLS_Industry', 'period', 'total_pat_RD_shock', 
+                                         'total_pat_RD_shock_clean', 'total_cite_RD_shock', 'total_cite_RD_shock_clean']].drop_duplicates()
         RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_shocks.pkl')
+        
+        
+        ####### Exploration
+        Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        
+        pat_panel_df = pd.merge(govt_shocks_df,
+                                RD_shocks_df,
+                                on=['period', 'BLS_Industry'],
+                                how='inner'
+                                )
+        
+        pat_panel_df = pd.merge(pat_panel_df,
+                                Ind_Pat_df,
+                                on=['period', 'BLS_Industry'],
+                                how='inner'
+                                )
+        
+        
+        pat_panel_df['entity'] = pat_panel_df['BLS_Industry'].astype(str)
+        pat_panel_df = pat_panel_df.set_index(['entity','period']).sort_index()
+    
+        m_pats_govt = gpf.run_reg(pat_panel_df['pat_count'], pat_panel_df['total_pat_govt_shock'], 'panel')
+        m_cites_govt = gpf.run_reg(pat_panel_df['pat_cites'], pat_panel_df['total_cite_govt_shock'], 'panel')
+        
+        m_pats_clean_govt = gpf.run_reg(pat_panel_df['clean_pat_count'], pat_panel_df['total_pat_govt_shock_clean'], 'panel')
+        m_cites_clean_govt = gpf.run_reg(pat_panel_df['clean_pat_cites'], pat_panel_df['total_cite_govt_shock_clean'], 'panel')
+        
+        m_pats_RD = gpf.run_reg(pat_panel_df['pat_count'], pat_panel_df['total_pat_RD_shock'], 'panel')
+        m_cites_RD = gpf.run_reg(pat_panel_df['pat_cites'], pat_panel_df['total_cite_RD_shock'], 'panel')
+        
+        m_pats_clean_RD = gpf.run_reg(pat_panel_df['clean_pat_count'], pat_panel_df['total_pat_RD_shock_clean'], 'panel')
+        m_cites_clean_RD = gpf.run_reg(pat_panel_df['clean_pat_cites'], pat_panel_df['total_cite_RD_shock_clean'], 'panel')
+        
+        m_pats_govt.summary
+        m_cites_govt.summary
+        
+        m_pats_clean_govt.summary
+        m_cites_clean_govt.summary
+        
+        m_pats_RD.summary
+        m_cites_RD.summary
+        
+        m_pats_clean_RD.summary
+        m_cites_clean_RD.summary
 
 
 
