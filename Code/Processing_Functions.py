@@ -7,6 +7,8 @@ Notes: Functions that accomplish basic processing for the project.
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
+from linearmodels.panel import PanelOLS
 import requests, zipfile, io
 
 
@@ -79,6 +81,23 @@ def map_naics2017_to_2022_6(code, naics2017_6_universe, NAICS_2017_2022_df):
     naics2022_6 = cw_17_subset['NAICS_2022'].dropna().unique()
 
     return set(naics2022_6)
+
+
+
+def run_reg(y, X, model, clusters=[]):
+    "Run Regressions"
+    
+    if model == 'sm':
+        model = sm.OLS(y, X)
+        res = model.fit(cov_type="cluster", cov_kwds={"groups": clusters})
+        
+    if model == 'panel':
+        model = PanelOLS(y, X,
+                         entity_effects=True, 
+                         time_effects=True)
+        res = model.fit(cov_type='clustered', cluster_entity=True)
+
+    return res
 
 
 

@@ -37,7 +37,7 @@ P.Cleaner(BLS_year_start, Year_start, Year_mid, Year_end, API, pats)
 # ----------------- #
 # Build Instruments #
 # ----------------- #
-P.Instruments(BLS_year_start)
+P.Instruments(BLS_year_start, Year_end)
 
 
 # ---------------- #
@@ -55,7 +55,7 @@ P.Up_Down_Green(BLS_year_start, Year_start, Year_mid, Year_end)
 # ----------------------- #
 # Record Package Versions #
 # ----------------------- #
-packages = ["matplotlib", "numpy", "openpyxl", "pandas", "statsmodels"]
+packages = ["linearmodels", "matplotlib", "numpy", "openpyxl", "pandas", "statsmodels"]
 P.write_package_versions(packages)
 
 
