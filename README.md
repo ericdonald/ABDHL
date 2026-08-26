@@ -23,11 +23,14 @@ where `XX` is the user's API key for the relevant data source.
   - [CPC Codes](https://patentsview.org/download/data-download-tables)
   - [Applications](https://patentsview.org/download/data-download-tables)
   - [Citations](https://patentsview.org/download/data-download-tables)
+  - [Inventors](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
+  - [Location Crosswalk](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
 
 ### Contained in [Raw Data](https://github.com/ericdonald/ABDHL/releases/download/v1.0.0/Raw.Data.zip):
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
 - Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) and [Arora et al. (2021)](https://zenodo.org/records/13619821)
+- State-Level R&D Prices from [Lucking et al. (2019)](https://www.dropbox.com/s/d1nrtacxk6qke0a/spillovers_rep.zip?dl=0)
 
 ### Requires License:
 - [Compustat](https://wrds-www.wharton.upenn.edu/)
