@@ -344,6 +344,44 @@ class Processor:
                  citations_df.to_pickle(f'{self.Directory}/Raw Data/citations.pkl')
             else:
                  citations_df = pd.read_pickle(f'{self.Directory}/Raw Data/citations.pkl')
+                 
+                 
+            # --------------------- #
+            # Patentsview Inventors #
+            # --------------------- #
+            if API == 1:
+                PV_inventors_df = gpf.Extract_PatentsView('g_inventor_disambiguated', self.USPTO_API)
+                
+                PV_inventors_df['patent_id'] = PV_inventors_df['patent_id'].astype(str)
+                
+                PV_location_df = gpf.Extract_PatentsView('g_location_disambiguated', self.USPTO_API)
+                
+                PV_inventors_df.to_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
+                PV_location_df.to_pickle(f'{self.Directory}/Raw Data/Inventor_Locations.pkl')
+                
+            else:
+                PV_inventors_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
+                PV_location_df = pd.read_pickle(f'{self.Directory}/Raw Data/Inventor_Locations.pkl')
+            
+            PV_inventors_df = pd.merge(PV_inventors_df,
+                                       PV_location_df[['location_id', 'disambig_state', 'state_fips']],
+                                       on='location_id',
+                                       how='inner'
+                                        )
+            PV_inventors_df.to_pickle(f'{self.Directory}/Clean Data/Patent_Inventors.pkl')
+            
+            del PV_location_df
+            
+                
+            # ---------------------- #
+            # State-Level R&D Prices #
+            # ---------------------- #
+            state_rdp_df = pd.read_stata(f'{self.Directory}/Raw Data/RDusercost_2017.dta')
+            
+            state_rdp_df = state_rdp_df[['state', 'fips', 'year', 'rho_h']]
+            state_rdp_df = state_rdp_df.rename(columns={"fips": "state_fips"})
+            
+            state_rdp_df.to_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
             
             
             # ------------------ #
@@ -455,7 +493,7 @@ class Processor:
             Gov_CPC_df['clean'] = (Gov_CPC_df["cpc_subclass"].isin(codes)).astype(np.int8)
             Gov_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
     
-            del PV_applications_df, relevant_df, citations_df
+            del CPC_df, PV_applications_df, relevant_df, citations_df
             
             
             # ------------------------ #
@@ -497,9 +535,9 @@ class Processor:
             compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
     
     
-            # -------------------------- #
-            # Allocate Patent to Sectors #
-            # -------------------------- #
+            # --------------------------- #
+            # Allocate Patents to Sectors #
+            # --------------------------- #
             pat_df = pat_df.merge(pat_firm_crosswalk_df,
                                 on='patent_id',
                                 how='inner')
@@ -586,6 +624,11 @@ class Processor:
             ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
             
             
+            # ---------------------------- #
+            # Location Distribution by CPC #
+            # ---------------------------- #
+            
+            
             
     def Instruments(self):
         """""
@@ -602,6 +645,7 @@ class Processor:
         
         Gov_CPC_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
         ind_pat_shares_pre_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
+        state_rdp_df = pd.read_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
         
         
         # ------------------------ #
@@ -628,6 +672,12 @@ class Processor:
         govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_shock', 
                                          'total_pat_shock_clean', 'total_cite_shock', 'total_cite_shock_clean']].drop_duplicates()
         govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/govt_shocks.pkl')
+        
+        
+        # ------------------------ #
+        # State R&D Price Exposure #
+        # ------------------------ #
+        
 
 
 
