@@ -716,10 +716,10 @@ class Processor:
                     "TV_sq_distance_reduced": tv_sq_red})
     
             IO_df_p1 = make_IO_df(tv_LI_p1, tv_sq_LI_p1, tv_red_p1, tv_sq_red_p1)
-            IO_df_p1['period'] = 1
+            IO_df_p1['period'] = Year_mid
     
             IO_df_p2 = make_IO_df(tv_LI_p2, tv_sq_LI_p2, tv_red_p2, tv_sq_red_p2)
-            IO_df_p2['period'] = 2
+            IO_df_p2['period'] = Year_end
     
             IO_df = pd.concat([IO_df_p1, IO_df_p2], ignore_index=True)
     
@@ -752,7 +752,7 @@ class Processor:
                 "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_mid) - np.log(CO2e_LI_start)),
                 "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_start].to_numpy()**(1/dim),
                 "CO2e_Industry_LI_weight":   CO2e_lev_LI_start**(1/dim),
-                "period": 1})
+                "period": Year_mid})
     
             em_p2 = pd.DataFrame({
                 "BLS_Industry":       IO_wide_df.index,
@@ -761,7 +761,7 @@ class Processor:
                 "dlog_CO2e_inten_LI": -(np.log(CO2e_LI_end) - np.log(CO2e_LI_mid)),
                 "CO2e_Industry_weight":      IO_wide_df['CO2e_Industry', Year_mid].to_numpy()**(1/dim),
                 "CO2e_Industry_LI_weight":   CO2e_lev_LI_mid**(1/dim),
-                "period": 2})
+                "period": Year_end})
     
             distance_cols = ['BLS_Industry', 'period',
                              'TV_distance_LI',      'TV_sq_distance_LI',
@@ -810,7 +810,7 @@ class Processor:
                 x_arr * mask_pos.to_numpy(),
             ]))
 
-            period_fe = (df['period'].to_numpy() == 2).astype(float)
+            period_fe = (df['period'].to_numpy() == Year_end).astype(float)
             X_fe = np.column_stack([
                 np.ones(len(x_arr)),
                 period_fe,
@@ -851,8 +851,8 @@ class Processor:
 
             stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
 
-            mask_p1 = df['period'].to_numpy() == 1
-            mask_p2 = df['period'].to_numpy() == 2
+            mask_p1 = df['period'].to_numpy() == Year_mid
+            mask_p2 = df['period'].to_numpy() == Year_end
 
             def annotate(ax, text, y_frac):
                 ax.annotate(text, xy=(0.05, y_frac), xycoords='axes fraction',
@@ -917,6 +917,7 @@ class Processor:
         r_red = run_regressions(reg_df, 'dlog_CO2e_inten', 'TV_distance_reduced', 'TV_sq_distance_reduced', 'CO2e_Industry_weight', 'BLS_Industry')
         plot_case(r_red, reg_df, 'Reduced', Year_start, Year_mid, Year_end, fig_dir,
                   labels=reg_df['Sector Title'].to_numpy())
+
 
         # ---------------- #
         # Leontief Inverse #
