@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
+from linearmodels.iv import IV2SLS
 import io, sys
 from datetime import datetime
 from pathlib import Path
@@ -661,8 +662,8 @@ class Processor:
         """""
         Create Three Series of Greenification Shocks
     
-        Output: Clean Data/govt_shocks.pkl
-                Clean Data/RD_shocks.pkl
+        Output: Clean Data/Govt_Shocks.pkl
+                Clean Data/RD_Shocks.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -701,7 +702,7 @@ class Processor:
         
         govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_govt_shock', 
                                          'total_pat_govt_shock_clean', 'total_cite_govt_shock', 'total_cite_govt_shock_clean']].drop_duplicates()
-        govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/govt_shocks.pkl')
+        govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
         
         
         # ------------------------ #
@@ -798,7 +799,7 @@ class Processor:
         
         RD_shocks_df = RD_shocks_df[['BLS_Industry', 'period', 'total_pat_RD_shock', 
                                          'total_pat_RD_shock_clean', 'total_cite_RD_shock', 'total_cite_RD_shock_clean']].drop_duplicates()
-        RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_shocks.pkl')
+        RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         
         ####### Exploration
@@ -1205,6 +1206,8 @@ class Processor:
         Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
+        govt_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
+        RD_shocks_df   = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
 
        
         # ----------- #
@@ -1335,7 +1338,53 @@ class Processor:
         pat_df = pat_panel(Ind_Pat_df)
         pat_df_full = pat_panel(Ind_Pat_df_full)
         
+        
+        # ------------ #
+        # Instruments  #
+        # ------------ #
+        IV_panel_df = pd.merge(govt_shocks_df,
+                                RD_shocks_df,
+                                on=['period', 'BLS_Industry'],
+                                how='inner'
+                                )
+        
+        iv_shock_cols = {
+            'gov_pat':  'total_pat_govt_shock_clean',
+            'gov_cite': 'total_cite_govt_shock_clean',
+            'rd_pat':   'total_pat_RD_shock_clean',
+            'rd_cite':  'total_cite_RD_shock_clean',
+        }
 
+        def iv_net_panel(shock_df):
+            frames = []
+            for year in bin_ends:
+                s_yr = shock_df[shock_df['period'] == year]
+                if s_yr.empty:
+                    continue
+                s_yr = (s_yr.drop_duplicates(subset='BLS_Industry')
+                            .set_index('BLS_Industry')
+                            .reindex(IO_wide_df_full.index))
+                nets = {}
+                for prefix, col in iv_shock_cols.items():
+                    z = s_yr[col].to_numpy(dtype=float)
+                    nets.update(compute_network_effect(manu_IO[year],
+                                                       z[manu_mask_wide_full],
+                                                       prefix, idx_full))
+                frames.append(pd.DataFrame({
+                    "BLS_Industry": IO_wide_df_full.index[manu_mask_wide_full],
+                    "period":       year,
+                    **nets,
+                }))
+            return pd.concat(frames, ignore_index=True)
+
+        IV_net_df = iv_net_panel(IV_panel_df)
+        
+        iv_var  = ['gov_pat',  'gov_cite',  'rd_pat',  'rd_cite']
+        
+        for iv in iv_var:
+            IV_net_df[f'net_{iv}'] = IV_net_df[f'up_{iv}'] + IV_net_df[f'down_{iv}']
+        
+        
         # ----- #
         # Merge #
         # ----- #
@@ -1359,29 +1408,72 @@ class Processor:
         reg_df = reg_panel(em_df, pat_df)
         reg_df_full = reg_panel(em_df_full, pat_df_full)
 
+        reg_df = reg_df.merge(IV_panel_df, on=['BLS_Industry', 'period'], how='left')
+        reg_df = reg_df.merge(IV_net_df,   on=['BLS_Industry', 'period'], how='left')
+
 
         # ----------------------------------------------------------------
         
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def make_X(df, cols, time_fe, ind_fe):
-            parts = [df[cols]]
+        class IVWrap:
+            def __init__(self, res):
+                self.iv       = res
+                self.params   = res.params
+                self.bse      = res.std_errors
+                self.tvalues  = res.tstats
+                self.pvalues  = res.pvalues
+                self.rsquared = res.rsquared
+                self.nobs     = int(res.nobs)
+            def conf_int(self, alpha=0.05):
+                return self.iv.conf_int(1 - alpha)
+            def summary(self):
+                return self.iv.summary
+
+        def make_X(d, cols, time_fe, ind_fe):
+            parts = [pd.Series(1.0, index=d.index, name='const'),
+                     d[list(cols)].astype(float)]
             if time_fe:
-                parts.append(pd.get_dummies(df['period'],       drop_first=True, dtype=float))
+                parts.append(pd.get_dummies(d['period'], prefix='per',
+                                            drop_first=True, dtype=float))
             if ind_fe:
-                parts.append(pd.get_dummies(df['BLS_Industry'], drop_first=True, dtype=float))
-            return sm.add_constant(pd.concat(parts, axis=1))
-        
-        def fit(df, Y_col, x_cols, time_fe=False, ind_fe=False, w_col=None, em_sub=None):
-            d  = em_sub if em_sub is not None else df
-            cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
-            Y  = d[Y_col]
-            X  = make_X(d, x_cols, time_fe, ind_fe)
-            if w_col is None:
-                return sm.OLS(Y, X).fit(**cl)
-            w = d[w_col] ** (1 / dim)
-            return sm.WLS(Y, X, w).fit(**cl)
+                parts.append(pd.get_dummies(d['BLS_Industry'], prefix='ind',
+                                            drop_first=True, dtype=float))
+            X = pd.concat(parts, axis=1)
+            X.columns = [str(c) for c in X.columns]
+            return X
+
+        def fit(df, Y_col, x_cols, time_fe=False, ind_fe=False, w_col=None, em_sub=None,
+                endog_cols=None, iv_cols=None):
+            d = em_sub if em_sub is not None else df
+
+            # OLS
+            if iv_cols is None:
+                cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': d['BLS_Industry']}}
+                Y  = d[Y_col]
+                X  = make_X(d, x_cols, time_fe, ind_fe)
+                if w_col is None:
+                    return sm.OLS(Y, X).fit(**cl)
+                w = d[w_col] ** (1 / dim)
+                return sm.WLS(Y, X, w).fit(**cl)
+
+            # 2SLS
+            endog_cols = list(endog_cols) if endog_cols is not None else list(x_cols)
+            exog_cols  = [c for c in x_cols if c not in endog_cols]
+            need       = ([Y_col] + exog_cols + endog_cols + list(iv_cols)
+                          + ([w_col] if w_col else []))
+            d          = d.dropna(subset=need)
+
+            Y     = d[Y_col].astype(float)
+            EXOG  = make_X(d, exog_cols, time_fe, ind_fe)
+            ENDOG = d[endog_cols].astype(float)
+            Z     = d[list(iv_cols)].astype(float)
+            wts   = None if w_col is None else (d[w_col] ** (1 / dim)).astype(float)
+
+            res = IV2SLS(Y, EXOG, ENDOG, Z, weights=wts).fit(
+                cov_type='clustered', clusters=d['BLS_Industry'])
+            return IVWrap(res)
 
 
         # ------------------ #
@@ -1408,6 +1500,14 @@ class Processor:
 
         reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
         reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        
+        iv_pat  = ['up_gov_pat',  'down_gov_pat', 'net_gov_pat',  'up_rd_pat',  'down_rd_pat', 'net_rd_pat']
+        iv_cite = ['up_gov_cite', 'down_gov_cite', 'net_gov_cite', 'up_rd_cite', 'down_rd_cite', 'net_rd_cite']
+        iv_all  = iv_pat + iv_cite
+
+        reg_em_iv = gpf.winsorize(reg_em.dropna(subset=iv_all),  iv_all)
+        reg_cnt_iv = gpf.winsorize(reg_cnt.dropna(subset=iv_all), iv_all)
+        reg_cit_iv = gpf.winsorize(reg_cit.dropna(subset=iv_all), iv_all)
         
         reg_em_full = gpf.winsorize(
             reg_df_full.dropna(subset=['dlog_CO2e_inten']),
@@ -1570,7 +1670,102 @@ class Processor:
         # Cites — net lagged
         m_cit_em_l = fit(reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'], time_fe=True, em_sub=reg_cit_em_lag)
         m_cit_cc_l = fit(reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'], time_fe=True)
+        
+        
+        # -------------- #
+        # IV Regressions #
+        # -------------- #
+        # Net current emissions
+        m_em_pat_rd_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
+                          ['total_pat_RD_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_rd_pat'])
+        
+        m_em_pat_gov_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
+                          ['total_pat_govt_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat'])
+        
+        m_em_cit_rd_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
+                          ['total_cite_RD_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_cite'], iv_cols=['net_rd_cite'])
+        
+        m_em_cit_gov_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
+                          ['total_cite_govt_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite'])
+    
+        
+        # Net current counts
+        m_cnt_pc_rd_iv = fit(reg_cnt_iv, 'clean_pat_share',
+                          ['total_pat_RD_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_rd_pat'])
+        
+        m_cnt_pc_gov_iv = fit(reg_cnt_iv, 'clean_pat_share',
+                          ['total_pat_govt_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat'])
+        
+        
+        # Net current cites
+        m_cit_cc_rd_iv = fit(reg_cit_iv, 'clean_cite_share',
+                          ['total_cite_RD_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_cite'], iv_cols=['net_rd_cite'])
+        
+        m_cit_cc_gov_iv = fit(reg_cit_iv, 'clean_cite_share',
+                          ['total_cite_govt_shock_clean'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite'])
+        
+        
+        
+        iv_models = {
+            'em_pat_rd': m_em_pat_rd_iv, 'em_pat_gov': m_em_pat_gov_iv, 'em_cit_rd': m_em_cit_rd_iv, 'em_cit_gov': m_em_cit_gov_iv,
+            'cnt_pc_rd': m_cnt_pc_rd_iv, 'cnt_pc_gov': m_cnt_pc_gov_iv,
+            'cit_cc_rd': m_cit_cc_rd_iv, 'cit_cc_gov': m_cit_cc_gov_iv,
+        }
+        
+        def iv_coef_table(m, cols=None):
+            r    = m.iv
+            cols = list(r.params.index) if cols is None else list(cols)
+            return pd.DataFrame({
+                'coef':   r.params[cols],
+                'se':     r.std_errors[cols],
+                't':      r.tstats[cols],
+                'p':      r.pvalues[cols],
+                'ci_low': r.conf_int().loc[cols, 'lower'],
+                'ci_high':r.conf_int().loc[cols, 'upper'],
+            }).round(4)
 
+        def iv_diag(name, m, full=False):
+            r = m.iv
+            print(f'\n=== {name} (N={m.nobs}, R2={m.rsquared:.3f}) ===')
+
+            endog = list(r.model.endog.cols)
+            print('\n-- Second stage --')
+            print(r.summary if full else iv_coef_table(m, endog))
+
+            print('\n-- First stage --')
+            print(r.first_stage.diagnostics)
+
+            print('\n-- Endogeneity / overid --')
+            try:
+                print('Wu-Hausman: ', r.wu_hausman())
+            except Exception as e:
+                print('Wu-Hausman unavailable:', e)
+
+            n_z, n_endog = r.model.instruments.shape[1], r.model.endog.shape[1]
+            if n_z > n_endog:
+                try:
+                    print('Sargan: ', r.sargan)
+                except Exception as e:
+                    print('Sargan unavailable:', e)
+            else:
+                print(f'Exactly identified ({n_z} instruments, {n_endog} endogenous)'
+                      ' — no overid test.')
+
+        _iv_it = iter(iv_models.items())
+        
+        def niv():
+            name, m = next(_iv_it)
+            iv_diag(name, m)
+            
+        niv()
         
         # ----------- #
         # Print Table #
