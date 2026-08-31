@@ -1342,6 +1342,16 @@ class Processor:
         # ------------ #
         # Instruments  #
         # ------------ #
+        def add_iv_lags(df, cols, lags=(1,), step=5):
+            out = df.copy()
+            for L in lags:
+                lagged = df[['BLS_Industry', 'period'] + list(cols)].copy()
+                lagged['period'] = lagged['period'] + step * L
+                sfx    = '_lag' if L == 1 else f'_lag{L}'
+                lagged = lagged.rename(columns={c: f'{c}{sfx}' for c in cols})
+                out = out.merge(lagged, on=['BLS_Industry', 'period'], how='left')
+            return out
+        
         IV_panel_df = pd.merge(govt_shocks_df,
                                 RD_shocks_df,
                                 on=['period', 'BLS_Industry'],
@@ -1384,6 +1394,9 @@ class Processor:
         for iv in iv_var:
             IV_net_df[f'net_{iv}'] = IV_net_df[f'up_{iv}'] + IV_net_df[f'down_{iv}']
         
+        iv_net_cols = [f'{d}_{v}' for v in iv_var for d in ('up', 'down', 'net')]
+        IV_net_df   = add_iv_lags(IV_net_df,   iv_net_cols,                 lags=(1,))
+        IV_panel_df = add_iv_lags(IV_panel_df, list(iv_shock_cols.values()), lags=(1,))
         
         # ----- #
         # Merge #
@@ -1508,6 +1521,12 @@ class Processor:
         reg_em_iv = gpf.winsorize(reg_em.dropna(subset=iv_all),  iv_all)
         reg_cnt_iv = gpf.winsorize(reg_cnt.dropna(subset=iv_all), iv_all)
         reg_cit_iv = gpf.winsorize(reg_cit.dropna(subset=iv_all), iv_all)
+        
+        iv_lag_all = [f'{c}_lag' for c in iv_net_cols]
+
+        reg_em_iv_lag  = gpf.winsorize(reg_em.dropna(subset=iv_lag_all),  iv_lag_all)
+        reg_cnt_iv_lag = gpf.winsorize(reg_cnt.dropna(subset=iv_lag_all), iv_lag_all)
+        reg_cit_iv_lag = gpf.winsorize(reg_cit.dropna(subset=iv_lag_all), iv_lag_all)
         
         reg_em_full = gpf.winsorize(
             reg_df_full.dropna(subset=['dlog_CO2e_inten']),
@@ -1680,17 +1699,17 @@ class Processor:
                           ['total_pat_RD_shock_clean'], time_fe=True, ind_fe=True,
                           endog_cols=['net_pat_count'], iv_cols=['net_rd_pat'])
         
-        m_em_pat_gov_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
-                          ['total_pat_govt_shock_clean'], time_fe=True, ind_fe=True,
-                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat'])
+        m_em_pat_gov_iv_l = fit(reg_em_iv_lag, 'dlog_CO2e_inten',
+                          ['total_pat_govt_shock_clean_lag'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat_lag'])
         
         m_em_cit_rd_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
                           ['total_cite_RD_shock_clean'], time_fe=True, ind_fe=True,
                           endog_cols=['net_pat_cite'], iv_cols=['net_rd_cite'])
         
-        m_em_cit_gov_iv = fit(reg_em_iv, 'dlog_CO2e_inten',
-                          ['total_cite_govt_shock_clean'], time_fe=True, ind_fe=True,
-                          endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite'])
+        m_em_cit_gov_iv_l = fit(reg_em_iv_lag, 'dlog_CO2e_inten',
+                         ['total_cite_govt_shock_clean_lag'], time_fe=True, ind_fe=True,
+                         endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite_lag'])
     
         
         # Net current counts
@@ -1698,9 +1717,9 @@ class Processor:
                           ['total_pat_RD_shock_clean'], time_fe=True, ind_fe=True,
                           endog_cols=['net_pat_count'], iv_cols=['net_rd_pat'])
         
-        m_cnt_pc_gov_iv = fit(reg_cnt_iv, 'clean_pat_share',
-                          ['total_pat_govt_shock_clean'], time_fe=True, ind_fe=True,
-                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat'])
+        m_cnt_pc_gov_iv_l = fit(reg_cnt_iv_lag, 'clean_pat_share',
+                          ['total_pat_govt_shock_clean_lag'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_count'], iv_cols=['net_gov_pat_lag'])
         
         
         # Net current cites
@@ -1708,16 +1727,16 @@ class Processor:
                           ['total_cite_RD_shock_clean'], time_fe=True, ind_fe=True,
                           endog_cols=['net_pat_cite'], iv_cols=['net_rd_cite'])
         
-        m_cit_cc_gov_iv = fit(reg_cit_iv, 'clean_cite_share',
-                          ['total_cite_govt_shock_clean'], time_fe=True, ind_fe=True,
-                          endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite'])
+        m_cit_cc_gov_iv_l = fit(reg_cit_iv_lag, 'clean_cite_share',
+                          ['total_cite_govt_shock_clean_lag'], time_fe=True, ind_fe=True,
+                          endog_cols=['net_pat_cite'], iv_cols=['net_gov_cite_lag'])
         
         
         
         iv_models = {
-            'em_pat_rd': m_em_pat_rd_iv, 'em_pat_gov': m_em_pat_gov_iv, 'em_cit_rd': m_em_cit_rd_iv, 'em_cit_gov': m_em_cit_gov_iv,
-            'cnt_pc_rd': m_cnt_pc_rd_iv, 'cnt_pc_gov': m_cnt_pc_gov_iv,
-            'cit_cc_rd': m_cit_cc_rd_iv, 'cit_cc_gov': m_cit_cc_gov_iv,
+            'em_pat_rd': m_em_pat_rd_iv, 'em_pat_gov': m_em_pat_gov_iv_l, 'em_cit_rd': m_em_cit_rd_iv, 'em_cit_gov': m_em_cit_gov_iv_l,
+            'cnt_pc_rd': m_cnt_pc_rd_iv, 'cnt_pc_gov': m_cnt_pc_gov_iv_l,
+            'cit_cc_rd': m_cit_cc_rd_iv, 'cit_cc_gov': m_cit_cc_gov_iv_l,
         }
         
         def iv_coef_table(m, cols=None):
