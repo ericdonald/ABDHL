@@ -516,7 +516,7 @@ class Processor:
             
             pat_ind_df['split_weight'] = 1 / pat_ind_df.groupby('patent_id')['BLS_Industry'].transform('count')
             
-            pat_CPC_df = pat_df.merge(pat_ind_df,
+            pat_CPC_df = pat_CPC_df.merge(pat_ind_df[['patent_id', 'BLS_Industry', 'split_weight']].drop_duplicates(),
                                 on='patent_id',
                                 how='left')
             
@@ -608,6 +608,7 @@ class Processor:
 
             gov_cpc_df['gov_pat_count'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['pat_weight'].transform('sum')
             gov_cpc_df['gov_pat_cites'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['cite_weight'].transform('sum')
+            gov_cpc_df = gov_cpc_df[['year', 'cpc_subclass', 'gov_pat_count', 'gov_pat_cites']].drop_duplicates()
                 
             panel_idx = pd.MultiIndex.from_product(
                 [sorted(cpc4_df['cpc_subclass'].unique()), list(range(A_start, Year_end + 1))],
