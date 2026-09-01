@@ -128,7 +128,7 @@ class Processor:
         if API == 1:
             EPA_url = "https://pasteur.epa.gov/uploads/10.23719/1531141/GHGs_by_Detailed_Sector_US_2012-2022.xlsx"
             EPA_df = pd.read_excel(EPA_url, sheet_name="Main")
-            EPA_df['Year'] = EPA_df['year']
+            EPA_df['year'] = EPA_df['Year']
             EPA_df.to_pickle(f'{self.Directory}/Raw Data/EPA.pkl')
         else:
             EPA_df = pd.read_pickle(f'{self.Directory}/Raw Data/EPA.pkl')
@@ -379,7 +379,7 @@ class Processor:
                                         )
             
             PV_inventor_location_df.to_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
-            del PV_location_df, PV_location_df
+            del PV_inventors_df, PV_location_df
             
                 
             # ---------------------- #
@@ -605,7 +605,7 @@ class Processor:
                 
             panel_idx = pd.MultiIndex.from_product(
                 [sorted(cpc4_df['cpc_subclass'].unique()), list(range(A_start, Year_end + 1))],
-                names=['cpc_subclass', 'period'])
+                names=['cpc_subclass', 'year'])
             gov_cpc_df = (gov_cpc_df.set_index(['cpc_subclass', 'year'])
                                     .reindex(panel_idx)
                                     .fillna(0.0)
@@ -649,18 +649,18 @@ class Processor:
                                     )
         
         govt_shocks_df['weighted_pat_shock'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
-        govt_shocks_df['total_pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
+        govt_shocks_df['total_pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_pat_shock'].transform('sum')
         
         govt_shocks_df['weighted_pat_shock_clean'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count'] * govt_shocks_df['clean']
-        govt_shocks_df['total_pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
+        govt_shocks_df['total_pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_pat_shock_clean'].transform('sum')
         
         govt_shocks_df['weighted_cite_shock'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
-        govt_shocks_df['total_cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
+        govt_shocks_df['total_cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_cite_shock'].transform('sum')
         
         govt_shocks_df['weighted_cite_shock_clean'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites'] * govt_shocks_df['clean']
-        govt_shocks_df['total_cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
+        govt_shocks_df['total_cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_cite_shock_clean'].transform('sum')
         
-        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period', 'total_pat_govt_shock', 
+        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'year', 'total_pat_govt_shock', 
                                          'total_pat_govt_shock_clean', 'total_cite_govt_shock', 'total_cite_govt_shock_clean']].drop_duplicates()
         govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
         
