@@ -370,7 +370,7 @@ class Processor:
                 
             else:
                 PV_inventors_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
-                PV_location_df = pd.read_pickle(f'{self.Directory}/Raw Data/Inventor_Locations.pkl')
+                PV_location_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Locations.pkl')
             
             PV_inventor_location_df = pd.merge(PV_inventors_df,
                                        PV_location_df[['location_id', 'disambig_state', 'state_fips']],
@@ -502,7 +502,7 @@ class Processor:
             pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
             pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
             
-            pat_df = pat_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'split_weight', 'norm_cites']].drop_duplicates()
+            pat_df = pat_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
             pat_df['split_weight'] = 1 / pat_df.groupby('patent_id')['BLS_Industry'].transform('count')
             
             pat_CPC_df = pd.merge(pat_df,
