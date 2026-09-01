@@ -77,8 +77,8 @@ class Processor:
                 Raw Data/Patent_Locations.pkl
                 Clean Data/Inventor_Locations.pkl
                 Clean Data/state_rd_price.pkl
-                Clean Data/Pat_Firms.pkl
                 Clean Data/Pat_CPC.pkl
+                Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
                 Clean Data/Ind_Pat_Shares_Pre.pkl
@@ -444,6 +444,16 @@ class Processor:
                 how='inner'
             )
             
+            pat_CPC_df = pd.merge(pat_df,
+                                    cpc4_df,
+                                    on='patent_id',
+                                    how='inner'
+                                    )
+            pat_CPC_df = pat_CPC_df[~((pat_CPC_df['clean'] == 0)
+                                        & (pat_CPC_df['clean_full'] == 1)
+                                        & (pat_CPC_df['cpc_subclass'] == 'Y02T'))]
+            pat_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
+            
             del CPC_df, PV_applications_df, relevant_df, citations_df
             
             
@@ -488,38 +498,33 @@ class Processor:
             # --------------------------- #
             # Allocate Patents to Sectors #
             # --------------------------- #
-            pat_df = pat_df.merge(pat_firm_crosswalk_df,
+            pat_firms_df = pat_df.merge(pat_firm_crosswalk_df,
                                 on='patent_id',
                                 how='inner')
-            pat_df = pat_df.merge(compustat_df,
+            pat_firms_df = pat_firms_df.merge(compustat_df,
                                 on='gvkey',
                                 how='inner')
-            pat_df = pat_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']].drop_duplicates(),
+            pat_firms_df = pat_firms_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']].drop_duplicates(),
                                 on='naics2022_6',
                                 how='inner')
             
-            pat_firms_df = pat_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
+            pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
+            pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
+            
             pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
             pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
             
-            pat_df = pat_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
-            pat_df['split_weight'] = 1 / pat_df.groupby('patent_id')['BLS_Industry'].transform('count')
+            pat_ind_df['split_weight'] = 1 / pat_ind_df.groupby('patent_id')['BLS_Industry'].transform('count')
             
-            pat_CPC_df = pd.merge(pat_df,
-                                    cpc4_df,
-                                    on='patent_id',
-                                    how='inner'
-                                    )
-            pat_CPC_df = pat_CPC_df[~((pat_CPC_df['clean'] == 0)
-                                        & (pat_CPC_df['clean_full'] == 1)
-                                        & (pat_CPC_df['cpc_subclass'] == 'Y02T'))]
-            pat_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
+            pat_CPC_df = pat_df.merge(pat_ind_df,
+                                on='patent_id',
+                                how='left')
             
             
             # ------------------------- #
             # Clean Patenting by Sector #
             # ------------------------- #
-            annual_df = pat_df.copy()
+            annual_df = pat_ind_df.copy()
             annual_df['clean_w']      = annual_df['split_weight'] * annual_df['clean']
             annual_df['clean_full_w'] = annual_df['split_weight'] * annual_df['clean_full']
             annual_df['cite_w']       = annual_df['split_weight'] * annual_df['norm_cites']
@@ -560,8 +565,9 @@ class Processor:
             # -------------------- #
             # CPC Shares by Sector #
             # -------------------- #
-            ind_pat_shares_pre_df = pat_CPC_df[(pat_CPC_df['year'] >= BLS_year_start-10) & (pat_CPC_df['year'] < BLS_year_start) 
-                                                   & (pat_CPC_df['clean'] == 1)]
+            ind_pat_shares_pre_df = pat_CPC_df.dropna(subset=['BLS_Industry'])
+            ind_pat_shares_pre_df = ind_pat_shares_pre_df[(ind_pat_shares_pre_df['year'] >= BLS_year_start-10) & (ind_pat_shares_pre_df['year'] < BLS_year_start) 
+                                                              & (ind_pat_shares_pre_df['clean'] == 1)]
             
             ind_pat_shares_pre_df['pat_weight'] = ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
             ind_pat_shares_pre_df['cite_weight'] = ind_pat_shares_pre_df['pat_weight'] * ind_pat_shares_pre_df['norm_cites']
