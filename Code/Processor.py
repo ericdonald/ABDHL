@@ -564,7 +564,7 @@ class Processor:
                            .fillna(0.0)
                            .reset_index())
  
-        ind_pat_df      = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
+        ind_pat_df = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
  
         ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         ind_pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
@@ -574,31 +574,41 @@ class Processor:
         # CPC Shares by Sector #
         # -------------------- #
         ind_pat_shares_pre_df = pat_CPC_df.dropna(subset=['BLS_Industry'])
-        ind_pat_shares_pre_df = ind_pat_shares_pre_df[(ind_pat_shares_pre_df['year'] >= BLS_year_start-5-10) & (ind_pat_shares_pre_df['year'] < BLS_year_start-5) 
-                                                          & (ind_pat_shares_pre_df['clean'] == 1)]
+        ind_pat_shares_pre_df = ind_pat_shares_pre_df[(ind_pat_shares_pre_df['year'] >= BLS_year_start-5-10) & (ind_pat_shares_pre_df['year'] < BLS_year_start-5)]
         
         ind_pat_shares_pre_df['pat_weight'] = ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
         ind_pat_shares_pre_df['cite_weight'] = ind_pat_shares_pre_df['pat_weight'] * ind_pat_shares_pre_df['norm_cites']
+        
+        ind_pat_shares_pre_df['pat_weight_clean'] = ind_pat_shares_pre_df['clean'] * ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
+        ind_pat_shares_pre_df['cite_weight_clean'] = ind_pat_shares_pre_df['pat_weight_clean'] * ind_pat_shares_pre_df['norm_cites']
+        
         
         ind_pat_shares_pre_df['cpc_pat_count'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['pat_weight'].transform('sum')
         ind_pat_shares_pre_df['pat_count'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['pat_weight'].transform('sum')
         ind_pat_shares_pre_df['cpc_pat_share'] = ind_pat_shares_pre_df['cpc_pat_count'] / ind_pat_shares_pre_df['pat_count']
         
+        ind_pat_shares_pre_df['cpc_pat_count_clean'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['pat_weight_clean'].transform('sum')
+        ind_pat_shares_pre_df['pat_count_clean'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['pat_weight_clean'].transform('sum')
+        ind_pat_shares_pre_df['cpc_pat_share_clean'] = ind_pat_shares_pre_df['cpc_pat_count_clean'] / ind_pat_shares_pre_df['pat_count_clean']
+    
+        
         ind_pat_shares_pre_df['cpc_pat_cites'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['cite_weight'].transform('sum')
         ind_pat_shares_pre_df['pat_cites'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['cite_weight'].transform('sum')
         ind_pat_shares_pre_df['cpc_cite_share'] = ind_pat_shares_pre_df['cpc_pat_cites'] / ind_pat_shares_pre_df['pat_cites']
         
-        ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+        ind_pat_shares_pre_df['cpc_pat_cites_clean'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['cite_weight_clean'].transform('sum')
+        ind_pat_shares_pre_df['pat_cites_clean'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['cite_weight_clean'].transform('sum')
+        ind_pat_shares_pre_df['cpc_cite_share_clean'] = ind_pat_shares_pre_df['cpc_pat_cites_clean'] / ind_pat_shares_pre_df['pat_cites_clean']
+        
+        
+        ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_pat_share_clean', 'cpc_cite_share', 'cpc_cite_share_clean']].drop_duplicates()
         panel_idx = pd.MultiIndex.from_product(
             [sorted(cpc4_df['cpc_subclass'].unique()), sorted(ind_pat_shares_pre_df['BLS_Industry'].unique())],
             names=['cpc_subclass', 'BLS_Industry'])
         ind_pat_shares_pre_df = (ind_pat_shares_pre_df.set_index(['cpc_subclass', 'BLS_Industry'])
                                 .reindex(panel_idx)
                                 .fillna(0.0)
-                                .reset_index()
-                      [['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']]
-                      .sort_values(['BLS_Industry', 'cpc_subclass'])
-                      .reset_index(drop=True))
+                                .reset_index())
         
         ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
         
@@ -614,20 +624,28 @@ class Processor:
         gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('count')
         gov_cpc_df['cite_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['norm_cites']
         
+        gov_cpc_df['pat_weight_clean'] = gov_cpc_df['clean'] / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('count')
+        gov_cpc_df['cite_weight_clean'] = gov_cpc_df['pat_weight_clean'] * gov_cpc_df['norm_cites']
+        
         gov_frames = []
         for start in range(BLS_year_start - 5, Year_end, 5):
             end    = start + 5
             bin_df = gov_cpc_df[(gov_cpc_df['year'] > start) & (gov_cpc_df['year'] <= end)]
+            
             bin_df['gov_pat_count'] = bin_df.groupby(['cpc_subclass'])['pat_weight'].transform('sum')
             bin_df['gov_pat_cites'] = bin_df.groupby(['cpc_subclass'])['cite_weight'].transform('sum')
-            gov_frames.append(bin_df[['cpc_subclass', 'gov_pat_count', 'gov_pat_cites']].drop_duplicates().assign(period=end))
+            
+            bin_df['gov_pat_count_clean'] = bin_df.groupby(['cpc_subclass'])['pat_weight_clean'].transform('sum')
+            bin_df['gov_pat_cites_clean'] = bin_df.groupby(['cpc_subclass'])['cite_weight_clean'].transform('sum')
+            
+            gov_frames.append(bin_df[['cpc_subclass', 'gov_pat_count', 'gov_pat_count_clean', 'gov_pat_cites', 'gov_pat_cites_clean']].drop_duplicates().assign(period=end))
  
-        gov_cpc_df      = pd.concat(gov_frames, ignore_index=True)
+        gov_cpc_df = pd.concat(gov_frames, ignore_index=True)
         
         panel_idx = pd.MultiIndex.from_product(
                [sorted(cpc4_df['cpc_subclass'].unique()), list(bin_ends)],
-               names=['BLS_Industry', 'period'])
-        gov_cpc_df = (gov_cpc_df.set_index(['BLS_Industry', 'period'])
+               names=['cpc_subclass', 'period'])
+        gov_cpc_df = (gov_cpc_df.set_index(['cpc_subclass', 'period'])
                               .reindex(panel_idx)
                               .fillna(0.0)
                               .reset_index())
@@ -650,7 +668,7 @@ class Processor:
 
         # ----------------------------------------------------------------
         
-        Gov_CPC_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
+        gov_cpc_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
         ind_pat_shares_pre_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
         state_rdp_df = pd.read_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
         tech_loc_df = pd.read_pickle(f'{self.Directory}/Clean Data/Tech_Loc_Shares.pkl')
@@ -660,26 +678,28 @@ class Processor:
         # ------------------------ #
         # Government Patent Shocks #
         # ------------------------ #
-        govt_shocks_df = pd.merge(Gov_CPC_df,
+        govt_shocks_df = pd.merge(gov_cpc_df,
                                     ind_pat_shares_pre_df,
                                     on='cpc_subclass',
                                     how='inner'
                                     )
         
-        govt_shocks_df['weighted_pat_shock'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
-        govt_shocks_df['total_pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_pat_shock'].transform('sum')
+        govt_shocks_df['weighted_pat_govt'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
+        govt_shocks_df['pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_govt'].transform('sum')
         
-        govt_shocks_df['weighted_pat_shock_clean'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count'] * govt_shocks_df['clean']
-        govt_shocks_df['total_pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_pat_shock_clean'].transform('sum')
+        govt_shocks_df['weighted_pat_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_count']
+        govt_shocks_df['pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_govt_clean'].transform('sum')
         
-        govt_shocks_df['weighted_cite_shock'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
-        govt_shocks_df['total_cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_cite_shock'].transform('sum')
+        govt_shocks_df['weighted_cite_govt'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
+        govt_shocks_df['cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_govt'].transform('sum')
         
-        govt_shocks_df['weighted_cite_shock_clean'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites'] * govt_shocks_df['clean']
-        govt_shocks_df['total_cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'year'])['weighted_cite_shock_clean'].transform('sum')
+        govt_shocks_df['weighted_cite_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_cites']
+        govt_shocks_df['cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_govt_clean'].transform('sum')
         
-        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'year', 'total_pat_govt_shock', 
-                                         'total_pat_govt_shock_clean', 'total_cite_govt_shock', 'total_cite_govt_shock_clean']].drop_duplicates()
+        govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period',
+                                         'pat_govt_shock', 'pat_govt_shock_clean', 
+                                         'cite_govt_shock', 'cite_govt_shock_clean']].drop_duplicates()
+        
         govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
         
         
