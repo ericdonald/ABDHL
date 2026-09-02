@@ -76,7 +76,6 @@ class Processor:
                 Raw Data/Patent_Locations.pkl
                 Clean Data/Inventor_Locations.pkl
                 Clean Data/state_rd_price.pkl
-                Clean Data/Pat_CPC.pkl
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
@@ -451,7 +450,6 @@ class Processor:
         pat_CPC_df = pat_CPC_df[~((pat_CPC_df['clean'] == 0)
                                     & (pat_CPC_df['clean_full'] == 1)
                                     & (pat_CPC_df['cpc_subclass'] == 'Y02T'))]
-        pat_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
         
         del CPC_df, PV_applications_df, relevant_df, citations_df
         
@@ -670,10 +668,11 @@ class Processor:
         
         gov_cpc_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
         ind_pat_shares_pre_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
-        state_rdp_df = pd.read_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
-        tech_loc_df = pd.read_pickle(f'{self.Directory}/Clean Data/Tech_Loc_Shares.pkl')
-        pat_CPC_df = pd.read_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
         
+        state_rdp_df = pd.read_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
+        PV_inventor_location_df = pd.read_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
+        pat_firms_df = pd.read_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
+                
         
         # ------------------------ #
         # Government Patent Shocks #
@@ -687,13 +686,13 @@ class Processor:
         govt_shocks_df['weighted_pat_govt'] = govt_shocks_df['cpc_pat_share'] * govt_shocks_df['gov_pat_count']
         govt_shocks_df['pat_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_govt'].transform('sum')
         
-        govt_shocks_df['weighted_pat_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_count']
+        govt_shocks_df['weighted_pat_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_count_clean']
         govt_shocks_df['pat_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_govt_clean'].transform('sum')
         
         govt_shocks_df['weighted_cite_govt'] = govt_shocks_df['cpc_cite_share'] * govt_shocks_df['gov_pat_cites']
         govt_shocks_df['cite_govt_shock'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_govt'].transform('sum')
         
-        govt_shocks_df['weighted_cite_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_cites']
+        govt_shocks_df['weighted_cite_govt_clean'] = govt_shocks_df['cpc_pat_share_clean'] * govt_shocks_df['gov_pat_cites_clean']
         govt_shocks_df['cite_govt_shock_clean'] = govt_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_govt_clean'].transform('sum')
         
         govt_shocks_df = govt_shocks_df[['BLS_Industry', 'period',
@@ -707,132 +706,161 @@ class Processor:
         # State R&D Price Exposure #
         # ------------------------ #
         
-        # # ---------------------------- #
-        # # Location Distribution by CPC #
-        # # ---------------------------- #
-        # tech_loc_df = pat_CPC_df.copy()
-        
-        # tech_loc_df = pd.merge(tech_loc_df,
-        #                         PV_inventors_df,
-        #                         on='patent_id',
-        #                         how='inner'
-        #                         )
-        
-        # tech_loc_df['pat_authors'] = tech_loc_df.groupby(['patent_id', 'cpc_subclass'])['inventor_id'].transform('count')
-        # tech_loc_df['pat_weight'] = tech_loc_df['split_weight'] / tech_loc_df['pat_authors']
-        # tech_loc_df['cite_weight'] = tech_loc_df['norm_cites'] * tech_loc_df['split_weight'] / tech_loc_df['pat_authors']
-        
-        # tech_loc_frames = []
-        # for start in range(BLS_year_start-5, Year_end, 5):
-        #     end = start + 5
-        #     bin_df = tech_loc_df[(tech_loc_df['year'] > start) & (tech_loc_df['year'] <= end)]
-            
-        #     bin_df['cpc_fips_pat_count'] = bin_df.groupby(['cpc_subclass', 'state_fips'])['pat_weight'].transform('sum')
-        #     bin_df['cpc_pat_count'] = bin_df.groupby('cpc_subclass')['pat_weight'].transform('sum')
-        #     bin_df['cpc_fips_pat_share'] = bin_df['cpc_fips_pat_count'] / bin_df['cpc_pat_count']
-            
-        #     bin_df['cpc_fips_pat_cites'] = bin_df.groupby(['cpc_subclass', 'state_fips'])['cite_weight'].transform('sum')
-        #     bin_df['cpc_pat_cites'] = bin_df.groupby('cpc_subclass')['cite_weight'].transform('sum')
-        #     bin_df['cpc_fips_cite_share'] = bin_df['cpc_fips_pat_cites'] / bin_df['cpc_pat_cites']
-            
-        #     tech_loc_frames.append(bin_df[['cpc_subclass', 'state_fips', 'cpc_fips_pat_share', 'cpc_fips_cite_share']]
-        #                             .drop_duplicates()
-        #                             .assign(period=end))
-            
-        # tech_loc_df = pd.concat(tech_loc_frames, ignore_index=True)
-        # tech_loc_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Loc_Shares.pkl')
-        
-        state_rdp_df['period'] = state_rdp_df['year'] + (-(state_rdp_df['year'] - BLS_year_start)) % 5
-        
-        tech_rdp_df = pd.merge(state_rdp_df,
-                                tech_loc_df,
-                                on=['period', 'state_fips'],
+        # Firm Inventor Distribution
+        firm_inv_df = pd.merge(pat_firms_df,
+                                PV_inventor_location_df,
+                                on='patent_id',
                                 how='inner'
                                 )
         
-        tech_rdp_df['weighted_rho_cites'] = tech_rdp_df['cpc_fips_cite_share'] * tech_rdp_df['rho_h']
-        tech_rdp_df['weighted_rho_pats'] = tech_rdp_df['cpc_fips_pat_share'] * tech_rdp_df['rho_h']
+        firm_inv_df = firm_inv_df.drop_duplicates(
+            subset=['patent_id', 'gvkey', 'inventor_id', 'state_fips'])
+        firm_inv_df = firm_inv_df.dropna(subset=['inventor_id', 'state_fips'])
         
-        tech_rdp_df['E_rho_cites'] = tech_rdp_df.groupby(['cpc_subclass', 'year'])['weighted_rho_cites'].transform('sum')
-        tech_rdp_df['E_rho_pats'] = tech_rdp_df.groupby(['cpc_subclass', 'year'])['weighted_rho_pats'].transform('sum')
+        firm_inv_df['pat_authors'] = firm_inv_df.groupby(['patent_id', 'gvkey'])['inventor_id'].transform('count')
         
-        tech_rdp_df = tech_rdp_df[['cpc_subclass', 'year', 'E_rho_cites', 'E_rho_pats']].drop_duplicates()
+        firm_inv_df['pat_weight'] = firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
+        firm_inv_df['pat_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
         
-        CPC_panel_df = pat_CPC_df[(pat_CPC_df['year'] > BLS_year_start-5) & (pat_CPC_df['year'] <= Year_end)]
-        CPC_panel_df['pat_weight'] = CPC_panel_df['split_weight'] / CPC_panel_df.groupby('patent_id')['cpc_subclass'].transform('count')
-        CPC_panel_df['cite_weight'] = CPC_panel_df['pat_weight'] * CPC_panel_df['norm_cites']
+        firm_inv_df['cite_weight'] = firm_inv_df['norm_cites'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
+        firm_inv_df['cite_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['norm_cites'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
         
-        CPC_panel_df['year_pat_count'] = CPC_panel_df.groupby(['cpc_subclass', 'year'])['pat_weight'].transform('sum')
-        CPC_panel_df['year_pat_cites'] = CPC_panel_df.groupby(['cpc_subclass', 'year'])['cite_weight'].transform('sum')
+        w_cols = ['pat_weight', 'pat_weight_clean', 'cite_weight', 'cite_weight_clean']
         
-        CPC_panel_df = CPC_panel_df[['cpc_subclass', 'year', 'year_pat_count', 'year_pat_cites']]
+        fsy = (firm_inv_df.groupby(['gvkey', 'state_fips', 'year'], as_index=False)[w_cols]
+                          .sum())
+ 
+        window = []
+        for d in range(-4, 6):
+            tmp = fsy.copy()
+            tmp['year'] = tmp['year'] + d
+            window.append(tmp)
+ 
+        fsy_win = (pd.concat(window, ignore_index=True)
+                     .groupby(['gvkey', 'state_fips', 'year'], as_index=False)
+                     .agg(**{c: (c, 'sum') for c in w_cols}))
+ 
+        fsy_win = fsy_win[(fsy_win['year'] >= BLS_year_start) & (fsy_win['year'] <= Year_end)]
+ 
+        firm_tot = (fsy_win.groupby(['gvkey', 'year'], as_index=False)[w_cols]
+                           .sum()
+                           .rename(columns={c: f'{c}_tot' for c in w_cols}))
+        fsy_win = fsy_win.merge(firm_tot, on=['gvkey', 'year'], how='left')
         
-        CPC_panel_df = pd.merge(CPC_panel_df,
-                                tech_rdp_df,
-                                on=['cpc_subclass', 'year'],
+        share_map = {
+            'firm_fips_pat_share':        ('pat_weight',        'pat_weight_tot'),
+            'firm_fips_pat_share_clean':  ('pat_weight_clean',  'pat_weight_clean_tot'),
+            'firm_fips_cite_share':       ('cite_weight',       'cite_weight_tot'),
+            'firm_fips_cite_share_clean': ('cite_weight_clean', 'cite_weight_clean_tot'),
+        }
+        for out_col, (num, den) in share_map.items():
+            fsy_win[out_col] = fsy_win[num] / fsy_win[den].where(fsy_win[den] > 0)
+ 
+        firm_inv_df = fsy_win[['gvkey', 'state_fips', 'year']
+                              + list(share_map)].copy()
+
+        
+        # Firm Exposure
+        firm_inv_df = pd.merge(state_rdp_df,
+                                firm_inv_df,
+                                on=['year', 'state_fips'],
                                 how='inner'
                                 )
-        CPC_panel_df['ln_year_pat_cites'] = np.log(CPC_panel_df['year_pat_cites'])
-        CPC_panel_df['ln_year_pat_count'] = np.log(CPC_panel_df['year_pat_count'])
-        CPC_panel_df['ln_E_rho_cites'] = np.log(CPC_panel_df['E_rho_cites'])
-        CPC_panel_df['ln_E_rho_pats'] = np.log(CPC_panel_df['E_rho_pats'])
         
-        CPC_panel_df['entity'] = CPC_panel_df['cpc_subclass'].astype(str)
-        CPC_panel_df = CPC_panel_df.set_index(['entity','year']).sort_index()
+        firm_inv_df['weighted_rho_pats'] = firm_inv_df['firm_fips_pat_share'] * firm_inv_df['rho_h']
+        firm_inv_df['weighted_rho_pats_clean'] = firm_inv_df['firm_fips_pat_share_clean'] * firm_inv_df['rho_h']
+        
+        firm_inv_df['weighted_rho_cites'] = firm_inv_df['firm_fips_cite_share'] * firm_inv_df['rho_h']
+        firm_inv_df['weighted_rho_cites_clean'] = firm_inv_df['firm_fips_cite_share_clean'] * firm_inv_df['rho_h']
+        
+        firm_inv_df['E_rho_pats'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_pats'].transform('sum')
+        firm_inv_df['E_rho_pats_clean'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_pats_clean'].transform('sum')
+        
+        firm_inv_df['E_rho_cites'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites'].transform('sum')
+        firm_inv_df['E_rho_cites_clean'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites_clean'].transform('sum')
+        
+        firm_inv_df = firm_inv_df[['gvkey', 'year', 'E_rho_pats', 'E_rho_pats_clean', 'E_rho_cites', 'E_rho_cites_clean']].drop_duplicates()
+
+        
+        # Firm Patenting
+        firm_pats_df = pat_firms_df.copy()
+        
+        firm_pats_df['pat_weight'] = firm_pats_df['split_weight']
+        firm_pats_df['pat_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['split_weight']
+        
+        firm_pats_df['cite_weight'] = firm_pats_df['norm_cites'] * firm_pats_df['split_weight']
+        firm_pats_df['cite_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['norm_cites'] * firm_pats_df['split_weight'] 
+        
+        firm_pats_df['pat_count'] = firm_pats_df.groupby(['gvkey', 'year'])['pat_weight'].transform('sum')
+        firm_pats_df['pat_count_clean'] = firm_pats_df.groupby(['gvkey', 'year'])['pat_weight_clean'].transform('sum')
+        
+        firm_pats_df['pat_cites'] = firm_pats_df.groupby(['gvkey', 'year'])['cite_weight'].transform('sum')
+        firm_pats_df['pat_cites_clean'] = firm_pats_df.groupby(['gvkey', 'year'])['cite_weight_clean'].transform('sum')
+
+        
+        firm_pats_df = firm_pats_df[['gvkey', 'BLS_Industry', 'year', 'pat_count', 'pat_count_clean', 'pat_cites', 'pat_cites_clean']].drop_duplicates()
+        
+        
+        # Zero Stage Regressions
+        firm_pat_panel_df = pd.merge(firm_pats_df,
+                                firm_inv_df,
+                                on=['gvkey', 'year'],
+                                how='inner'
+                                )
+                
+        firm_pat_panel_df['ln_pat_count'] = np.log(firm_pat_panel_df['pat_count'].where(firm_pat_panel_df['pat_count'] > 0))
+        firm_pat_panel_df['ln_pat_count_clean'] = np.log(firm_pat_panel_df['pat_count_clean'].where(firm_pat_panel_df['pat_count_clean'] > 0))
+        
+        firm_pat_panel_df['ln_pat_cites'] = np.log(firm_pat_panel_df['pat_cites'].where(firm_pat_panel_df['pat_cites'] > 0))
+        firm_pat_panel_df['ln_pat_cites_clean'] = np.log(firm_pat_panel_df['pat_cites_clean'].where(firm_pat_panel_df['pat_cites_clean'] > 0))
+        
+        firm_pat_panel_df['ln_E_rho_pats'] = np.log(firm_pat_panel_df['E_rho_pats'].where(firm_pat_panel_df['E_rho_pats'] > 0))
+        firm_pat_panel_df['ln_E_rho_pats_clean'] = np.log(firm_pat_panel_df['E_rho_pats_clean'].where(firm_pat_panel_df['E_rho_pats_clean'] > 0))
+        
+        firm_pat_panel_df['ln_E_rho_cites'] = np.log(firm_pat_panel_df['E_rho_cites'].where(firm_pat_panel_df['E_rho_cites'] > 0))
+        firm_pat_panel_df['ln_E_rho_cites_clean'] = np.log(firm_pat_panel_df['E_rho_cites_clean'].where(firm_pat_panel_df['E_rho_cites_clean'] > 0))
+        
+        firm_pat_panel_df['entity'] = firm_pat_panel_df['gvkey'].astype(str)
+        firm_pat_panel_df = firm_pat_panel_df.set_index(['entity','year']).sort_index()
     
-        m_cites = gpf.run_reg(CPC_panel_df['ln_year_pat_cites'], CPC_panel_df['ln_E_rho_cites'], 'panel')
-        m_pats = gpf.run_reg(CPC_panel_df['ln_year_pat_count'], CPC_panel_df['ln_E_rho_pats'], 'panel')
+        m_pats = gpf.run_reg(firm_pat_panel_df['ln_pat_count'], firm_pat_panel_df['ln_E_rho_pats'], 'panel')
+        m_pats_clean = gpf.run_reg(firm_pat_panel_df['ln_pat_count_clean'], firm_pat_panel_df['ln_E_rho_pats_clean'], 'panel')
+
+        m_cites = gpf.run_reg(firm_pat_panel_df['ln_pat_cites'], firm_pat_panel_df['ln_E_rho_cites'], 'panel')
+        m_cites_clean = gpf.run_reg(firm_pat_panel_df['ln_pat_cites_clean'], firm_pat_panel_df['ln_E_rho_cites_clean'], 'panel')
         
-        CPC_panel_df['year_pat_cites_hat'] = np.exp(m_cites.predict().fitted_values)
-        CPC_panel_df['year_pat_count_hat'] = np.exp(m_pats.predict().fitted_values)
-        CPC_panel_df = CPC_panel_df.reset_index()
+        firm_pat_panel_df['pat_count_hat'] = np.exp(m_pats.predict().fitted_values)
+        firm_pat_panel_df['pat_count_clean_hat'] = np.exp(m_pats_clean.predict().fitted_values)
+        
+        firm_pat_panel_df['pat_cites_hat'] = np.exp(m_cites.predict().fitted_values)
+        firm_pat_panel_df['pat_cites_clean_hat'] = np.exp(m_cites_clean.predict().fitted_values)
+        firm_pat_panel_df = firm_pat_panel_df.reset_index()
+        
         
         RD_frames = []
-        bin_ends = list(range(BLS_year_start, Year_end+1, 5))
         for start in range(BLS_year_start-5, Year_end, 5):
             end = start + 5
-            bin_df = CPC_panel_df[(CPC_panel_df['year'] > start) & (CPC_panel_df['year'] <= end)]
-            RD_frames.append(bin_df.groupby('cpc_subclass', as_index=False)
-                                    .agg(pat_count_hat=('year_pat_count_hat', 'sum'),
-                                         pat_cites_hat=('year_pat_cites_hat', 'sum'))
+            bin_df = firm_pat_panel_df[(firm_pat_panel_df['year'] > start) & (firm_pat_panel_df['year'] <= end)]
+            RD_frames.append(bin_df.groupby('BLS_Industry', as_index=False)
+                                    .agg(pat_count_hat=('pat_count_hat', 'sum'),
+                                         pat_count_clean_hat=('pat_count_clean_hat', 'sum'),
+                                         pat_cites_hat=('pat_cites_hat', 'sum'),
+                                         pat_cites_clean_hat=('pat_cites_clean_hat', 'sum'))
                                     .assign(period=end))
             
-        CPC_panel_df = pd.concat(RD_frames, ignore_index=True)
+        RD_shocks_df = pd.concat(RD_frames, ignore_index=True)
         
         panel_idx = pd.MultiIndex.from_product(
-            [sorted(pat_CPC_df['cpc_subclass'].unique()), list(bin_ends)],
-            names=['cpc_subclass', 'period'])
-        CPC_panel_df = (CPC_panel_df.set_index(['cpc_subclass', 'period'])
+            [sorted(firm_pat_panel_df['BLS_Industry'].unique()), list(range(BLS_year_start, Year_end-5+1, 5))],
+            names=['BLS_Industry', 'period'])
+        RD_shocks_df = (RD_shocks_df.set_index(['BLS_Industry', 'period'])
                                 .reindex(panel_idx)
                                 .fillna(0.0)
                                 .reset_index()
-                      [['period', 'cpc_subclass', 'pat_count_hat', 'pat_cites_hat']]
-                      .sort_values(['cpc_subclass', 'period'])
+                      [['period', 'BLS_Industry', 'pat_count_hat', 'pat_count_clean_hat', 'pat_cites_hat', 'pat_cites_clean_hat']]
+                      .sort_values(['BLS_Industry', 'period'])
                       .reset_index(drop=True))
         
-        codes = set(self.CPC_classes)
-        CPC_panel_df['clean'] = (CPC_panel_df["cpc_subclass"].isin(codes)).astype(np.int8)
-        
-        RD_shocks_df = pd.merge(CPC_panel_df,
-                                    ind_pat_shares_pre_df,
-                                    on='cpc_subclass',
-                                    how='inner'
-                                    )
-        
-        RD_shocks_df['weighted_pat_shock'] = RD_shocks_df['cpc_pat_share'] * RD_shocks_df['pat_count_hat']
-        RD_shocks_df['total_pat_RD_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock'].transform('sum')
-        
-        RD_shocks_df['weighted_pat_shock_clean'] = RD_shocks_df['cpc_pat_share'] * RD_shocks_df['pat_count_hat'] * RD_shocks_df['clean']
-        RD_shocks_df['total_pat_RD_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_pat_shock_clean'].transform('sum')
-        
-        RD_shocks_df['weighted_cite_shock'] = RD_shocks_df['cpc_cite_share'] * RD_shocks_df['pat_cites_hat']
-        RD_shocks_df['total_cite_RD_shock'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock'].transform('sum')
-        
-        RD_shocks_df['weighted_cite_shock_clean'] = RD_shocks_df['cpc_cite_share'] * RD_shocks_df['pat_cites_hat'] * RD_shocks_df['clean']
-        RD_shocks_df['total_cite_RD_shock_clean'] = RD_shocks_df.groupby(['BLS_Industry', 'period'])['weighted_cite_shock_clean'].transform('sum')
-        
-        RD_shocks_df = RD_shocks_df[['BLS_Industry', 'period', 'total_pat_RD_shock', 
-                                         'total_pat_RD_shock_clean', 'total_cite_RD_shock', 'total_cite_RD_shock_clean']].drop_duplicates()
         RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
    
     
