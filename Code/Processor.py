@@ -1187,45 +1187,77 @@ class Processor:
                               .reindex(index=bin_ends, columns=manu_idx_all)
                               .sort_index())
  
-        G_pat  = wide('clean_pat_count') / wide('pat_count').where(wide('pat_count')  > 0)
-        G_cite = wide('clean_pat_cites') / wide('pat_cites').where(wide('pat_cites') > 0)
+        pat_wide  = wide('pat_count')
+        cite_wide = wide('pat_cites')
+ 
+        G_pat  = wide('clean_pat_count') / pat_wide.where(pat_wide  > 0)
+        G_cite = wide('clean_pat_cites') / cite_wide.where(cite_wide > 0)
         
-        keep = (np.isfinite(G_pat.to_numpy(dtype=float))
-                & np.isfinite(G_cite.to_numpy(dtype=float))).all(axis=0)
+        keep     = np.isin(manu_idx_all, Ind_Pat_df['BLS_Industry'].unique())
         keep_idx = manu_idx_all[keep]
-        print(f'Network: {int(keep.sum())} of {M} manufacturing sectors retained '
-              f'({M - int(keep.sum())} dropped for a missing adoption rate in some bin).')
+        print(f'Network universe: {int(keep.sum())} of {M} manufacturing sectors '
+              f'(sectors appearing in the patent panel).')
         print(f'Bins: {bin_ends}')
         
         
         # ---------------------- #
         # Network Greenification #
         # ---------------------- #
+        def partner_avg(S_sub, v, obs):
+           
+           v0   = np.where(obs, v, 0.0)
+           o    = obs.astype(float)
+
+           w_up = S_sub   @ o                       
+           w_dn = S_sub.T @ o                      
+           t_up = S_sub.sum(axis=1)               
+           t_dn = S_sub.sum(axis=0)
+
+           up   = np.where(w_up > 0, (S_sub   @ v0) / np.where(w_up > 0, w_up, 1.0), np.nan)
+           down = np.where(w_dn > 0, (S_sub.T @ v0) / np.where(w_dn > 0, w_dn, 1.0), np.nan)
+
+           cov_up = np.where(t_up > 0, w_up / np.where(t_up > 0, t_up, 1.0), np.nan)
+           cov_dn = np.where(t_dn > 0, w_dn / np.where(t_dn > 0, t_dn, 1.0), np.nan)
+           return up, down, cov_up, cov_dn
+
         frames = []
         for t in bin_ends:
-            v_pat  = G_pat.loc[t].to_numpy(dtype=float)[keep]
-            v_cite = G_cite.loc[t].to_numpy(dtype=float)[keep]
+            v_pat    = G_pat.loc[t].to_numpy(dtype=float)[keep]
+            v_cite   = G_cite.loc[t].to_numpy(dtype=float)[keep]
+            obs_pat  = np.isfinite(v_pat)
+            obs_cite = np.isfinite(v_cite)
  
             S          = Σ_LI[t][np.ix_(keep, keep)]
             s_up, s_dn = S.sum(axis=1), S.sum(axis=0)
-            su         = np.where(s_up == 0, np.nan, s_up)
-            sd         = np.where(s_dn == 0, np.nan, s_dn)
+ 
+            up_p, dn_p, cov_up_p, cov_dn_p = partner_avg(S, v_pat,  obs_pat)
+            up_c, dn_c, cov_up_c, cov_dn_c = partner_avg(S, v_cite, obs_cite)
  
             frames.append(pd.DataFrame({
                 'BLS_Industry': keep_idx,
                 'period':       t,
-                'up_G_pat':     (S   @ v_pat)  / su,
-                'down_G_pat':   (S.T @ v_pat)  / sd,
-                'up_G_cite':    (S   @ v_cite) / su,
-                'down_G_cite':  (S.T @ v_cite) / sd,
+                'up_G_pat':     up_p,
+                'down_G_pat':   dn_p,
+                'up_G_cite':    up_c,
+                'down_G_cite':  dn_c,
                 's_up':         s_up,
                 's_dn':         s_dn,
+                'cov_up':       cov_up_p,
+                'cov_dn':       cov_dn_p,
+                'n_obs_up':     int(obs_pat.sum()),
             }))
  
         net_df = pd.concat(frames, ignore_index=True)
         net_df['net_G_pat']  = net_df['up_G_pat']  + net_df['down_G_pat']
         net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
-        
+ 
+        cov_tab = (net_df.groupby('period')
+                         .agg(partners_observed=('n_obs_up', 'first'),
+                              mean_weight_covered=('cov_up', 'mean'),
+                              min_weight_covered=('cov_up', 'min')))
+        print('\nPartner coverage by bin (share of upstream network weight observed):')
+        print(cov_tab.round(3).to_string())
+       
         
         # ------------------ #
         # Own Greenification #
@@ -1299,31 +1331,36 @@ class Processor:
         # ---------- #
         # Estimation #
         # ---------- #
-        exposure = ['s_up', 's_dn']
  
         # Green patent counts, lagged partner adoption
         m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
-                             ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'] + exposure)
+                             ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'])
         m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
-                             ['net_G_pat_lag', 'G_pat_lag'] + exposure)
+                             ['net_G_pat_lag', 'G_pat_lag'])
  
         # Green citations, lagged partner adoption
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
-                             ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'] + exposure)
+                             ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
         m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
-                             ['net_G_cite_lag', 'G_cite_lag'] + exposure)
+                             ['net_G_cite_lag', 'G_cite_lag'])
  
         # Contemporaneous partner adoption (simultaneous; reported for comparison only)
         m_pat_ud_c  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
-                               ['up_G_pat', 'down_G_pat'] + exposure)
+                               ['up_G_pat', 'down_G_pat'])
         m_pat_net_c = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
-                               ['net_G_pat'] + exposure)
+                               ['net_G_pat'])
+        
+        m_cit_ud_c  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+                               ['up_G_cite', 'down_G_cite'])
+        m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+                               ['net_G_cite'])
  
  
         Models = {
             'pat_ud':     m_pat_ud,     'pat_net':     m_pat_net,
             'cit_ud':     m_cit_ud,     'cit_net':     m_cit_net,
             'pat_ud_con': m_pat_ud_c,   'pat_net_con': m_pat_net_c,
+            'cit_ud_con': m_cit_ud_c,   'cit_net_con': m_cit_net_c,
         }
  
         def show(models=None):
