@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
-from linearmodels.panel import PanelOLS
 import io, sys
 from datetime import datetime
 from pathlib import Path
@@ -1034,7 +1033,7 @@ class Processor:
             w_raw  = r['w'] ** dim
             scale  = 1000 / w_raw.max()
 
-            stars_idx = lambda m, k: gpf.getgpf.get_stars(m.pvalues[k])
+            stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
 
             mask_p1 = df['period'].to_numpy() == Year_mid
             mask_p2 = df['period'].to_numpy() == Year_end
@@ -1129,7 +1128,7 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, A_start, BLS_year_start, Year_end, dim=3):
+    def Up_Down_Green(self, BLS_year_start, Year_end, dim=3):
         """""
         Strategic Complementarity for Greenification
         
@@ -1351,6 +1350,12 @@ class Processor:
             'net_G_cite_lag': 'Network Green Citation Share, lagged',
             'G_pat_lag':      'Own Green Patent Share, lagged',
             'G_cite_lag':     'Own Green Citation Share, lagged',
+            'up_G_pat':       'Upstream Green Patent Share',
+            'down_G_pat':     'Downstream Green Patent Share',
+            'net_G_pat':      'Network Green Patent Share',
+            'up_G_cite':      'Upstream Green Citation Share',
+            'down_G_cite':    'Downstream Green Citation Share',
+            'net_G_cite':     'Network Green Citation Share',
             's_up':           'Upstream Network Exposure',
             's_dn':           'Downstream Network Exposure',
         }
@@ -1507,7 +1512,7 @@ class GLMWrap:
             'se':    self.bse[rows].round(4),
             'z':     self.tvalues[rows].round(2),
             'p':     self.pvalues[rows].round(4),
-            'sig':   [self.gpf.get_stars(p) for p in self.pvalues[rows]],
+            'sig':   [gpf.get_stars(p) for p in self.pvalues[rows]],
             'ci_lo': ci.iloc[:, 0][rows].round(4),
             'ci_hi': ci.iloc[:, 1][rows].round(4),
         })
