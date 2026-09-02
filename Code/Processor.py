@@ -1149,7 +1149,6 @@ class Processor:
         # ----------------------------------------------------------------
         
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
-        Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         
         # Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
@@ -1160,18 +1159,16 @@ class Processor:
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         M            = len(manu_idx_all)
-        years        = list(range(A_start, Year_end + 1))
-        reg_years  = [y for y in years
-                      if y >= BLS_year_start]
+        bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, 5) if y in IO_mats]
 
        
         # ---------------- #
         # Leontief Inverse #
         # ---------------- #
         manu_slice = slice(self.manu_cols[0] - 1, self.manu_cols[1])
-        
+ 
         def build_sigma_LI(IO_matrix):
-            A_io = IO_matrix.copy().astype(float)
+            A_io       = IO_matrix.copy().astype(float)
             row_totals = A_io.sum(axis=1)
             A_manu     = A_io[manu_slice, manu_slice].copy()
             denom      = row_totals[manu_slice, np.newaxis]
@@ -1180,117 +1177,274 @@ class Processor:
             np.fill_diagonal(S, 0.0)
             return S
  
-        Σ_LI = {year: build_sigma_LI(IO_mats[year]) for year in reg_years}
+        Σ_LI = {year: build_sigma_LI(IO_mats[year]) for year in bin_ends}
         
         
-        # ----------------- #
-        # Technology Stocks #
-        # ----------------- #
-        P_pat = (Ind_Pat_df.pivot(index='year', columns='BLS_Industry', values='clean_pat_count')
-                            .reindex(index=years, columns=manu_idx_all)
-                            .fillna(0.0)
-                            .sort_index())
-        P_cite = (Ind_Pat_df.pivot(index='year', columns='BLS_Industry', values='clean_pat_cites')
-                            .reindex(index=years, columns=manu_idx_all)
-                            .fillna(0.0)
-                            .sort_index())
+        # -------------------- #
+        # Greenification Rates #
+        # -------------------- #
+        def wide(col):
+            return (Ind_Pat_df.pivot(index='period', columns='BLS_Industry', values=col)
+                              .reindex(index=bin_ends, columns=manu_idx_all)
+                              .sort_index())
  
-        A_pat = pd.DataFrame(np.nan, index=P_pat.index, columns=P_pat.columns, dtype=float)
-        A_pat.loc[years[0]] = (1 + g) * P_pat.loc[years[0]] / (δ + g)
+        G_pat  = wide('clean_pat_count') / wide('pat_count').where(wide('pat_count')  > 0)
+        G_cite = wide('clean_pat_cites') / wide('pat_cites').where(wide('pat_cites') > 0)
         
-        A_cite = pd.DataFrame(np.nan, index=P_cite.index, columns=P_cite.columns, dtype=float)
-        A_cite.loc[years[0]] = (1 + g) * P_cite.loc[years[0]] / (δ + g)
+        keep = (np.isfinite(G_pat.to_numpy(dtype=float))
+                & np.isfinite(G_cite.to_numpy(dtype=float))).all(axis=0)
+        keep_idx = manu_idx_all[keep]
+        print(f'Network: {int(keep.sum())} of {M} manufacturing sectors retained '
+              f'({M - int(keep.sum())} dropped for a missing adoption rate in some bin).')
+        print(f'Bins: {bin_ends}')
         
-        for t_prev, t in zip(years[:-1], years[1:]):
-            A_pat.loc[t] = P_pat.loc[t] + (1 - δ) * A_pat.loc[t_prev]
-            A_cite.loc[t] = P_cite.loc[t] + (1 - δ) * A_cite.loc[t_prev]
         
-        
-        # ------------------ #
-        # Network Regressors #
-        # ------------------ #
-        keep      = (A_pat.loc[reg_years] > 0).all(axis=0).to_numpy()
-        keep_idx  = manu_idx_all[keep]
-        
-        lnA_pat = np.log(A_pat.where(A_pat > 0))
-        lnA_cite = np.log(A_cite.where(A_cite > 0))
-
+        # ---------------------- #
+        # Network Greenification #
+        # ---------------------- #
         frames = []
-        for y in reg_years:
-            v_pat = lnA_pat.loc[y].to_numpy(dtype=float)[keep]
-            v_cite = lnA_cite.loc[y].to_numpy(dtype=float)[keep]
-            
-            S = Σ_LI[y][np.ix_(keep, keep)]
-            
+        for t in bin_ends:
+            v_pat  = G_pat.loc[t].to_numpy(dtype=float)[keep]
+            v_cite = G_cite.loc[t].to_numpy(dtype=float)[keep]
+ 
+            S          = Σ_LI[t][np.ix_(keep, keep)]
+            s_up, s_dn = S.sum(axis=1), S.sum(axis=0)
+            su         = np.where(s_up == 0, np.nan, s_up)
+            sd         = np.where(s_dn == 0, np.nan, s_dn)
+ 
             frames.append(pd.DataFrame({
                 'BLS_Industry': keep_idx,
-                'year':         y,
-                'up_lnA_pat':       S   @ v_pat,
-                'down_lnA_pat':     S.T @ v_pat,
-                'up_lnA_cite':       S   @ v_cite,
-                'down_lnA_cite':     S.T @ v_cite,
+                'period':       t,
+                'up_G_pat':     (S   @ v_pat)  / su,
+                'down_G_pat':   (S.T @ v_pat)  / sd,
+                'up_G_cite':    (S   @ v_cite) / su,
+                'down_G_cite':  (S.T @ v_cite) / sd,
+                's_up':         s_up,
+                's_dn':         s_dn,
             }))
  
         net_df = pd.concat(frames, ignore_index=True)
-        net_df['net_lnA_pat'] = net_df['up_lnA_pat'] + net_df['down_lnA_pat']
-        net_df['net_lnA_cite'] = net_df['up_lnA_cite'] + net_df['down_lnA_cite']
+        net_df['net_G_pat']  = net_df['up_G_pat']  + net_df['down_G_pat']
+        net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
         
-       
-        # ----- #
-        # Merge #
-        # ----- #
-        reg_df = (net_df
-                  .merge(Ind_Pat_df[['BLS_Industry', 'year',
-                                     'clean_pat_count', 'pat_count', 
-                                     'clean_pat_cites', 'pat_cites']],
-                         on=['BLS_Industry', 'year'], how='left')
-                  .merge(Ind_CO2_df[['BLS_Industry', 'year', 
-                                     'CO2e_Industry', 'CO2e_intensity_Industry']],
-                         on=['BLS_Industry', 'year'], how='left'))
         
-        reg_df = reg_df.sort_values(['BLS_Industry', 'year']).reset_index(drop=True)
+        # ------------------ #
+        # Own Greenification #
+        # ------------------ #
+        own_df = Ind_Pat_df[['BLS_Industry', 'period', 'clean_pat_count', 'pat_count',
+                             'clean_pat_cites', 'pat_cites']].copy()
+        own_df['G_pat']  = (own_df['clean_pat_count']
+                            / own_df['pat_count'].where(own_df['pat_count'] > 0))
+        own_df['G_cite'] = (own_df['clean_pat_cites']
+                            / own_df['pat_cites'].where(own_df['pat_cites'] > 0))
+ 
+        reg_df = net_df.merge(own_df, on=['BLS_Industry', 'period'], how='left')
         
-        reg_df['lhs_clean_pat_count'] = np.asinh(reg_df['clean_pat_count'])
-        reg_df['lhs_clean_pat_cites'] = np.asinh(reg_df['clean_pat_cites'])
-        reg_df['dln_CO2e_inten'] = - (np.log(reg_df['CO2e_intensity_Industry']) - np.log(reg_df.groupby('BLS_Industry')['CO2e_intensity_Industry'].shift(1)))
-
+        
+        # ---- #
+        # Lags #
+        # ---- #
+        lag_cols = ['up_G_pat', 'down_G_pat', 'net_G_pat',
+                    'up_G_cite', 'down_G_cite', 'net_G_cite',
+                    'G_pat', 'G_cite']
+        lagged = reg_df[['BLS_Industry', 'period'] + lag_cols].copy()
+        lagged['period'] = lagged['period'] + 5
+        lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
+        reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
+ 
+        print(f'Panel: {len(reg_df)} sector-bins; '
+              f'{reg_df["net_G_pat_lag"].notna().sum()} with a lagged network term.')
+        
 
         # ----------------------------------------------------------------
         
         # Run regressions.
         
         # ----------------------------------------------------------------
-        def fit(df, Y_col, x_cols, w_col=None, entity_fe=True, time_fe=True):
-            need = [Y_col] + list(x_cols) + ([w_col] if w_col else [])
+        def fit_ppml(df, y_col, offset_col, x_cols, entity_fe=True, time_fe=True):
+            "Poisson pseudo-ML with log(offset), sector and period dummies, clustered SE"
+            need = [y_col, offset_col] + list(x_cols)
             d    = df.dropna(subset=need).copy()
-            d['entity'] = d['BLS_Industry'].astype(int)
-            d = d.set_index(['entity', 'year']).sort_index()
+            d    = d[d[offset_col] > 0]
  
-            wts = None if w_col is None else d[w_col] ** (1 / dim)
-            res = PanelOLS(d[Y_col], d[list(x_cols)],
-                           entity_effects=entity_fe, time_effects=time_fe,
-                           weights=wts).fit(cov_type='clustered', cluster_entity=True)
-            return LMWrap(res)
+            pos     = d.groupby('BLS_Industry')[y_col].transform('sum') > 0
+            n_drop  = int(d['BLS_Industry'][~pos].nunique())
+            d       = d[pos]
+            if n_drop:
+                print(f'  fit_ppml({y_col}): dropped {n_drop} sector(s) with no '
+                      f'positive outcome in any period.')
+ 
+            parts = [pd.Series(1.0, index=d.index, name='const'),
+                     d[list(x_cols)].astype(float)]
+            if entity_fe:
+                parts.append(pd.get_dummies(d['BLS_Industry'], prefix='sec',
+                                            drop_first=True, dtype=float))
+            if time_fe:
+                parts.append(pd.get_dummies(d['period'], prefix='per',
+                                            drop_first=True, dtype=float))
+            X = pd.concat(parts, axis=1)
+            X.columns = [str(c) for c in X.columns]
+ 
+            res = sm.GLM(d[y_col].astype(float), X,
+                         family=sm.families.Poisson(),
+                         offset=np.log(d[offset_col].astype(float).to_numpy())
+                         ).fit(cov_type='cluster',
+                               cov_kwds={'groups': d['BLS_Industry'].to_numpy()},
+                               maxiter=200)
+ 
+            fe = (['sector'] if entity_fe else []) + (['period'] if time_fe else [])
+            return GLMWrap(res, y_col, list(x_cols), offset_col, fe,
+                           n_sectors=d['BLS_Industry'].nunique())
 
 
         # ---------- #
         # Estimation #
         # ---------- #
-        
-        # Emissions Intensity
-        m_em_pat_ud     = fit(reg_df, 'dln_CO2e_inten',   ['up_lnA_pat', 'down_lnA_pat'])
-        m_em_pat_net    = fit(reg_df, 'dln_CO2e_inten',   ['net_lnA_pat'])
-        
-        m_em_cit_ud     = fit(reg_df, 'dln_CO2e_inten',   ['up_lnA_cite', 'down_lnA_cite'])
-        m_em_cit_net    = fit(reg_df, 'dln_CO2e_inten',   ['net_lnA_cite'])
-        
-        # Patent Counts
-        m_pat_ud     = fit(reg_df, 'lhs_clean_pat_count',   ['up_lnA_pat', 'down_lnA_pat'])
-        m_pat_net    = fit(reg_df, 'lhs_clean_pat_count',   ['net_lnA_pat'])
-        
-        # Patent Cites
-        m_cit_ud     = fit(reg_df, 'lhs_clean_pat_cites',   ['up_lnA_cite', 'down_lnA_cite'])
-        m_cit_net    = fit(reg_df, 'lhs_clean_pat_cites',   ['net_lnA_cite'])
+        exposure = ['s_up', 's_dn']
+ 
+        # Green patent counts, lagged partner adoption
+        m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+                             ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'] + exposure)
+        m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+                             ['net_G_pat_lag', 'G_pat_lag'] + exposure)
+ 
+        # Green citations, lagged partner adoption
+        m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+                             ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'] + exposure)
+        m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+                             ['net_G_cite_lag', 'G_cite_lag'] + exposure)
+ 
+        # Contemporaneous partner adoption (simultaneous; reported for comparison only)
+        m_pat_ud_c  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+                               ['up_G_pat', 'down_G_pat'] + exposure)
+        m_pat_net_c = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+                               ['net_G_pat'] + exposure)
+ 
+ 
+        Models = {
+            'pat_ud':     m_pat_ud,     'pat_net':     m_pat_net,
+            'cit_ud':     m_cit_ud,     'cit_net':     m_cit_net,
+            'pat_ud_con': m_pat_ud_c,   'pat_net_con': m_pat_net_c,
+        }
+ 
+        def show(models=None):
+            for name, m in (models or Models).items():
+                print(f'\n{"="*78}\n{name}\n{"="*78}\n{m!r}')
+ 
+        show()
+ 
+        self.reg_df = reg_df
+        self.Models = Models
+ 
+ 
+        # ------------------- #
+        # Summary Stats Table #
+        # ------------------- #
+        labels = {
+            'G_pat':          'Green Patent Share',
+            'G_cite':         'Green Citation Share',
+            'up_G_pat_lag':   'Upstream Green Patent Share, lagged',
+            'down_G_pat_lag': 'Downstream Green Patent Share, lagged',
+            'net_G_pat_lag':  'Network Green Patent Share, lagged',
+            'up_G_cite_lag':  'Upstream Green Citation Share, lagged',
+            'down_G_cite_lag':'Downstream Green Citation Share, lagged',
+            'net_G_cite_lag': 'Network Green Citation Share, lagged',
+            'G_pat_lag':      'Own Green Patent Share, lagged',
+            'G_cite_lag':     'Own Green Citation Share, lagged',
+            's_up':           'Upstream Network Exposure',
+            's_dn':           'Downstream Network Exposure',
+        }
+ 
+        stat_vars = ['G_pat', 'G_cite',
+                     'up_G_pat_lag', 'down_G_pat_lag', 'net_G_pat_lag',
+                     'up_G_cite_lag', 'down_G_cite_lag', 'net_G_cite_lag',
+                     'G_pat_lag', 'G_cite_lag', 's_up', 's_dn']
+ 
+        rows = []
+        for col in stat_vars:
+            s = reg_df[col].dropna()
+            rows.append((labels[col], s.mean(), s.std(),
+                         s.quantile(0.75) - s.quantile(0.25), len(s)))
+ 
+        print(f'\n{"="*78}\nSUMMARY STATISTICS\n{"="*78}')
+        print(pd.DataFrame(rows, columns=['Variable', 'Mean', 'SD', 'IQR', 'Obs'])
+              .round(4).to_string(index=False))
+ 
+        body = ''
+        for label, mean, sd, iqr, n in rows:
+            body += f'{label} & {mean:.3f} & {sd:.3f} & {iqr:.3f} & {n} \\\\\n'
+        with open(f'{self.Directory}/Results/Tables/Summary_Stats.tex', 'w') as f:
+            f.write(body)
+ 
+ 
+        # ----------- #
+        # Print Table #
+        # ----------- #
+        def build_table(models, variables, row_skip='[3pt]'):
+            body = ''
+            for varname in variables:
+                coefs, ses = [], []
+                for m in models:
+                    if m is None:
+                        coefs.append(''); ses.append('')
+                    else:
+                        c, s = gpf.fmt_coef(m, varname)
+                        coefs.append(c); ses.append(s)
+                body += f'{labels[varname]} & {" & ".join(coefs)} \\\\\n'
+                body += f'& {" & ".join(ses)} \\\\{row_skip}\n'
+            r2_vals, n_vals = [], []
+            for m in models:
+                if m is None:
+                    r2_vals.append(''); n_vals.append('')
+                else:
+                    r2_vals.append('' if not np.isfinite(m.rsquared) else f'{m.rsquared:.3f}')
+                    n_vals.append(str(int(m.nobs)))
+            body += '\\midrule'
+            body += f'Pseudo $R^2$ & {" & ".join(r2_vals)} \\\\\n'
+            body += f'Obs & {" & ".join(n_vals)} \\'
+            return body
+ 
+        def print_table(title, models, variables, heads, dec=3):
+            print(f'\n{"="*78}\n{title}\n{"="*78}')
+            live = [i for i, m in enumerate(models) if m is not None]
+            mods, cols = [models[i] for i in live], [heads[i] for i in live]
+            out = []
+            for var in variables:
+                cs, ss = [], []
+                for m in mods:
+                    if var in m.params.index:
+                        cs.append(f'{m.params[var]:.{dec}f}'
+                                  f'{gpf.get_stars(m.pvalues[var])}')
+                        ss.append(f'({m.bse[var]:.{dec}f})')
+                    else:
+                        cs.append(''); ss.append('')
+                out.append([labels[var]] + cs)
+                out.append([''] + ss)
+            out.append(['Pseudo R2'] + ['' if not np.isfinite(m.rsquared)
+                                        else f'{m.rsquared:.3f}' for m in mods])
+            out.append(['Obs'] + [str(int(m.nobs)) for m in mods])
+            print(pd.DataFrame(out, columns=[''] + cols).to_string(index=False))
+ 
+        net_models = [m_pat_net, m_cit_net, None, m_pat_net_c]
+        net_heads  = ['Patents', 'Citations', '', 'Patents (contemp.)',]
+        net_vars   = ['net_G_pat_lag', 'net_G_cite_lag', 'net_G_pat',
+                      'G_pat_lag', 'G_cite_lag', 's_up', 's_dn']
+ 
+        ud_models  = [m_pat_ud, m_cit_ud, None, m_pat_ud_c]
+        ud_heads   = net_heads
+        ud_vars    = ['up_G_pat_lag', 'down_G_pat_lag',
+                      'up_G_cite_lag', 'down_G_cite_lag',
+                      'up_G_pat', 'down_G_pat',
+                      'G_pat_lag', 'G_cite_lag', 's_up', 's_dn']
+ 
+        print_table('NETWORK EFFECTS (net)',          net_models, net_vars, net_heads)
+        print_table('NETWORK EFFECTS (up/down)',      ud_models,  ud_vars,  ud_heads)
+ 
+        for tag, models, variables in [('Net',    net_models, net_vars),
+                                       ('UpDown', ud_models,  ud_vars)]:
+            with open(f'{self.Directory}/Results/Tables/Network_PPML_{tag}.tex', 'w') as f:
+                f.write(build_table(models, variables))
+    
     
     
     def write_package_versions(self, packages):
@@ -1323,20 +1477,6 @@ class Processor:
             for pkg, ver in rows:
                 f.write(f"| {pkg} | {ver} |\n")
 
-
-
-class LMWrap:
-    def __init__(self, res):
-        self.lm       = res
-        self.params   = res.params
-        self.bse      = res.std_errors
-        self.tvalues  = res.tstats
-        self.pvalues  = res.pvalues
-        self.rsquared = res.rsquared
-        self.nobs     = int(res.nobs)
-    def conf_int(self, alpha=0.05):
-        return self.lm.conf_int(1 - alpha)
-    
     
 class GLMWrap:
     def __init__(self, res, y=None, x=None, offset=None, fe=None, n_sectors=None):
