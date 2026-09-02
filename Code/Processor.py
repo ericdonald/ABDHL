@@ -59,7 +59,7 @@ class Processor:
 
         
         
-    def Cleaner(self, A_start, BLS_year_start, Year_start, Year_end, API, pats):
+    def Cleaner(self, BLS_year_start, Year_start, Year_end, API):
         """""
         Clean Data
         
@@ -297,331 +297,340 @@ class Processor:
         # Build industry patenting cross-section.
 
         # ----------------------------------------------------------------
-        if pats==1:
-            # -------------------- #
-            # PatentsView Assignee #
-            # -------------------- #
-            if API == 1:
-                PV_assignee_df = gpf.Extract_PatentsView('g_assignee_disambiguated', self.USPTO_API)
+
+        # -------------------- #
+        # PatentsView Assignee #
+        # -------------------- #
+        if API == 1:
+            PV_assignee_df = gpf.Extract_PatentsView('g_assignee_disambiguated', self.USPTO_API)
+            
+            PV_assignee_df.to_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+        else:
+            PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+            
+        Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]
+        del PV_assignee_df
+
+    
+        # --------------------- #
+        # PatentsView CPC Codes #
+        # --------------------- #
+        if API == 1:
+            CPC_df = gpf.Extract_PatentsView('g_cpc_current', self.USPTO_API)
+            
+            CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
+            CPC_df.to_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
+        else:
+            CPC_df = pd.read_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
+            
+        cpc4_df = CPC_df[['patent_id', 'cpc_subclass']].drop_duplicates()
+
                 
-                PV_assignee_df.to_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
-            else:
-                PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
-                
-            Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]
-            del PV_assignee_df
+        
+        # ------------------------ #
+        # PatentsView Applications #
+        # ------------------------ #
+        if API == 1:
+            PV_applications_df = gpf.Extract_PatentsView('g_application', self.USPTO_API)
+            
+            PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
+            PV_applications_df = PV_applications_df.dropna(subset=["year"])
+            PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
+            PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
+            PV_applications_df.to_pickle(f'{self.Directory}/Raw Data/applications.pkl')
+        else:
+            PV_applications_df = pd.read_pickle(f'{self.Directory}/Raw Data/applications.pkl')
+            
+            
+         # --------------------- #
+         # PatentsView Citations #
+         # --------------------- #
+        if API == 1:
+             citations_df = gpf.Extract_PatentsView('g_us_patent_citation', self.USPTO_API)
+             
+             citations_df['patent_id'] = citations_df['patent_id'].astype(str)
+             citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
+             citations_df.to_pickle(f'{self.Directory}/Raw Data/citations.pkl')
+        else:
+             citations_df = pd.read_pickle(f'{self.Directory}/Raw Data/citations.pkl')
+             
+             
+        # --------------------- #
+        # Patentsview Inventors #
+        # --------------------- #
+        if API == 1:
+            PV_inventors_df = gpf.Extract_PatentsView('g_inventor_disambiguated', self.USPTO_API)
+            PV_inventors_df['patent_id'] = PV_inventors_df['patent_id'].astype(str)
+            
+            PV_location_df = gpf.Extract_PatentsView('g_location_disambiguated', self.USPTO_API)
+            PV_location_df = PV_location_df.dropna(subset=['state_fips'])
+            
+            PV_inventors_df.to_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
+            PV_location_df.to_pickle(f'{self.Directory}/Raw Data/Patent_Locations.pkl')
+            
+        else:
+            PV_inventors_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
+            PV_location_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Locations.pkl')
+        
+        PV_inventor_location_df = pd.merge(PV_inventors_df,
+                                   PV_location_df[['location_id', 'disambig_state', 'state_fips']],
+                                   on='location_id',
+                                   how='inner'
+                                    )
+        
+        PV_inventor_location_df.to_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
+        del PV_inventors_df, PV_location_df
+        
+            
+        # ---------------------- #
+        # State-Level R&D Prices #
+        # ---------------------- #
+        state_rdp_df = pd.read_stata(f'{self.Directory}/Raw Data/RDusercost_2017.dta')
+        
+        state_rdp_df = state_rdp_df[['state', 'fips', 'year', 'rho_h']]
+        state_rdp_df = state_rdp_df.rename(columns={"fips": "state_fips"})
+        
+        state_rdp_df.to_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
+        
+        
+        # ------------------ #
+        # Technology Classes #
+        # ------------------ #
+        relevant_df = CPC_df.copy()
+        
+        relevant_df = pd.merge(relevant_df,
+                             PV_applications_df,
+                             on='patent_id',
+                             how='inner'
+                             )
+        
+        relevant_df = relevant_df[(relevant_df["year"] <= Year_end)]
+        
+        codes = set(self.CPC_classes)
+        relevant_df['clean'] = (relevant_df["cpc_subclass"].isin(codes)).astype(np.int8)
+        
+        ice_codes = set(self.ICE_classes)
+        relevant_df['ice'] = relevant_df["cpc_group"].isin(ice_codes).astype(np.int8)
+        
+        relevant_df['clean_full'] = relevant_df.groupby("patent_id")['clean'].transform("max")
+        relevant_df['clean'] = relevant_df['clean_full'] - relevant_df.groupby("patent_id")['ice'].transform("max")
+        relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full']].drop_duplicates()
+        
+        
+        # ------------------------- #
+        # Patent Citation Weighting #
+        # ------------------------- #
+        citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
+        citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
+        citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
+        
+        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
+                                            on='patent_id',
+                                            how='right')
+        citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
+                                            on='patent_id',
+                                            how='inner')
+        
+        citations_df['cites'] = citations_df['cites'].fillna(0)
+        citations_df['cites'] = citations_df['cites'] + 1
+        
+        citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
+        citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
+        
+        pat_df = pd.merge(
+            citations_df[['patent_id', 'norm_cites']].drop_duplicates(),
+            relevant_df,
+            on='patent_id',
+            how='inner'
+        )
+        
+        pat_CPC_df = pd.merge(pat_df,
+                                cpc4_df,
+                                on='patent_id',
+                                how='inner'
+                                )
+        pat_CPC_df = pat_CPC_df[~((pat_CPC_df['clean'] == 0)
+                                    & (pat_CPC_df['clean_full'] == 1)
+                                    & (pat_CPC_df['cpc_subclass'] == 'Y02T'))]
+        pat_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
+        
+        del CPC_df, PV_applications_df, relevant_df, citations_df
+        
+        
+        # ------------------------ #
+        # Patent to Firm Crosswalk #
+        # ------------------------ #
+        discern_df = pd.read_csv(f'{self.Directory}/Raw Data/discern_pat_grant_1980_2021.csv', low_memory=False)
+        KPSS_df = pd.read_csv(f'{self.Directory}/Raw Data/KPSS_match_patent_permno_2023.csv')
+        gvkey_df = pd.read_csv(f'{self.Directory}/Raw Data/permno_gvkey.csv')
+        
+        KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
+        discern_df = discern_df.rename(columns={"permno_adj": "permno"})
+        gvkey_df = gvkey_df.rename(columns={"permno_adj": "permno"})
+        
+        new_pats = KPSS_df[~KPSS_df['patent_id'].isin(discern_df['patent_id'])]
+
+        pat_firm_crosswalk_df = pd.concat([discern_df, new_pats], ignore_index=True)
+
+        pat_firm_crosswalk_df = pat_firm_crosswalk_df.merge(gvkey_df[['gvkey', 'permno']],
+                                    on='permno',
+                                    how='inner'
+                                         )
+        pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']]
+        
+        
+        # --------- #
+        # Compustat #
+        # --------- #
+        compustat_df = pd.read_csv(f'{self.Directory}/Raw Data/compustat.csv')
+        
+        compustat_df = compustat_df[(compustat_df['fic']=="USA") & (compustat_df['final']=="Y")]
+        terry_cols = ['at', 'ppent', 'emp', 'capxv', 'sale', 'xrd']
+        compustat_df = compustat_df[compustat_df[terry_cols].gt(0).all(axis=1)]
+        compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('count') > 1]
+        compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
+        
+        compustat_df = compustat_df[(compustat_df["year"] <= Year_end)]
+        compustat_df['naics2022_6'] = compustat_df['naics'] #Assume Compustat uses most up to date NAICS
+        compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
+
+
+        # --------------------------- #
+        # Allocate Patents to Sectors #
+        # --------------------------- #
+        pat_firms_df = pat_df.merge(pat_firm_crosswalk_df,
+                            on='patent_id',
+                            how='inner')
+        pat_firms_df = pat_firms_df.merge(compustat_df,
+                            on='gvkey',
+                            how='inner')
+        pat_firms_df = pat_firms_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']].drop_duplicates(),
+                            on='naics2022_6',
+                            how='inner')
+        
+        pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
+        pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
+        
+        pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
+        pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
+        
+        pat_ind_df['split_weight'] = 1 / pat_ind_df.groupby('patent_id')['BLS_Industry'].transform('count')
+        
+        pat_CPC_df = pat_CPC_df.merge(pat_ind_df[['patent_id', 'BLS_Industry', 'split_weight']].drop_duplicates(),
+                            on='patent_id',
+                            how='left')
+        
+        
+        # ------------------------- #
+        # Clean Patenting by Sector #
+        # ------------------------- #
+        annual_df = pat_ind_df.copy()
+        annual_df['clean_w']      = annual_df['split_weight'] * annual_df['clean']
+        annual_df['clean_full_w'] = annual_df['split_weight'] * annual_df['clean_full']
+        annual_df['cite_w']       = annual_df['split_weight'] * annual_df['norm_cites']
+        annual_df['clean_cite_w'] = annual_df['clean_w']      * annual_df['norm_cites']
+        annual_df['clean_full_cite_w'] = annual_df['clean_full_w'] * annual_df['norm_cites']
+         
+        agg_base = dict(clean_pat_count = ('clean_w',      'sum'),
+                        pat_count       = ('split_weight', 'sum'),
+                        clean_pat_cites = ('clean_cite_w', 'sum'),
+                        pat_cites       = ('cite_w',       'sum'))
+        agg_full = dict(clean_pat_count = ('clean_full_w',      'sum'),
+                        pat_count       = ('split_weight',      'sum'),
+                        clean_pat_cites = ('clean_full_cite_w', 'sum'),
+                        pat_cites       = ('cite_w',            'sum'))
+
+        bin_ends = list(range(BLS_year_start, Year_end + 1, 5))
+        frames, frames_full = [], []
+        for start in range(BLS_year_start - 5, Year_end, 5):
+            end    = start + 5
+            bin_df = annual_df[(annual_df['year'] > start) & (annual_df['year'] <= end)]
+            frames.append(bin_df.groupby('BLS_Industry', as_index=False)
+                                .agg(**agg_base).assign(period=end))
+            frames_full.append(bin_df.groupby('BLS_Industry', as_index=False)
+                                     .agg(**agg_full).assign(period=end))
+ 
+        ind_pat_df      = pd.concat(frames,      ignore_index=True)
+        ind_pat_df_full = pd.concat(frames_full, ignore_index=True)
+ 
+        panel_idx = pd.MultiIndex.from_product(
+            [sorted(ind_pat_df['BLS_Industry'].unique()), list(bin_ends)],
+            names=['BLS_Industry', 'period'])
+        ind_pat_df = (ind_pat_df.set_index(['BLS_Industry', 'period'])
+                           .reindex(panel_idx)
+                           .fillna(0.0)
+                           .reset_index())
+        ind_pat_df_full = (ind_pat_df_full.set_index(['BLS_Industry', 'period'])
+                           .reindex(panel_idx)
+                           .fillna(0.0)
+                           .reset_index())
+ 
+        ind_pat_df      = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
+ 
+        ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        ind_pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
 
         
-            # --------------------- #
-            # PatentsView CPC Codes #
-            # --------------------- #
-            if API == 1:
-                CPC_df = gpf.Extract_PatentsView('g_cpc_current', self.USPTO_API)
-                
-                CPC_df['patent_id'] = CPC_df['patent_id'].astype(str)
-                CPC_df.to_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
-            else:
-                CPC_df = pd.read_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
-                
-            cpc4_df = CPC_df[['patent_id', 'cpc_subclass']].drop_duplicates()
+        # -------------------- #
+        # CPC Shares by Sector #
+        # -------------------- #
+        ind_pat_shares_pre_df = pat_CPC_df.dropna(subset=['BLS_Industry'])
+        ind_pat_shares_pre_df = ind_pat_shares_pre_df[(ind_pat_shares_pre_df['year'] >= BLS_year_start-10) & (ind_pat_shares_pre_df['year'] < BLS_year_start) 
+                                                          & (ind_pat_shares_pre_df['clean'] == 1)]
+        
+        ind_pat_shares_pre_df['pat_weight'] = ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
+        ind_pat_shares_pre_df['cite_weight'] = ind_pat_shares_pre_df['pat_weight'] * ind_pat_shares_pre_df['norm_cites']
+        
+        ind_pat_shares_pre_df['cpc_pat_count'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['pat_weight'].transform('sum')
+        ind_pat_shares_pre_df['pat_count'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['pat_weight'].transform('sum')
+        ind_pat_shares_pre_df['cpc_pat_share'] = ind_pat_shares_pre_df['cpc_pat_count'] / ind_pat_shares_pre_df['pat_count']
+        
+        ind_pat_shares_pre_df['cpc_pat_cites'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['cite_weight'].transform('sum')
+        ind_pat_shares_pre_df['pat_cites'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['cite_weight'].transform('sum')
+        ind_pat_shares_pre_df['cpc_cite_share'] = ind_pat_shares_pre_df['cpc_pat_cites'] / ind_pat_shares_pre_df['pat_cites']
+        
+        ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+        panel_idx = pd.MultiIndex.from_product(
+            [sorted(cpc4_df['cpc_subclass'].unique()), sorted(ind_pat_shares_pre_df['BLS_Industry'].unique())],
+            names=['cpc_subclass', 'BLS_Industry'])
+        ind_pat_shares_pre_df = (ind_pat_shares_pre_df.set_index(['cpc_subclass', 'BLS_Industry'])
+                                .reindex(panel_idx)
+                                .fillna(0.0)
+                                .reset_index()
+                      [['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']]
+                      .sort_values(['BLS_Industry', 'cpc_subclass'])
+                      .reset_index(drop=True))
+        
+        ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
+        
+        
+        # ------------------------ #
+        # Government Patent Series #
+        # ------------------------ #
+        # gov_cpc_df = pd.merge(pat_CPC_df,
+        #                      Gov_Pats_df[['patent_id']].drop_duplicates(),
+        #                      on='patent_id',
+        #                      how='inner')
+        
+        # gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('count')
+        # gov_cpc_df['cite_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['norm_cites']
 
-                    
+        # gov_cpc_df['gov_pat_count'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['pat_weight'].transform('sum')
+        # gov_cpc_df['gov_pat_cites'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['cite_weight'].transform('sum')
+        # gov_cpc_df = gov_cpc_df[['year', 'cpc_subclass', 'gov_pat_count', 'gov_pat_cites']].drop_duplicates()
             
-            # ------------------------ #
-            # PatentsView Applications #
-            # ------------------------ #
-            if API == 1:
-                PV_applications_df = gpf.Extract_PatentsView('g_application', self.USPTO_API)
-                
-                PV_applications_df["year"] = pd.to_datetime(PV_applications_df["filing_date"], format="%Y-%m-%d", errors="coerce").dt.year
-                PV_applications_df = PV_applications_df.dropna(subset=["year"])
-                PV_applications_df = PV_applications_df[(PV_applications_df["year"] >= 1900) & (PV_applications_df["year"] <= datetime.now().year)]
-                PV_applications_df['patent_id'] = PV_applications_df['patent_id'].astype(str)
-                PV_applications_df.to_pickle(f'{self.Directory}/Raw Data/applications.pkl')
-            else:
-                PV_applications_df = pd.read_pickle(f'{self.Directory}/Raw Data/applications.pkl')
-                
-                
-             # --------------------- #
-             # PatentsView Citations #
-             # --------------------- #
-            if API == 1:
-                 citations_df = gpf.Extract_PatentsView('g_us_patent_citation', self.USPTO_API)
-                 
-                 citations_df['patent_id'] = citations_df['patent_id'].astype(str)
-                 citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
-                 citations_df.to_pickle(f'{self.Directory}/Raw Data/citations.pkl')
-            else:
-                 citations_df = pd.read_pickle(f'{self.Directory}/Raw Data/citations.pkl')
-                 
-                 
-            # --------------------- #
-            # Patentsview Inventors #
-            # --------------------- #
-            if API == 1:
-                PV_inventors_df = gpf.Extract_PatentsView('g_inventor_disambiguated', self.USPTO_API)
-                PV_inventors_df['patent_id'] = PV_inventors_df['patent_id'].astype(str)
-                
-                PV_location_df = gpf.Extract_PatentsView('g_location_disambiguated', self.USPTO_API)
-                PV_location_df = PV_location_df.dropna(subset=['state_fips'])
-                
-                PV_inventors_df.to_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
-                PV_location_df.to_pickle(f'{self.Directory}/Raw Data/Patent_Locations.pkl')
-                
-            else:
-                PV_inventors_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Inventors.pkl')
-                PV_location_df = pd.read_pickle(f'{self.Directory}/Raw Data/Patent_Locations.pkl')
-            
-            PV_inventor_location_df = pd.merge(PV_inventors_df,
-                                       PV_location_df[['location_id', 'disambig_state', 'state_fips']],
-                                       on='location_id',
-                                       how='inner'
-                                        )
-            
-            PV_inventor_location_df.to_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
-            del PV_inventors_df, PV_location_df
-            
-                
-            # ---------------------- #
-            # State-Level R&D Prices #
-            # ---------------------- #
-            state_rdp_df = pd.read_stata(f'{self.Directory}/Raw Data/RDusercost_2017.dta')
-            
-            state_rdp_df = state_rdp_df[['state', 'fips', 'year', 'rho_h']]
-            state_rdp_df = state_rdp_df.rename(columns={"fips": "state_fips"})
-            
-            state_rdp_df.to_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
-            
-            
-            # ------------------ #
-            # Technology Classes #
-            # ------------------ #
-            relevant_df = CPC_df.copy()
-            
-            relevant_df = pd.merge(relevant_df,
-                                 PV_applications_df,
-                                 on='patent_id',
-                                 how='inner'
-                                 )
-            
-            relevant_df = relevant_df[(relevant_df["year"] <= Year_end)]
-            
-            codes = set(self.CPC_classes)
-            relevant_df['clean'] = (relevant_df["cpc_subclass"].isin(codes)).astype(np.int8)
-            
-            ice_codes = set(self.ICE_classes)
-            relevant_df['ice'] = relevant_df["cpc_group"].isin(ice_codes).astype(np.int8)
-            
-            relevant_df['clean_full'] = relevant_df.groupby("patent_id")['clean'].transform("max")
-            relevant_df['clean'] = relevant_df['clean_full'] - relevant_df.groupby("patent_id")['ice'].transform("max")
-            relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full']].drop_duplicates()
-            
-            
-            # ------------------------- #
-            # Patent Citation Weighting #
-            # ------------------------- #
-            citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
-            citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
-            citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
-            
-            citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
-                                                on='patent_id',
-                                                how='right')
-            citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
-                                                on='patent_id',
-                                                how='inner')
-            
-            citations_df['cites'] = citations_df['cites'].fillna(0)
-            citations_df['cites'] = citations_df['cites'] + 1
-            
-            citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
-            citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
-            
-            pat_df = pd.merge(
-                citations_df[['patent_id', 'norm_cites']].drop_duplicates(),
-                relevant_df,
-                on='patent_id',
-                how='inner'
-            )
-            
-            pat_CPC_df = pd.merge(pat_df,
-                                    cpc4_df,
-                                    on='patent_id',
-                                    how='inner'
-                                    )
-            pat_CPC_df = pat_CPC_df[~((pat_CPC_df['clean'] == 0)
-                                        & (pat_CPC_df['clean_full'] == 1)
-                                        & (pat_CPC_df['cpc_subclass'] == 'Y02T'))]
-            pat_CPC_df.to_pickle(f'{self.Directory}/Clean Data/Pat_CPC.pkl')
-            
-            del CPC_df, PV_applications_df, relevant_df, citations_df
-            
-            
-            # ------------------------ #
-            # Patent to Firm Crosswalk #
-            # ------------------------ #
-            discern_df = pd.read_csv(f'{self.Directory}/Raw Data/discern_pat_grant_1980_2021.csv', low_memory=False)
-            KPSS_df = pd.read_csv(f'{self.Directory}/Raw Data/KPSS_match_patent_permno_2023.csv')
-            gvkey_df = pd.read_csv(f'{self.Directory}/Raw Data/permno_gvkey.csv')
-            
-            KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
-            discern_df = discern_df.rename(columns={"permno_adj": "permno"})
-            gvkey_df = gvkey_df.rename(columns={"permno_adj": "permno"})
-            
-            new_pats = KPSS_df[~KPSS_df['patent_id'].isin(discern_df['patent_id'])]
-    
-            pat_firm_crosswalk_df = pd.concat([discern_df, new_pats], ignore_index=True)
-    
-            pat_firm_crosswalk_df = pat_firm_crosswalk_df.merge(gvkey_df[['gvkey', 'permno']],
-                                        on='permno',
-                                        how='inner'
-                                             )
-            pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']]
-            
-            
-            # --------- #
-            # Compustat #
-            # --------- #
-            compustat_df = pd.read_csv(f'{self.Directory}/Raw Data/compustat.csv')
-            
-            compustat_df = compustat_df[(compustat_df['fic']=="USA") & (compustat_df['final']=="Y")]
-            terry_cols = ['at', 'ppent', 'emp', 'capxv', 'sale', 'xrd']
-            compustat_df = compustat_df[compustat_df[terry_cols].gt(0).all(axis=1)]
-            compustat_df = compustat_df[compustat_df.groupby('gvkey')['gvkey'].transform('count') > 1]
-            compustat_df.rename(columns={'fyear': 'year'}, inplace=True)
-            
-            compustat_df = compustat_df[(compustat_df["year"] <= Year_end)]
-            compustat_df['naics2022_6'] = compustat_df['naics'] #Assume Compustat uses most up to date NAICS
-            compustat_df = compustat_df[['gvkey', 'naics2022_6']].drop_duplicates()
-    
-    
-            # --------------------------- #
-            # Allocate Patents to Sectors #
-            # --------------------------- #
-            pat_firms_df = pat_df.merge(pat_firm_crosswalk_df,
-                                on='patent_id',
-                                how='inner')
-            pat_firms_df = pat_firms_df.merge(compustat_df,
-                                on='gvkey',
-                                how='inner')
-            pat_firms_df = pat_firms_df.merge(EPA_BLS_Crosswalk[['naics2022_6', 'BLS_Industry']].drop_duplicates(),
-                                on='naics2022_6',
-                                how='inner')
-            
-            pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
-            pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'norm_cites']].drop_duplicates()
-            
-            pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
-            pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
-            
-            pat_ind_df['split_weight'] = 1 / pat_ind_df.groupby('patent_id')['BLS_Industry'].transform('count')
-            
-            pat_CPC_df = pat_CPC_df.merge(pat_ind_df[['patent_id', 'BLS_Industry', 'split_weight']].drop_duplicates(),
-                                on='patent_id',
-                                how='left')
-            
-            
-            # ------------------------- #
-            # Clean Patenting by Sector #
-            # ------------------------- #
-            annual_df = pat_ind_df.copy()
-            annual_df['clean_w']      = annual_df['split_weight'] * annual_df['clean']
-            annual_df['clean_full_w'] = annual_df['split_weight'] * annual_df['clean_full']
-            annual_df['cite_w']       = annual_df['split_weight'] * annual_df['norm_cites']
-            annual_df['clean_cite_w'] = annual_df['clean_w']      * annual_df['norm_cites']
-            annual_df['clean_full_cite_w'] = annual_df['clean_full_w'] * annual_df['norm_cites']
-
-            ind_pat_df = (annual_df[annual_df['year'] >= A_start]
-                               .groupby(['BLS_Industry', 'year'], as_index=False)
-                               .agg(clean_pat_count      = ('clean_w',      'sum'),
-                                    pat_count            = ('split_weight', 'sum'),
-                                    clean_pat_cites      = ('clean_cite_w', 'sum'),
-                                    pat_cites            = ('cite_w',       'sum')))
-            
-            ind_pat_df_full = (annual_df[annual_df['year'] >= A_start]
-                               .groupby(['BLS_Industry', 'year'], as_index=False)
-                               .agg(clean_pat_count = ('clean_full_w', 'sum'),
-                                    pat_count            = ('split_weight', 'sum'),
-                                    clean_pat_cites      = ('clean_full_cite_w', 'sum'),
-                                    pat_cites            = ('cite_w',       'sum')))
-            
-            panel_idx = pd.MultiIndex.from_product(
-                [sorted(ind_pat_df['BLS_Industry'].unique()), list(range(A_start, Year_end + 1))],
-                names=['BLS_Industry', 'year'])
-            ind_pat_df = (ind_pat_df.set_index(['BLS_Industry', 'year'])
-                               .reindex(panel_idx)
-                               .fillna(0.0)
-                               .reset_index())
-            ind_pat_df_full = (ind_pat_df_full.set_index(['BLS_Industry', 'year'])
-                               .reindex(panel_idx)
-                               .fillna(0.0)
-                               .reset_index())
-            
-            ind_pat_df = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
-            ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
-            ind_pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
-            
-            
-            # -------------------- #
-            # CPC Shares by Sector #
-            # -------------------- #
-            ind_pat_shares_pre_df = pat_CPC_df.dropna(subset=['BLS_Industry'])
-            ind_pat_shares_pre_df = ind_pat_shares_pre_df[(ind_pat_shares_pre_df['year'] >= BLS_year_start-10) & (ind_pat_shares_pre_df['year'] < BLS_year_start) 
-                                                              & (ind_pat_shares_pre_df['clean'] == 1)]
-            
-            ind_pat_shares_pre_df['pat_weight'] = ind_pat_shares_pre_df['split_weight'] / ind_pat_shares_pre_df.groupby('patent_id')['cpc_subclass'].transform('count')
-            ind_pat_shares_pre_df['cite_weight'] = ind_pat_shares_pre_df['pat_weight'] * ind_pat_shares_pre_df['norm_cites']
-            
-            ind_pat_shares_pre_df['cpc_pat_count'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['pat_weight'].transform('sum')
-            ind_pat_shares_pre_df['pat_count'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['pat_weight'].transform('sum')
-            ind_pat_shares_pre_df['cpc_pat_share'] = ind_pat_shares_pre_df['cpc_pat_count'] / ind_pat_shares_pre_df['pat_count']
-            
-            ind_pat_shares_pre_df['cpc_pat_cites'] = ind_pat_shares_pre_df.groupby(['BLS_Industry', 'cpc_subclass'])['cite_weight'].transform('sum')
-            ind_pat_shares_pre_df['pat_cites'] = ind_pat_shares_pre_df.groupby('BLS_Industry')['cite_weight'].transform('sum')
-            ind_pat_shares_pre_df['cpc_cite_share'] = ind_pat_shares_pre_df['cpc_pat_cites'] / ind_pat_shares_pre_df['pat_cites']
-            
-            ind_pat_shares_pre_df = ind_pat_shares_pre_df[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
-            panel_idx = pd.MultiIndex.from_product(
-                [sorted(cpc4_df['cpc_subclass'].unique()), sorted(ind_pat_shares_pre_df['BLS_Industry'].unique())],
-                names=['cpc_subclass', 'BLS_Industry'])
-            ind_pat_shares_pre_df = (ind_pat_shares_pre_df.set_index(['cpc_subclass', 'BLS_Industry'])
-                                    .reindex(panel_idx)
-                                    .fillna(0.0)
-                                    .reset_index()
-                          [['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']]
-                          .sort_values(['BLS_Industry', 'cpc_subclass'])
-                          .reset_index(drop=True))
-            
-            ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
-            
-            
-            # ------------------------ #
-            # Government Patent Series #
-            # ------------------------ #
-            gov_cpc_df = pd.merge(pat_CPC_df,
-                                 Gov_Pats_df[['patent_id']].drop_duplicates(),
-                                 on='patent_id',
-                                 how='inner')
-            
-            gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_subclass'].transform('count')
-            gov_cpc_df['cite_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['norm_cites']
-
-            gov_cpc_df['gov_pat_count'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['pat_weight'].transform('sum')
-            gov_cpc_df['gov_pat_cites'] = gov_cpc_df.groupby(['cpc_subclass', 'year'])['cite_weight'].transform('sum')
-            gov_cpc_df = gov_cpc_df[['year', 'cpc_subclass', 'gov_pat_count', 'gov_pat_cites']].drop_duplicates()
-                
-            panel_idx = pd.MultiIndex.from_product(
-                [sorted(cpc4_df['cpc_subclass'].unique()), list(range(A_start, Year_end + 1))],
-                names=['cpc_subclass', 'year'])
-            gov_cpc_df = (gov_cpc_df.set_index(['cpc_subclass', 'year'])
-                                    .reindex(panel_idx)
-                                    .fillna(0.0)
-                                    .reset_index()
-                          [['year', 'cpc_subclass', 'gov_pat_count', 'gov_pat_cites']]
-                          .sort_values(['cpc_subclass', 'year'])
-                          .reset_index(drop=True))
-            
-            gov_cpc_df.to_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
+        # panel_idx = pd.MultiIndex.from_product(
+        #     [sorted(cpc4_df['cpc_subclass'].unique()), list(range(A_start, Year_end + 1))],
+        #     names=['cpc_subclass', 'year'])
+        # gov_cpc_df = (gov_cpc_df.set_index(['cpc_subclass', 'year'])
+        #                         .reindex(panel_idx)
+        #                         .fillna(0.0)
+        #                         .reset_index()
+        #               [['year', 'cpc_subclass', 'gov_pat_count', 'gov_pat_cites']]
+        #               .sort_values(['cpc_subclass', 'year'])
+        #               .reset_index(drop=True))
+        
+        # gov_cpc_df.to_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
             
             
             
@@ -1025,7 +1034,7 @@ class Processor:
             w_raw  = r['w'] ** dim
             scale  = 1000 / w_raw.max()
 
-            stars_idx = lambda m, k: gpf.get_stars(m.pvalues[k])
+            stars_idx = lambda m, k: gpf.getgpf.get_stars(m.pvalues[k])
 
             mask_p1 = df['period'].to_numpy() == Year_mid
             mask_p2 = df['period'].to_numpy() == Year_end
@@ -1120,10 +1129,9 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, A_start, BLS_year_start, Year_end, dim=3,
-                              δ=0.15, g=0.02):
+    def Up_Down_Green(self, A_start, BLS_year_start, Year_end, dim=3):
         """""
-        Upstream and Downstream Incentives for Greenification
+        Strategic Complementarity for Greenification
         
         Output: Results/Tables/Summary_Stats.tex
                 Results/Tables/Network_Regressions_Net.tex
@@ -1330,7 +1338,82 @@ class LMWrap:
         return self.lm.conf_int(1 - alpha)
     
     
-    
+class GLMWrap:
+    def __init__(self, res, y=None, x=None, offset=None, fe=None, n_sectors=None):
+        self.glm       = res
+        self.y         = y
+        self.x         = list(x) if x is not None else list(res.params.index)
+        self.offset    = offset
+        self.fe        = fe or []
+        self.n_sectors = n_sectors
+        self.params    = res.params
+        self.bse       = res.bse
+        self.tvalues   = res.tvalues
+        self.pvalues   = res.pvalues
+        self.nobs      = int(res.nobs)
+        try:
+            self.rsquared = res.pseudo_rsquared(kind='mcf')
+        except Exception:
+            self.rsquared = np.nan
+
+    def conf_int(self, alpha=0.05):
+        return self.glm.conf_int(alpha=alpha)
+
+    def frame(self):
+        ci = self.conf_int()
+        rows = [v for v in self.x if v in self.params.index]
+        return pd.DataFrame({
+            'coef':  self.params[rows].round(4),
+            'se':    self.bse[rows].round(4),
+            'z':     self.tvalues[rows].round(2),
+            'p':     self.pvalues[rows].round(4),
+            'sig':   [self.gpf.get_stars(p) for p in self.pvalues[rows]],
+            'ci_lo': ci.iloc[:, 0][rows].round(4),
+            'ci_hi': ci.iloc[:, 1][rows].round(4),
+        })
+
+    def test(self, restriction):
+        try:
+            w = self.glm.wald_test(restriction, use_f=False, scalar=True)
+            return float(np.squeeze(w.statistic)), float(np.squeeze(w.pvalue))
+        except TypeError:
+            w = self.glm.wald_test(restriction, use_f=False)
+            return float(np.squeeze(w.statistic)), float(np.squeeze(w.pvalue))
+
+    def __repr__(self):
+        head = f'{self.y} ~ {" + ".join(self.x)}'
+        spec = (f'PPML (Poisson pseudo-ML), offset log({self.offset}), '
+                f'{" + ".join(self.fe) if self.fe else "no"} FE, '
+                f'SE clustered by sector')
+        info = [f'N = {self.nobs}']
+        if self.n_sectors is not None:
+            info.append(f'sectors = {self.n_sectors}')
+        if np.isfinite(self.rsquared):
+            info.append(f'pseudo R2 = {self.rsquared:.4f}')
+        conv = getattr(self.glm, 'converged', None)
+        if conv is None:
+            conv = getattr(getattr(self.glm, 'mle_retvals', {}), 'get', lambda k, d: d)('converged', None)
+        if conv is not None:
+            info.append(f'converged = {conv}')
+
+        out = [head, spec, '  |  '.join(info), '', self.frame().to_string()]
+
+        pairs = [('up_G_pat_lag', 'down_G_pat_lag'), ('up_G_cite_lag', 'down_G_cite_lag'),
+                 ('up_G_pat',     'down_G_pat'),     ('up_G_cite',     'down_G_cite')]
+        for a, b in pairs:
+            if a in self.params.index and b in self.params.index:
+                try:
+                    s1, p1 = self.test(f'{a} + {b} = 0')
+                    s2, p2 = self.test(f'{a} = {b}')
+                    out.append(f'\nH0: up + down = 0   chi2 = {s1:.3f}  p = {p1:.4f}   '
+                               f'(complementarity implies > 0)')
+                    out.append(f'H0: up = down       chi2 = {s2:.3f}  p = {p2:.4f}')
+                except Exception as e:
+                    out.append(f'\nWald tests unavailable: {e}')
+        return '\n'.join(out)
+
+    def full(self):
+        return self.glm.summary()
     
     
     

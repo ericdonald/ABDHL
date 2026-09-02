@@ -15,7 +15,7 @@ import Processor as p
 # ----------------------------------------------------------------
 
 P = p.Processor()
-A_start, BLS_year_start, Year_start, Year_mid, Year_end = (1980, 1997, 2012, 2017, 2022)
+BLS_year_start, Year_start, Year_mid, Year_end = (1997, 2012, 2017, 2022)
 
 # ----------------------------------------------------------------
 
@@ -27,17 +27,15 @@ A_start, BLS_year_start, Year_start, Year_mid, Year_end = (1980, 1997, 2012, 201
 # Clean Data #
 # ---------- #
 API = 0
-pats = 0
 #Set to 1 for new API download
 
-
-P.Cleaner(A_start, BLS_year_start, Year_start, Year_end, API, pats)
+P.Cleaner(BLS_year_start, Year_start, Year_end, API)
 
 
 # ----------------- #
 # Build Instruments #
 # ----------------- #
-P.Instruments(BLS_year_start, Year_end)
+#P.Instruments(BLS_year_start, Year_end)
 
 
 # ---------------- #
@@ -49,7 +47,7 @@ P.IO_Change(Year_start, Year_mid, Year_end)
 # --------------------- #
 # Directional Incentive #
 # --------------------- #
-P.Up_Down_Green(A_start, BLS_year_start, Year_end)
+P.Up_Down_Green(BLS_year_start, Year_end)
 
 
 # ----------------------- #
