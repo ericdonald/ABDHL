@@ -2,7 +2,7 @@
 
 ## Data Sources:
 
-Below is the list of all data sources required for replication. All necessary data files are included in the Raw Data folder, so the replication code can be run immediately with `API=0`. Setting `API=1` will re-download the data from the original sources, which may produce small numerical differences if the underlying databases have been updated since the archived data was collected.
+Below is the list of all data sources required for replication. All necessary data files (except those requiring a license) are included in the Raw Data folder, so the replication code can be run immediately with `API=0`. Setting `API=1` will re-download the data from the original sources, which may produce small numerical differences if the underlying databases have been updated since the archived data was collected.
 
 The first group are those that can be programmatically retrieved via APIs or direct download, the second group are those contained exclusively in the Raw Data folder and do not make use of API, and the third group are those that require the user to have a license. The links below are for reference only; a user does not need to visit these sites to extract the data.
 
