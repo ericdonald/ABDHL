@@ -44,7 +44,7 @@ class Processor:
         self.CPC_classes = ["Y02E", "Y02P", "Y02T", "B60L"]
         self.ICE_classes = ["Y02T10/10", "Y02T10/20", "Y02T10/30", "Y02T10/40"]
         self.manu_cols = [1, 93]
-        self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
+        self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well ## Double check!
         
         keys_path = self.Directory / ".keys"
         keys = {}
@@ -97,7 +97,7 @@ class Processor:
             MAKE_df = pd.read_excel(f'{self.Directory}/Raw Data/REAL_MAKE.xlsx', sheet_name=f"{year}")
 
             U      = USE_df.iloc[:, 1:-3].to_numpy()
-            ind_Y  = np.sum(U, 0) - U[-2,:] #Exclude imports from revenue
+            ind_Y  = np.sum(U, 0)
             B      = (U[:-3, :] @ np.diag(ind_Y**(-1))).T
 
             M      = MAKE_df.iloc[:, 1:].to_numpy()
@@ -105,12 +105,8 @@ class Processor:
             A      = (M[:-2, :-2] @ np.diag(com_Y**(-1))).T
 
             IO = B @ A
-            num = IO.sum(axis=1, keepdims=True)
-            np.fill_diagonal(IO, 0) #Exclude diagonal
-            denom = IO.sum(axis=1, keepdims=True)
 
-            
-            return IO * num / denom
+            return IO
         
         IO_mats = {year: compute_IO(year) for year in range(BLS_year_start, Year_end+1)}
         pd.to_pickle(IO_mats, f'{self.Directory}/Clean Data/IO_Networks.pkl')
@@ -916,7 +912,7 @@ class Processor:
             LI_mid_manu   = LI_mid[manu, :]
             LI_end_manu   = LI_end[manu, :]
      
-            # Reduced: non-service rows, fossil fuel columns (indices 6,7 within manu block) dropped, renormalized
+            # Reduced: non-service rows, fossil fuel columns dropped, renormalized
             def drop_and_normalize(IO):
                 IO_manu = IO[manu, :]
                 IO_r = np.delete(IO_manu, self.fossil_cols, axis=1)
@@ -1382,15 +1378,16 @@ class Processor:
         # ---------- #
         # Estimation #
         # ---------- #
- 
+        reg_df['pat_count_nc'] = reg_df['pat_count'] - reg_df['clean_pat_count']
         # Green patent counts, lagged partner adoption
-        m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+        m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'])
         m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
                              ['net_G_pat_lag', 'G_pat_lag'])
  
         # Green citations, lagged partner adoption
-        m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+        reg_df['pat_cites_nc'] = reg_df['pat_cites'] - reg_df['clean_pat_cites']
+        m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
         m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
                              ['net_G_cite_lag', 'G_cite_lag'])
@@ -1406,7 +1403,9 @@ class Processor:
         m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
                                ['net_G_cite'])
  
- 
+        #### Why opposite correlations?
+        ### Overlapping bins?
+        
         Models = {
             'pat_ud':     m_pat_ud,     'pat_net':     m_pat_net,
             'cit_ud':     m_cit_ud,     'cit_net':     m_cit_net,
