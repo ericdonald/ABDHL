@@ -1210,16 +1210,10 @@ class Processor:
        
         # ---------------- #
         # Leontief Inverse #
-        # ---------------- #
-        manu_slice = slice(self.manu_cols[0] - 1, self.manu_cols[1])
- 
+        # ---------------- # 
         def build_sigma_LI(IO_matrix):
-            A_io       = IO_matrix.copy().astype(float)
-            row_totals = A_io.sum(axis=1)
-            A_manu     = A_io[manu_slice, manu_slice].copy()
-            denom      = row_totals[manu_slice, np.newaxis]
-            A_manu     = A_manu / np.where(denom == 0, 1.0, denom)
-            S = np.linalg.inv(np.eye(M) - A_manu) - np.eye(M)
+            J = IO_matrix.shape[0]
+            S = np.linalg.inv(np.eye(J) - IO_matrix)
             np.fill_diagonal(S, 0.0)
             return S
  
