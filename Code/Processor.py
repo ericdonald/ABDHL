@@ -1312,6 +1312,9 @@ class Processor:
  
         reg_df = net_df.merge(own_df, on=['BLS_Industry', 'period'], how='left')
         
+        reg_df['pat_count_nc'] = reg_df['pat_count'] - reg_df['clean_pat_count']
+        reg_df['pat_cites_nc'] = reg_df['pat_cites'] - reg_df['clean_pat_cites']
+
         
         # ---- #
         # Lags #
@@ -1372,29 +1375,27 @@ class Processor:
         # ---------- #
         # Estimation #
         # ---------- #
-        reg_df['pat_count_nc'] = reg_df['pat_count'] - reg_df['clean_pat_count']
         # Green patent counts, lagged partner adoption
         m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'])
-        m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+        m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['net_G_pat_lag', 'G_pat_lag'])
  
         # Green citations, lagged partner adoption
-        reg_df['pat_cites_nc'] = reg_df['pat_cites'] - reg_df['clean_pat_cites']
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
-        m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+        m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['net_G_cite_lag', 'G_cite_lag'])
  
         # Contemporaneous partner adoption (simultaneous; reported for comparison only)
-        m_pat_ud_c  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+        m_pat_ud_c  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                                ['up_G_pat', 'down_G_pat'])
-        m_pat_net_c = fit_ppml(reg_df, 'clean_pat_count', 'pat_count',
+        m_pat_net_c = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                                ['net_G_pat'])
         
-        m_cit_ud_c  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+        m_cit_ud_c  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                                ['up_G_cite', 'down_G_cite'])
-        m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites',
+        m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                                ['net_G_cite'])
  
         #### Why opposite correlations?
