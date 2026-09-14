@@ -169,23 +169,23 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
     need = [y_col, offset_col] + list(x_cols) + list(instrument_cols)
     d = df.dropna(subset=need).copy()
     d = d[d[offset_col] > 0]
-
+ 
     keep_sec = d.groupby(entity)[y_col].transform('sum') > 0
     n_drop = int(d.loc[~keep_sec, entity].nunique())
     d = d[keep_sec].reset_index(drop=True)
     if n_drop:
         print(f'  fit_poisson_iv({y_col}): dropped {n_drop} sector(s) with no '
               f'positive outcome in any period.')
-
+ 
     exog_x = [c for c in x_cols if c not in endog_cols]
-
+ 
     parts = [d[list(x_cols)].astype(float)]
     if time_fe:
         parts.append(pd.get_dummies(d[time], prefix='per', drop_first=True, dtype=float))
     Wm = pd.concat(parts, axis=1)
     Wm.columns = [str(c) for c in Wm.columns]
     names = list(Wm.columns)
-
+ 
     zparts = [d[list(instrument_cols)].astype(float)]
     if exog_x:
         zparts.append(d[exog_x].astype(float))
@@ -193,17 +193,17 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
         zparts.append(pd.get_dummies(d[time], prefix='zper', drop_first=True, dtype=float))
     Z = pd.concat(zparts, axis=1)
     Z.columns = [str(c) for c in Z.columns]
-
+ 
     Wraw = Wm.to_numpy(float)
     Zv   = Z.to_numpy(float)
     yv   = d[y_col].to_numpy(float)
     ov   = np.log(d[offset_col].to_numpy(float))
     codes, uniq = pd.factorize(d[entity].to_numpy())
     N, G_, K, L = len(yv), len(uniq), Wraw.shape[1], Zv.shape[1]
-
+ 
     if L < K:
         raise ValueError(f'under-identified: {L} moments for {K} parameters')
-
+ 
     # --- standardise regressors (and instruments) for conditioning -----------
     w_sd = Wraw.std(axis=0, ddof=0)
     w_sd = np.where(w_sd > 1e-12, w_sd, 1.0)
@@ -211,22 +211,22 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
     z_sd = Zv.std(axis=0, ddof=0)
     z_sd = np.where(z_sd > 1e-12, z_sd, 1.0)
     Zs   = Zv / z_sd
-
+ 
     ysum = np.bincount(codes, weights=yv, minlength=G_)
-
+ 
     def pieces(theta):
         mu    = np.exp(np.clip(Wv @ theta + ov, -60, 60))
         musum = np.bincount(codes, weights=mu, minlength=G_)
         rho   = np.where(musum > 0, ysum / np.where(musum > 0, musum, 1.0), 0.0)
         return mu, musum, rho
-
+ 
     def resid(theta):
         mu, _, rho = pieces(theta)
         return yv - rho[codes] * mu
-
+ 
     def gbar(theta):
         return Zs.T @ resid(theta) / N
-
+ 
     def jac(theta):
         "analytic dg/dtheta"
         mu, musum, rho = pieces(theta)
@@ -237,11 +237,11 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
         wbar = num / np.where(musum[:, None] > 0, musum[:, None], 1.0)
         dU   = -(rho[codes] * mu)[:, None] * (Wv - wbar[codes])     # N x K
         return Zs.T @ dU / N
-
+ 
     def obj(theta, Wgt):
         g = gbar(theta)
         return float(g @ Wgt @ g)
-
+ 
     def cluster_omega(theta):
         u = resid(theta)
         Om = np.zeros((L, L))
@@ -250,10 +250,10 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
             s = Zs[m].T @ u[m]
             Om += np.outer(s, s)
         return Om / N**2
-
+ 
     exact = (L == K)
     th0   = np.zeros(K)
-
+ 
     if exact:
         sol = optimize.root(gbar, th0, jac=jac, method='hybr',
                             options={'maxfev': maxiter * (K + 1), 'xtol': 1e-12})
@@ -264,50 +264,80 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
             theta, conv, stage = ls.x, bool(ls.success), 'exactly identified (LS)'
         Wgt = np.eye(L)
     else:
+        # Overidentified: gbar = 0 is NOT attainable. Minimise gbar' W gbar, cast as
+        # nonlinear least squares on the whitened moments L' gbar, where W = L L'.
+        # Gauss-Newton on this is far more reliable than minimising the quadratic
+        # form directly.
+        def solve_gmm(Wgt, start):
+            ev, EV = np.linalg.eigh(Wgt)
+            L = EV @ np.diag(np.sqrt(np.maximum(ev, 0.0)))        # W = L L'
+            ls = optimize.least_squares(lambda t: L.T @ gbar(t), start,
+                                        jac=lambda t: L.T @ jac(t),
+                                        xtol=1e-15, ftol=1e-15, gtol=1e-15,
+                                        max_nfev=maxiter * 20)
+            return ls.x, bool(ls.success)
+ 
         W1 = np.linalg.pinv(Zs.T @ Zs / N)
-        r1 = optimize.minimize(obj, th0, args=(W1,), method='trust-constr',
-                               jac=lambda t, Wg: 2 * jac(t).T @ Wg @ gbar(t),
-                               options={'maxiter': maxiter, 'gtol': 1e-12})
-        theta, conv, stage = r1.x, bool(r1.success), 'one-step GMM'
-        Wgt = W1
+        theta, conv = solve_gmm(W1, th0)
+        stage, Wgt = 'one-step GMM', W1
         if two_step:
             W2 = np.linalg.pinv(cluster_omega(theta))
-            r2 = optimize.minimize(obj, theta, args=(W2,), method='trust-constr',
-                                   jac=lambda t, Wg: 2 * jac(t).T @ Wg @ gbar(t),
-                                   options={'maxiter': maxiter, 'gtol': 1e-12})
-            if r2.success or obj(r2.x, W2) < obj(theta, W2):
-                theta, conv, stage = r2.x, bool(r2.success), 'two-step GMM'
+            th2, conv2 = solve_gmm(W2, theta)
+            if obj(th2, W2) <= obj(theta, W2):
+                theta, conv, stage = th2, conv2, 'two-step GMM'
             Wgt = W2
-
-    g_norm = float(np.max(np.abs(gbar(theta))))
-    if verbose or g_norm > 1e-6:
-        print(f'  max|moment| at solution = {g_norm:.3e}'
-              f'{"   <-- NOT SOLVED" if g_norm > 1e-6 else ""}')
-
+ 
+    # Convergence check. Exactly identified: the moments should be zero.
+    # Overidentified: they cannot be, so check the first-order condition
+    # ||G' W gbar|| instead, scaled to be dimensionless.
+    g_now  = gbar(theta)
+    g_norm = float(np.max(np.abs(g_now)))
+    Gnow   = jac(theta)
+    foc    = Gnow.T @ Wgt @ g_now
+    foc_scale = max(np.max(np.abs(Gnow.T @ Wgt @ Gnow)), 1e-300)
+    foc_norm  = float(np.max(np.abs(foc)) / foc_scale)
+    if exact:
+        bad = g_norm > 1e-6 * max(1.0, np.max(np.abs(yv)))
+        if verbose or bad:
+            print(f'  max|moment| = {g_norm:.3e}'
+                  f'{"   <-- NOT SOLVED" if bad else ""}')
+    else:
+        bad = foc_norm > 1e-6
+        if verbose or bad:
+            print(f'  scaled |first-order condition| = {foc_norm:.3e}  '
+                  f'(max|moment| = {g_norm:.3e}, not expected to be zero when '
+                  f'overidentified){"   <-- NOT SOLVED" if bad else ""}')
+    conv = conv and not bad
+ 
     Gj   = jac(theta)
     Om   = cluster_omega(theta)
     GWG  = Gj.T @ Wgt @ Gj
     GWGi = np.linalg.pinv(GWG)
     cov  = GWGi @ (Gj.T @ Wgt @ Om @ Wgt @ Gj) @ GWGi
+    # Cluster correction matching statsmodels' GLM: G/(G-1) * (N-1)/(N-k), where k
+    # counts the concentrated-out sector effects (rho_i uses one df per sector).
     K_eff = K + G_
     cov  *= (G_ / max(G_ - 1, 1)) * ((N - 1) / max(N - K_eff, 1))
-
+ 
     # map back from standardised to original scale
     theta_o = theta / w_sd
     cov_o   = cov / np.outer(w_sd, w_sd)
-
+ 
     g = gbar(theta)
     J_df = L - K
     if J_df > 0:
-        J_stat = float(N * g @ np.linalg.pinv(Om) @ g)
+        # cluster_omega returns Omega/N (the scaling the covariance needs), so the
+        # usual N * g' Omega^-1 g becomes g' (Omega/N)^-1 g with no extra N.
+        J_stat = float(g @ np.linalg.pinv(Om) @ g)
         J_p = 1 - stats.chi2.cdf(J_stat, J_df)
     else:
         J_stat, J_p = np.nan, np.nan
-
+ 
     res = PoissonIVResults(theta_o, cov_o, names, endog_cols, instrument_cols,
                            y_col, offset_col, N, G_, J_stat, J_df, J_p,
                            conv, stage)
     res.moment_norm = g_norm
+    res.foc_norm    = foc_norm
     res.jac_cond    = float(np.linalg.cond(Gj))
     return res
     
