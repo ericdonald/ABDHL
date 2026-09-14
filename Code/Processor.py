@@ -1204,7 +1204,6 @@ class Processor:
         # RD_shocks_df   = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
-        M            = len(manu_idx_all)
         bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, 5) if y in IO_mats]
 
        
@@ -1230,15 +1229,37 @@ class Processor:
  
         pat_wide  = wide('pat_count')
         cite_wide = wide('pat_cites')
- 
-        G_pat  = wide('clean_pat_count') / pat_wide.where(pat_wide  > 0)
-        G_cite = wide('clean_pat_cites') / cite_wide.where(cite_wide > 0)
         
+        def estimate_kappa(cln_w, tot_w, min_den=100):
+            c = cln_w.to_numpy(dtype=float).ravel()
+            n = tot_w.to_numpy(dtype=float).ravel()
+            ok = np.isfinite(c) & np.isfinite(n) & (n >= min_den)
+            if ok.sum() < 20:
+                print(f'  only {ok.sum()} sector-bins above {min_den}; '
+                      f'falling back to kappa = 10')
+                return 10.0
+            p = np.nansum(c) / np.nansum(n)
+            v = np.var(c[ok] / n[ok], ddof=1)
+            samp = np.mean(p * (1 - p) / n[ok])
+            kap = p * (1 - p) / max(v - samp, 1e-12) - 1
+            print(f'  pbar = {p:.4f}, Var(G | n>={min_den}) = {v:.5f}, '
+                  f'sampling component = {samp:.5f}, kappa = {kap:.1f} '
+                  f'(n = {int(ok.sum())})')
+            return float(np.clip(kap, 1.0, 200.0))
+
+        cln_p, cln_c = wide('clean_pat_count'), wide('clean_pat_cites')
+
+        κ_pat  = estimate_kappa(cln_p, pat_wide)
+        κ_cite = estimate_kappa(cln_c, cite_wide)
+
+        Gbar_p = (cln_p.sum(axis=1) / pat_wide.sum(axis=1)).to_numpy()[:, None]
+        Gbar_c = (cln_c.sum(axis=1) / cite_wide.sum(axis=1)).to_numpy()[:, None]
+
+        G_pat  = ((cln_p + κ_pat  * Gbar_p) / (pat_wide  + κ_pat )).where(pat_wide  > 0)
+        G_cite = ((cln_c + κ_cite * Gbar_c) / (cite_wide + κ_cite)).where(cite_wide > 0)
+
         keep     = np.isin(manu_idx_all, Ind_Pat_df['BLS_Industry'].unique())
         keep_idx = manu_idx_all[keep]
-        print(f'Network universe: {int(keep.sum())} of {M} manufacturing sectors '
-              f'(sectors appearing in the patent panel).')
-        print(f'Bins: {bin_ends}')
         
         
         # ---------------------- #
@@ -1292,13 +1313,6 @@ class Processor:
         net_df['net_G_pat']  = net_df['up_G_pat']  + net_df['down_G_pat']
         net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
  
-        cov_tab = (net_df.groupby('period')
-                         .agg(partners_observed=('n_obs_up', 'first'),
-                              mean_weight_covered=('cov_up', 'mean'),
-                              min_weight_covered=('cov_up', 'min')))
-        print('\nPartner coverage by bin (share of upstream network weight observed):')
-        print(cov_tab.round(3).to_string())
-       
         
         # ------------------ #
         # Own Greenification #
@@ -1327,9 +1341,6 @@ class Processor:
         lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
         reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
  
-        print(f'Panel: {len(reg_df)} sector-bins; '
-              f'{reg_df["net_G_pat_lag"].notna().sum()} with a lagged network term.')
-        
 
         # ----------------------------------------------------------------
         
@@ -1398,7 +1409,6 @@ class Processor:
         m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                                ['net_G_cite'])
  
-        #### Why opposite correlations?
         ### Overlapping bins?
         
         Models = {
