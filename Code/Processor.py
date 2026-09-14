@@ -1200,8 +1200,8 @@ class Processor:
         # Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
         # Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
         
-        # govt_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
-        # RD_shocks_df   = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
+        govt_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
+        RD_shocks_df   = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, 5) if y in IO_mats]
@@ -1242,9 +1242,6 @@ class Processor:
             v = np.var(c[ok] / n[ok], ddof=1)
             samp = np.mean(p * (1 - p) / n[ok])
             kap = p * (1 - p) / max(v - samp, 1e-12) - 1
-            print(f'  pbar = {p:.4f}, Var(G | n>={min_den}) = {v:.5f}, '
-                  f'sampling component = {samp:.5f}, kappa = {kap:.1f} '
-                  f'(n = {int(ok.sum())})')
             return float(np.clip(kap, 1.0, 200.0))
 
         cln_p, cln_c = wide('clean_pat_count'), wide('clean_pat_cites')
@@ -1389,34 +1386,13 @@ class Processor:
         # Green patent counts, lagged partner adoption
         m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'])
-        m_pat_net = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
-                             ['net_G_pat_lag', 'G_pat_lag'])
  
         # Green citations, lagged partner adoption
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
-        m_cit_net = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
-                             ['net_G_cite_lag', 'G_cite_lag'])
  
-        # Contemporaneous partner adoption (simultaneous; reported for comparison only)
-        m_pat_ud_c  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
-                               ['up_G_pat', 'down_G_pat'])
-        m_pat_net_c = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
-                               ['net_G_pat'])
         
-        m_cit_ud_c  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
-                               ['up_G_cite', 'down_G_cite'])
-        m_cit_net_c = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
-                               ['net_G_cite'])
- 
-        ### Overlapping bins?
-        
-        Models = {
-            'pat_ud':     m_pat_ud,     'pat_net':     m_pat_net,
-            'cit_ud':     m_cit_ud,     'cit_net':     m_cit_net,
-            'pat_ud_con': m_pat_ud_c,   'pat_net_con': m_pat_net_c,
-            'cit_ud_con': m_cit_ud_c,   'cit_net_con': m_cit_net_c,
-        }
+        Models = {'pat_ud': m_pat_ud, 'cit_ud': m_cit_ud}
  
         def show(models=None):
             for name, m in (models or Models).items():
