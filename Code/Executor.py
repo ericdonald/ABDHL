@@ -53,7 +53,7 @@ P.Up_Down_Green(BLS_year_start, Year_end)
 # ----------------------- #
 # Record Package Versions #
 # ----------------------- #
-packages = ["linearmodels", "matplotlib", "numpy", "openpyxl", "pandas", "statsmodels"]
+packages = ["linearmodels", "matplotlib", "numpy", "openpyxl", "pandas", "scipy", "statsmodels"]
 P.write_package_versions(packages)
 
 

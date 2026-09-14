@@ -15,6 +15,7 @@ from pathlib import Path
 import requests as api
 import importlib.metadata as md
 import Processing_Functions as gpf
+import Estimators as es
 
 
 
@@ -1203,8 +1204,9 @@ class Processor:
         govt_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
         RD_shocks_df   = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
+        bin_len = 5
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
-        bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, 5) if y in IO_mats]
+        bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
 
        
         # ---------------- #
@@ -1334,11 +1336,72 @@ class Processor:
                     'up_G_cite', 'down_G_cite', 'net_G_cite',
                     'G_pat', 'G_cite']
         lagged = reg_df[['BLS_Industry', 'period'] + lag_cols].copy()
-        lagged['period'] = lagged['period'] + 5
+        lagged['period'] = lagged['period'] + bin_len
         lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
         reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
- 
+        
+        
+        # ------------------- #
+        # Network Instruments #
+        # ------------------- #
+        S_fix = Σ_LI[BLS_year_start][np.ix_(keep, keep)]
 
+        govt_shock_periods = sorted(set(govt_shocks_df['period']) & set(bin_ends))
+        RD_shock_periods   = sorted(set(RD_shocks_df['period'])   & set(bin_ends))
+ 
+        shock_defs = {
+            'rd_pat':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_hat',
+                         RD_shock_periods),
+            'rd_cite':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_hat',
+                         RD_shock_periods),
+            'gov_pat':  (govt_shocks_df, 'pat_govt_shock_clean',  'pat_govt_shock',
+                         govt_shock_periods),
+            'gov_cite': (govt_shocks_df, 'cite_govt_shock_clean', 'cite_govt_shock',
+                         govt_shock_periods),
+        }
+
+        def shock_share(src, num_col, den_col, periods, wins=0.02):
+           num = (src.pivot(index='period', columns='BLS_Industry', values=num_col)
+                     .reindex(index=periods, columns=manu_idx_all))
+           den = (src.pivot(index='period', columns='BLS_Industry', values=den_col)
+                     .reindex(index=periods, columns=manu_idx_all))
+           w = num / den.where(den > 0)
+           if wins:
+               v = w.to_numpy(dtype=float)
+               if np.isfinite(v).any():
+                   lo, hi = np.nanquantile(v, [wins, 1 - wins])
+                   w = w.clip(lower=lo, upper=hi)
+           return w
+
+        z_parts = []
+        for tag, (src, num, den, periods) in shock_defs.items():
+            Gz, rows = shock_share(src, num, den, periods), []
+            for t in periods:
+                v   = Gz.loc[t].to_numpy(dtype=float)[keep]
+                obs = np.isfinite(v)
+                if not obs.any():
+                    print(f'  {tag}: no finite shares in {t}, skipped')
+                    continue
+                up, dn, _, _ = partner_avg(S_fix, v, obs)
+                rows.append(pd.DataFrame({'BLS_Industry': keep_idx, 'period': t,
+                                          f'z_up_{tag}': up, f'z_dn_{tag}': dn}))
+            if rows:
+                z_parts.append(pd.concat(rows, ignore_index=True))
+            else:
+                print(f'  {tag}: NO usable periods')
+ 
+        z_df = z_parts[0]
+        for part in z_parts[1:]:
+            z_df = z_df.merge(part, on=['BLS_Industry', 'period'], how='outer')
+        z_cols_all = [c for c in z_df.columns if c.startswith('z_')]
+
+        # Lag the instruments
+        z_lag = z_df.copy()
+        z_lag['period'] = z_lag['period'] + bin_len
+        z_lag = z_lag.rename(columns={c: f'{c}_lag' for c in z_cols_all})
+        reg_df = reg_df.merge(z_lag, on=['BLS_Industry', 'period'], how='left')
+        
+        
         # ----------------------------------------------------------------
         
         # Run regressions.
@@ -1376,7 +1439,7 @@ class Processor:
                                maxiter=200)
  
             fe = (['sector'] if entity_fe else []) + (['period'] if time_fe else [])
-            return GLMWrap(res, y_col, list(x_cols), offset_col, fe,
+            return es.GLMWrap(res, y_col, list(x_cols), offset_col, fe,
                            n_sectors=d['BLS_Industry'].nunique())
 
 
@@ -1390,9 +1453,20 @@ class Processor:
         # Green citations, lagged partner adoption
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
- 
         
-        Models = {'pat_ud': m_pat_ud, 'cit_ud': m_cit_ud}
+        # IV
+        iv_pat_rd  = es.fit_poisson_iv(reg_df, 'clean_pat_count', 'pat_count_nc',
+                                    ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'],
+                                    endog_cols=['up_G_pat_lag', 'down_G_pat_lag'],
+                                    instrument_cols=['z_up_rd_pat_lag',  'z_dn_rd_pat_lag'])
+        
+        iv_cit_rd  = es.fit_poisson_iv(reg_df, 'clean_pat_cites', 'pat_cites_nc',
+                                    ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'],
+                                    endog_cols=['up_G_cite_lag', 'down_G_cite_lag'],
+                                    instrument_cols=['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'])
+        
+        Models = {'pat_ud': m_pat_ud, 'pat_ivrd_ud': iv_pat_rd,
+                  'cit_ud': m_cit_ud, 'cit_ivrd_ud': iv_cit_rd}
  
         def show(models=None):
             for name, m in (models or Models).items():
@@ -1402,7 +1476,6 @@ class Processor:
  
         self.reg_df = reg_df
         self.Models = Models
- 
  
         # ------------------- #
         # Summary Stats Table #
@@ -1551,83 +1624,10 @@ class Processor:
                 f.write(f"| {pkg} | {ver} |\n")
 
     
-class GLMWrap:
-    def __init__(self, res, y=None, x=None, offset=None, fe=None, n_sectors=None):
-        self.glm       = res
-        self.y         = y
-        self.x         = list(x) if x is not None else list(res.params.index)
-        self.offset    = offset
-        self.fe        = fe or []
-        self.n_sectors = n_sectors
-        self.params    = res.params
-        self.bse       = res.bse
-        self.tvalues   = res.tvalues
-        self.pvalues   = res.pvalues
-        self.nobs      = int(res.nobs)
-        try:
-            self.rsquared = res.pseudo_rsquared(kind='mcf')
-        except Exception:
-            self.rsquared = np.nan
 
-    def conf_int(self, alpha=0.05):
-        return self.glm.conf_int(alpha=alpha)
 
-    def frame(self):
-        ci = self.conf_int()
-        rows = [v for v in self.x if v in self.params.index]
-        return pd.DataFrame({
-            'coef':  self.params[rows].round(4),
-            'se':    self.bse[rows].round(4),
-            'z':     self.tvalues[rows].round(2),
-            'p':     self.pvalues[rows].round(4),
-            'sig':   [gpf.get_stars(p) for p in self.pvalues[rows]],
-            'ci_lo': ci.iloc[:, 0][rows].round(4),
-            'ci_hi': ci.iloc[:, 1][rows].round(4),
-        })
 
-    def test(self, restriction):
-        try:
-            w = self.glm.wald_test(restriction, use_f=False, scalar=True)
-            return float(np.squeeze(w.statistic)), float(np.squeeze(w.pvalue))
-        except TypeError:
-            w = self.glm.wald_test(restriction, use_f=False)
-            return float(np.squeeze(w.statistic)), float(np.squeeze(w.pvalue))
 
-    def __repr__(self):
-        head = f'{self.y} ~ {" + ".join(self.x)}'
-        spec = (f'PPML (Poisson pseudo-ML), offset log({self.offset}), '
-                f'{" + ".join(self.fe) if self.fe else "no"} FE, '
-                f'SE clustered by sector')
-        info = [f'N = {self.nobs}']
-        if self.n_sectors is not None:
-            info.append(f'sectors = {self.n_sectors}')
-        if np.isfinite(self.rsquared):
-            info.append(f'pseudo R2 = {self.rsquared:.4f}')
-        conv = getattr(self.glm, 'converged', None)
-        if conv is None:
-            conv = getattr(getattr(self.glm, 'mle_retvals', {}), 'get', lambda k, d: d)('converged', None)
-        if conv is not None:
-            info.append(f'converged = {conv}')
 
-        out = [head, spec, '  |  '.join(info), '', self.frame().to_string()]
 
-        pairs = [('up_G_pat_lag', 'down_G_pat_lag'), ('up_G_cite_lag', 'down_G_cite_lag'),
-                 ('up_G_pat',     'down_G_pat'),     ('up_G_cite',     'down_G_cite')]
-        for a, b in pairs:
-            if a in self.params.index and b in self.params.index:
-                try:
-                    s1, p1 = self.test(f'{a} + {b} = 0')
-                    s2, p2 = self.test(f'{a} = {b}')
-                    out.append(f'\nH0: up + down = 0   chi2 = {s1:.3f}  p = {p1:.4f}   '
-                               f'(complementarity implies > 0)')
-                    out.append(f'H0: up = down       chi2 = {s2:.3f}  p = {p2:.4f}')
-                except Exception as e:
-                    out.append(f'\nWald tests unavailable: {e}')
-        return '\n'.join(out)
-
-    def full(self):
-        return self.glm.summary()
-    
-    
-    
     
