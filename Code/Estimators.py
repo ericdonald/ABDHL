@@ -289,7 +289,8 @@ def fit_poisson_iv(df, y_col, offset_col, x_cols, endog_cols, instrument_cols,
     GWG  = Gj.T @ Wgt @ Gj
     GWGi = np.linalg.pinv(GWG)
     cov  = GWGi @ (Gj.T @ Wgt @ Om @ Wgt @ Gj) @ GWGi
-    cov *= G_ / max(G_ - 1, 1)
+    K_eff = K + G_
+    cov  *= (G_ / max(G_ - 1, 1)) * ((N - 1) / max(N - K_eff, 1))
 
     # map back from standardised to original scale
     theta_o = theta / w_sd
