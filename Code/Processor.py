@@ -1090,8 +1090,8 @@ class Processor:
         # -------- # 
         bin_len = 5
         bin_ends = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
-        count_cols = ['clean_pat_count', 'dirty_pat_count', 'pat_count', 
-                      'clean_pat_cites', 'dirty_pat_cites', 'pat_cites']
+        count_cols = ['clean_pat_count', 'dirty_pat_count', 'pat_count_nc', 'pat_count', 
+                      'clean_pat_cites', 'dirty_pat_cites', 'pat_cites_nc', 'pat_cites']
 
         def make_bins(df):
             frames = []
@@ -1220,14 +1220,12 @@ class Processor:
         # ------------------ #
         # Own Greenification #
         # ------------------ #
-        own_df = Ind_Pat_df[['BLS_Industry', 'period', 'clean_pat_count', 'pat_count',
-                             'clean_pat_cites', 'pat_cites']].copy()
-        own_df['G_pat']  = (own_df['clean_pat_count']
-                            / own_df['pat_count'].where(own_df['pat_count'] > 0))
-        own_df['G_cite'] = (own_df['clean_pat_cites']
-                            / own_df['pat_cites'].where(own_df['pat_cites'] > 0))
+        Ind_Pat_df['G_pat']  = (Ind_Pat_df['clean_pat_count']
+                                / Ind_Pat_df['pat_count'].where(Ind_Pat_df['pat_count'] > 0))
+        Ind_Pat_df['G_cite'] = (Ind_Pat_df['clean_pat_cites']
+                                / Ind_Pat_df['pat_cites'].where(Ind_Pat_df['pat_cites'] > 0))
  
-        reg_df = net_df.merge(own_df, on=['BLS_Industry', 'period'], how='left')
+        reg_df = net_df.merge(Ind_Pat_df, on=['BLS_Industry', 'period'], how='left')
         
         
         # ---- #
