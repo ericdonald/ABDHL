@@ -512,47 +512,49 @@ class Processor:
         # Clean Patenting by Sector #
         # ------------------------- #
         annual_df = pat_ind_df.copy()
-        annual_df['clean_w']      = annual_df['split_weight'] * annual_df['clean']
-        annual_df['clean_full_w'] = annual_df['split_weight'] * annual_df['clean_full']
-        annual_df['cite_w']       = annual_df['split_weight'] * annual_df['norm_cites']
-        annual_df['clean_cite_w'] = annual_df['clean_w']      * annual_df['norm_cites']
+        annual_df['clean_w']           = annual_df['split_weight'] * annual_df['clean']
+        annual_df['clean_full_w']      = annual_df['split_weight'] * annual_df['clean_full']
+        annual_df['dirty_w']           = annual_df['split_weight'] * annual_df['dirty']
+        annual_df['cite_w']            = annual_df['split_weight'] * annual_df['norm_cites']
+        annual_df['clean_cite_w']      = annual_df['clean_w']      * annual_df['norm_cites']
         annual_df['clean_full_cite_w'] = annual_df['clean_full_w'] * annual_df['norm_cites']
-         
+        annual_df['dirty_cite_w']      = annual_df['dirty_w']      * annual_df['norm_cites']
+ 
         agg_base = dict(clean_pat_count = ('clean_w',      'sum'),
+                        dirty_pat_count = ('dirty_w',      'sum'),
                         pat_count       = ('split_weight', 'sum'),
                         clean_pat_cites = ('clean_cite_w', 'sum'),
+                        dirty_pat_cites = ('dirty_cite_w', 'sum'),
                         pat_cites       = ('cite_w',       'sum'))
         agg_full = dict(clean_pat_count = ('clean_full_w',      'sum'),
+                        dirty_pat_count = ('dirty_w',           'sum'),
                         pat_count       = ('split_weight',      'sum'),
                         clean_pat_cites = ('clean_full_cite_w', 'sum'),
+                        dirty_pat_cites = ('dirty_cite_w',      'sum'),
                         pat_cites       = ('cite_w',            'sum'))
 
-        bin_ends = list(range(BLS_year_start, Year_end + 1, 5))
-        frames, frames_full = [], []
-        for start in range(BLS_year_start - 5, Year_end, 5):
-            end    = start + 5
-            bin_df = annual_df[(annual_df['year'] > start) & (annual_df['year'] <= end)]
-            frames.append(bin_df.groupby('BLS_Industry', as_index=False)
-                                .agg(**agg_base).assign(period=end))
-            frames_full.append(bin_df.groupby('BLS_Industry', as_index=False)
-                                     .agg(**agg_full).assign(period=end))
- 
-        ind_pat_df      = pd.concat(frames,      ignore_index=True)
-        ind_pat_df_full = pd.concat(frames_full, ignore_index=True)
- 
+        ind_pat_df = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
+                                    .agg(**agg_base))
+        ind_pat_df_full = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
+                                    .agg(**agg_full))
         panel_idx = pd.MultiIndex.from_product(
-            [sorted(ind_pat_df['BLS_Industry'].unique()), list(bin_ends)],
-            names=['BLS_Industry', 'period'])
-        ind_pat_df = (ind_pat_df.set_index(['BLS_Industry', 'period'])
+            [sorted(ind_pat_df['BLS_Industry'].unique()), 
+             list(range(BLS_year_start, Year_end + 1))],
+            names=['BLS_Industry', 'year'])
+        ind_pat_df = (ind_pat_df.set_index(['BLS_Industry', 'year'])
                            .reindex(panel_idx)
                            .fillna(0.0)
                            .reset_index())
-        ind_pat_df_full = (ind_pat_df_full.set_index(['BLS_Industry', 'period'])
+        ind_pat_df_full = (ind_pat_df_full.set_index(['BLS_Industry', 'year'])
                            .reindex(panel_idx)
                            .fillna(0.0)
                            .reset_index())
  
         ind_pat_df = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
+        
+        for frame in (ind_pat_df, ind_pat_df_full):
+            frame['pat_count_nc'] = frame['pat_count'] - frame['clean_pat_count']
+            frame['pat_cites_nc'] = frame['pat_cites'] - frame['clean_pat_cites']
  
         ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         ind_pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
@@ -1076,14 +1078,39 @@ class Processor:
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
         Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         
-        # Ind_CO2_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')
         # Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
         
         RD_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
-        bin_len = 5
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
-        bin_ends     = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
+        
+        
+        # -------- #
+        # Bin Data #
+        # -------- # 
+        bin_len = 5
+        bin_ends = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
+        count_cols = ['clean_pat_count', 'dirty_pat_count', 'pat_count', 
+                      'clean_pat_cites', 'dirty_pat_cites', 'pat_cites']
+
+        def make_bins(df):
+            frames = []
+            for end in bin_ends:
+                w = df[(df['year'] > end - bin_len)
+                       & (df['year'] <= end)]
+                if w.empty:
+                    continue
+                frames.append(w.groupby('BLS_Industry', as_index=False)[count_cols]
+                               .sum().assign(period=end))
+            out = pd.concat(frames, ignore_index=True)
+            idx = pd.MultiIndex.from_product(
+                [sorted(out['BLS_Industry'].unique()), bin_ends],
+                names=['BLS_Industry', 'period'])
+            out = (out.set_index(['BLS_Industry', 'period'])
+                      .reindex(idx).fillna(0.0).reset_index())
+            return out
+        
+        Ind_Pat_df = make_bins(Ind_Pat_df)
 
        
         # ---------------- #
@@ -1202,9 +1229,6 @@ class Processor:
  
         reg_df = net_df.merge(own_df, on=['BLS_Industry', 'period'], how='left')
         
-        reg_df['pat_count_nc'] = reg_df['pat_count'] - reg_df['clean_pat_count']
-        reg_df['pat_cites_nc'] = reg_df['pat_cites'] - reg_df['clean_pat_cites']
-
         
         # ---- #
         # Lags #
