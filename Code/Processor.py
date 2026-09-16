@@ -1418,13 +1418,18 @@ class Processor:
             print('  F below ~10 means the instrument does not move the regressor; '
                   'IV estimates\n  and their standard errors are then unreliable '
                   'regardless of what they print.')
-            return f
  
         first_stage_matrix(['up_G_pat_lag', 'down_G_pat_lag'],
                            ['z_up_rd_pat_lag', 'z_dn_rd_pat_lag'],  'RD / patents')
      
         first_stage_matrix(['up_G_cite_lag', 'down_G_cite_lag'],
                            ['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'], 'RD / cites')
+        
+        first_stage_matrix(['up_D_pat_lag', 'down_D_pat_lag'],
+                           ['z_up_rd_pat_dir_lag', 'z_dn_rd_pat_dir_lag'],  'RD / patents')
+     
+        first_stage_matrix(['up_D_cite_lag', 'down_D_cite_lag'],
+                           ['z_up_rd_cite_dir_lag', 'z_dn_rd_cite_dir_lag'], 'RD / cites')
         
 
         # ---------- #
@@ -1450,13 +1455,24 @@ class Processor:
                                     endog_cols=['up_G_pat_lag', 'down_G_pat_lag'],
                                     instrument_cols=['z_up_rd_pat_lag',  'z_dn_rd_pat_lag'])
         
+        iv_pat_rd_dir  = es.fit_poisson_iv(reg_df, 'clean_pat_count', 'dirty_pat_count',
+                                    ['up_D_pat_lag', 'down_D_pat_lag', 'D_pat_lag'],
+                                    endog_cols=['up_D_pat_lag', 'down_D_pat_lag'],
+                                    instrument_cols=['z_up_rd_pat_dir_lag', 'z_dn_rd_pat_dir_lag'])
+        
+        
         iv_cit_rd  = es.fit_poisson_iv(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                                     ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'],
                                     endog_cols=['up_G_cite_lag', 'down_G_cite_lag'],
                                     instrument_cols=['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'])
         
-        Models = {'pat_ud': m_pat_ud, 'pat_ud_dir': m_pat_ud_dir, 'pat_ivrd_ud': iv_pat_rd,
-                  'cit_ud': m_cit_ud, 'cit_ud_dir': m_cit_ud_dir, 'cit_ivrd_ud': iv_cit_rd}
+        iv_cit_rd_dir  = es.fit_poisson_iv(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
+                                    ['up_D_cite_lag', 'down_D_cite_lag', 'D_cite_lag'],
+                                    endog_cols=['up_D_cite_lag', 'down_D_cite_lag'],
+                                    instrument_cols=['z_up_rd_cite_dir_lag', 'z_dn_rd_cite_dir_lag'])
+        
+        Models = {'pat_ud': m_pat_ud, 'pat_ud_dir': m_pat_ud_dir, 'pat_ivrd_ud': iv_pat_rd, 'pat_ivrd_ud_dir': iv_pat_rd_dir,
+                  'cit_ud': m_cit_ud, 'cit_ud_dir': m_cit_ud_dir, 'cit_ivrd_ud': iv_cit_rd, 'cit_ivrd_ud_dir': iv_cit_rd_dir}
  
         def show(models=None):
             for name, m in (models or Models).items():
