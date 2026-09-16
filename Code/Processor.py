@@ -717,6 +717,7 @@ class Processor:
         firm_pat_panel_df['entity'] = (firm_pat_panel_df['gvkey'].astype(str) + '_'
                                           + firm_pat_panel_df['type'])
         firm_pat_panel_df = firm_pat_panel_df.set_index(['entity','year']).sort_index()
+        firm_pat_panel_df = firm_pat_panel_df.dropna(subset=['ln_pat_count', 'ln_pat_cites', 'ln_E_rho_pats', 'ln_E_rho_cites'])
     
         m_pats = gpf.run_reg(firm_pat_panel_df['ln_pat_count'], firm_pat_panel_df['ln_E_rho_pats'], 'panel')
         m_cites = gpf.run_reg(firm_pat_panel_df['ln_pat_cites'], firm_pat_panel_df['ln_E_rho_cites'], 'panel')
