@@ -574,10 +574,13 @@ class Processor:
 
         # ----------------------------------------------------------------
         
+        IV_year_start = 1980
+        
         state_rdp_df = pd.read_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
         PV_inventor_location_df = pd.read_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
         pat_firms_df = pd.read_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
-                
+        pat_firms_df = pat_firms_df[pat_firms_df['year'] >= IV_year_start]
+        
         
         # ------------------------ #
         # State R&D Price Exposure #
@@ -655,7 +658,7 @@ class Processor:
         firm_inv_df['E_rho_cites_clean'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites_clean'].transform('sum')
         
         firm_inv_df = firm_inv_df[['gvkey', 'year', 'E_rho_pats', 'E_rho_pats_clean', 'E_rho_cites', 'E_rho_cites_clean']].drop_duplicates()
-
+        
         
         # Firm Patenting
         firm_pats_df = pat_firms_df.copy()
