@@ -600,12 +600,14 @@ class Processor:
         firm_inv_df['pat_authors'] = firm_inv_df.groupby(['patent_id', 'gvkey'])['inventor_id'].transform('count')
         
         firm_inv_df['pat_weight'] = firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
-        firm_inv_df['pat_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
+        firm_inv_df['pat_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['pat_weight']
+        firm_inv_df['pat_weight_dirty'] = firm_inv_df['dirty'] * firm_inv_df['pat_weight']
         
         firm_inv_df['cite_weight'] = firm_inv_df['norm_cites'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
-        firm_inv_df['cite_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['norm_cites'] * firm_inv_df['split_weight'] / firm_inv_df['pat_authors']
+        firm_inv_df['cite_weight_clean'] = firm_inv_df['clean'] * firm_inv_df['cite_weight']
+        firm_inv_df['cite_weight_dirty'] = firm_inv_df['dirty'] * firm_inv_df['cite_weight']
         
-        w_cols = ['pat_weight', 'pat_weight_clean', 'cite_weight', 'cite_weight_clean']
+        w_cols = ['pat_weight', 'pat_weight_clean', 'pat_weight_dirty', 'cite_weight', 'cite_weight_clean', 'cite_weight_dirty']
         
         fsy = (firm_inv_df.groupby(['gvkey', 'state_fips', 'year'], as_index=False)[w_cols]
                           .sum())
@@ -628,8 +630,10 @@ class Processor:
         share_map = {
             'firm_fips_pat_share':        ('pat_weight',        'pat_weight_tot'),
             'firm_fips_pat_share_clean':  ('pat_weight_clean',  'pat_weight_clean_tot'),
+            'firm_fips_pat_share_dirty':  ('pat_weight_dirty',  'pat_weight_dirty_tot'),
             'firm_fips_cite_share':       ('cite_weight',       'cite_weight_tot'),
             'firm_fips_cite_share_clean': ('cite_weight_clean', 'cite_weight_clean_tot'),
+            'firm_fips_cite_share_dirty': ('cite_weight_dirty', 'cite_weight_dirty_tot'),
         }
         for out_col, (num, den) in share_map.items():
             fsy_win[out_col] = fsy_win[num] / fsy_win[den].where(fsy_win[den] > 0)
@@ -645,38 +649,41 @@ class Processor:
                                 how='inner'
                                 )
         
-        firm_inv_df['weighted_rho_pats'] = firm_inv_df['firm_fips_pat_share'] * firm_inv_df['rho_h']
-        firm_inv_df['weighted_rho_pats_clean'] = firm_inv_df['firm_fips_pat_share_clean'] * firm_inv_df['rho_h']
+        firm_inv_cols = []
+        for ty in ['', '_clean', '_dirty']:
+            firm_inv_df['weighted_rho_pats' + ty] = firm_inv_df['firm_fips_pat_share' + ty] * firm_inv_df['rho_h']
+            firm_inv_df['weighted_rho_cites'+ ty] = firm_inv_df['firm_fips_cite_share'+ ty] * firm_inv_df['rho_h']
+            
+            firm_inv_df['E_rho_pats'+ ty] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_pats'+ ty].transform('sum')
+            firm_inv_df['E_rho_cites'+ ty] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites'+ ty].transform('sum')
+            
+            firm_inv_cols.append('E_rho_pats' + ty)
+            firm_inv_cols.append('E_rho_cites' + ty)
         
-        firm_inv_df['weighted_rho_cites'] = firm_inv_df['firm_fips_cite_share'] * firm_inv_df['rho_h']
-        firm_inv_df['weighted_rho_cites_clean'] = firm_inv_df['firm_fips_cite_share_clean'] * firm_inv_df['rho_h']
-        
-        firm_inv_df['E_rho_pats'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_pats'].transform('sum')
-        firm_inv_df['E_rho_pats_clean'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_pats_clean'].transform('sum')
-        
-        firm_inv_df['E_rho_cites'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites'].transform('sum')
-        firm_inv_df['E_rho_cites_clean'] = firm_inv_df.groupby(['gvkey', 'year'])['weighted_rho_cites_clean'].transform('sum')
-        
-        firm_inv_df = firm_inv_df[['gvkey', 'year', 'E_rho_pats', 'E_rho_pats_clean', 'E_rho_cites', 'E_rho_cites_clean']].drop_duplicates()
+        firm_inv_df = firm_inv_df[['gvkey', 'year'] + firm_inv_cols].drop_duplicates()
         
         
         # Firm Patenting
         firm_pats_df = pat_firms_df.copy()
         
         firm_pats_df['pat_weight'] = firm_pats_df['split_weight']
-        firm_pats_df['pat_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['split_weight']
+        firm_pats_df['pat_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['pat_weight']
+        firm_pats_df['pat_weight_dirty'] = firm_pats_df['dirty'] * firm_pats_df['pat_weight']
         
         firm_pats_df['cite_weight'] = firm_pats_df['norm_cites'] * firm_pats_df['split_weight']
-        firm_pats_df['cite_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['norm_cites'] * firm_pats_df['split_weight'] 
+        firm_pats_df['cite_weight_clean'] = firm_pats_df['clean'] * firm_pats_df['cite_weight']
+        firm_pats_df['cite_weight_dirty'] = firm_pats_df['dirty'] * firm_pats_df['cite_weight']
         
-        firm_pats_df['pat_count'] = firm_pats_df.groupby(['gvkey', 'year'])['pat_weight'].transform('sum')
-        firm_pats_df['pat_count_clean'] = firm_pats_df.groupby(['gvkey', 'year'])['pat_weight_clean'].transform('sum')
         
-        firm_pats_df['pat_cites'] = firm_pats_df.groupby(['gvkey', 'year'])['cite_weight'].transform('sum')
-        firm_pats_df['pat_cites_clean'] = firm_pats_df.groupby(['gvkey', 'year'])['cite_weight_clean'].transform('sum')
-
+        firm_pat_cols = []
+        for ty in ['', '_clean', '_dirty']:
+            firm_pats_df['pat_count'+ ty] = firm_pats_df.groupby(['gvkey', 'year'])['pat_weight'+ ty].transform('sum')
+            firm_pats_df['pat_cites'+ ty] = firm_pats_df.groupby(['gvkey', 'year'])['cite_weight'+ ty].transform('sum')
+            
+            firm_pat_cols.append('pat_count' + ty)
+            firm_pat_cols.append('pat_cites' + ty)
         
-        firm_pats_df = firm_pats_df[['gvkey', 'BLS_Industry', 'year', 'pat_count', 'pat_count_clean', 'pat_cites', 'pat_cites_clean']].drop_duplicates()
+        firm_pats_df = firm_pats_df[['gvkey', 'BLS_Industry', 'year'] + firm_pat_cols].drop_duplicates()
         
         
         # Zero Stage Regressions
@@ -695,6 +702,10 @@ class Processor:
                         'pat_cites':  'pat_cites_clean',
                         'E_rho_pats': 'E_rho_pats_clean',
                         'E_rho_cites':'E_rho_cites_clean'},
+            'dirty':   {'pat_count':  'pat_count_dirty',
+                        'pat_cites':  'pat_cites_dirty',
+                        'E_rho_pats': 'E_rho_pats_dirty',
+                        'E_rho_cites':'E_rho_cites_dirty'},
         }
  
         id_cols = ['gvkey', 'BLS_Industry', 'year']
@@ -742,8 +753,10 @@ class Processor:
         RD_shocks_df = ind_hat_df.rename(columns={
             'pat_count_hat__general': 'pat_count_hat',
             'pat_count_hat__clean':   'pat_count_clean_hat',
+            'pat_count_hat__dirty':   'pat_count_dirty_hat',
             'pat_cites_hat__general': 'pat_cites_hat',
-            'pat_cites_hat__clean':   'pat_cites_clean_hat'})
+            'pat_cites_hat__clean':   'pat_cites_clean_hat',
+            'pat_cites_hat__dirty':   'pat_cites_dirty_hat'})
         
         RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
    
