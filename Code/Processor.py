@@ -1112,7 +1112,8 @@ class Processor:
 
         def make_bins(df, cols):
             frames = []
-            for end in bin_ends:
+            rel_bins = sorted(set(df['year']).intersection(bin_ends))
+            for end in rel_bins:
                 w = df[(df['year'] > end - bin_len)
                        & (df['year'] <= end)]
                 if w.empty:
@@ -1121,7 +1122,7 @@ class Processor:
                                .sum().assign(period=end))
             out = pd.concat(frames, ignore_index=True)
             idx = pd.MultiIndex.from_product(
-                [sorted(out['BLS_Industry'].unique()), bin_ends],
+                [sorted(out['BLS_Industry'].unique()), rel_bins],
                 names=['BLS_Industry', 'period'])
             out = (out.set_index(['BLS_Industry', 'period'])
                       .reindex(idx).fillna(0.0).reset_index())
@@ -1131,8 +1132,8 @@ class Processor:
                       'clean_pat_cites', 'dirty_pat_cites', 'pat_cites_nc', 'pat_cites']
         Ind_Pat_df = make_bins(Ind_Pat_yr_df, pat_cols)
         
-        rd_cols   = ['pat_count_hat', 'pat_count_clean_hat',
-                    'pat_cites_hat', 'pat_cites_clean_hat']
+        rd_cols   = ['pat_count_hat', 'pat_count_clean_hat', 'pat_count_dirty_hat',
+                    'pat_cites_hat', 'pat_cites_clean_hat', 'pat_cites_dirty_hat']
         RD_shocks_df = make_bins(RD_shocks_yr_df, rd_cols)
 
        
@@ -1284,14 +1285,21 @@ class Processor:
         # ------------------- #
         # Network Instruments #
         # ------------------- #
+        RD_shocks_df['pat_count_clim_hat'] = RD_shocks_df['pat_count_clean_hat'] + RD_shocks_df['pat_count_dirty_hat'] #Move to cleaner
+        RD_shocks_df['pat_cites_clim_hat'] = RD_shocks_df['pat_cites_clean_hat'] + RD_shocks_df['pat_cites_dirty_hat']
+        
         S_fix = Σ_LI[BLS_year_start][np.ix_(keep, keep)]
 
-        RD_shock_periods   = sorted(set(RD_shocks_df['period'])   & set(bin_ends))
+        RD_shock_periods = sorted(set(RD_shocks_df['period']))
  
         shock_defs = {
             'rd_pat':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_hat',
                          RD_shock_periods),
             'rd_cite':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_hat',
+                         RD_shock_periods),
+            'rd_pat_dir':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_clim_hat',
+                         RD_shock_periods),
+            'rd_cite_dir':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_clim_hat',
                          RD_shock_periods),
         }
 
