@@ -539,7 +539,7 @@ class Processor:
                                     .agg(**agg_full))
         panel_idx = pd.MultiIndex.from_product(
             [sorted(ind_pat_df['BLS_Industry'].unique()), 
-             list(range(BLS_year_start, Year_end + 1))],
+             list(range(BLS_year_start-10, Year_end + 1))],
             names=['BLS_Industry', 'year'])
         ind_pat_df = (ind_pat_df.set_index(['BLS_Industry', 'year'])
                            .reindex(panel_idx)
@@ -561,7 +561,7 @@ class Processor:
             
             
             
-    def Instruments(self, BLS_year_start, Year_end):
+    def Instruments(self):
         """""
         Create Series of Greenification Shocks
     
@@ -616,9 +616,7 @@ class Processor:
         fsy_win = (pd.concat(window, ignore_index=True)
                      .groupby(['gvkey', 'state_fips', 'year'], as_index=False)
                      .agg(**{c: (c, 'sum') for c in w_cols}))
- 
-        fsy_win = fsy_win[(fsy_win['year'] >= BLS_year_start) & (fsy_win['year'] <= Year_end)]
- 
+  
         firm_tot = (fsy_win.groupby(['gvkey', 'year'], as_index=False)[w_cols]
                            .sum()
                            .rename(columns={c: f'{c}_tot' for c in w_cols}))
@@ -713,30 +711,12 @@ class Processor:
         firm_pat_panel_df['pat_cites_clean_hat'] = np.exp(m_cites_clean.predict().fitted_values)
         firm_pat_panel_df = firm_pat_panel_df.reset_index()
         
-        
-        RD_frames = []
-        for start in range(BLS_year_start-5, Year_end, 5):
-            end = start + 5
-            bin_df = firm_pat_panel_df[(firm_pat_panel_df['year'] > start) & (firm_pat_panel_df['year'] <= end)]
-            RD_frames.append(bin_df.groupby('BLS_Industry', as_index=False)
-                                    .agg(pat_count_hat=('pat_count_hat', 'sum'),
-                                         pat_count_clean_hat=('pat_count_clean_hat', 'sum'),
-                                         pat_cites_hat=('pat_cites_hat', 'sum'),
-                                         pat_cites_clean_hat=('pat_cites_clean_hat', 'sum'))
-                                    .assign(period=end))
-            
-        RD_shocks_df = pd.concat(RD_frames, ignore_index=True)
-        
-        panel_idx = pd.MultiIndex.from_product(
-            [sorted(firm_pat_panel_df['BLS_Industry'].unique()), list(range(BLS_year_start, Year_end-5+1, 5))],
-            names=['BLS_Industry', 'period'])
-        RD_shocks_df = (RD_shocks_df.set_index(['BLS_Industry', 'period'])
-                                .reindex(panel_idx)
-                                .fillna(0.0)
-                                .reset_index()
-                      [['period', 'BLS_Industry', 'pat_count_hat', 'pat_count_clean_hat', 'pat_cites_hat', 'pat_cites_clean_hat']]
-                      .sort_values(['BLS_Industry', 'period'])
-                      .reset_index(drop=True))
+        RD_shocks_df = (firm_pat_panel_df
+                            .groupby(['BLS_Industry', 'year'], as_index=False)
+                            .agg(pat_count_hat       = ('pat_count_hat',       'sum'),
+                                 pat_count_clean_hat = ('pat_count_clean_hat', 'sum'),
+                                 pat_cites_hat       = ('pat_cites_hat',       'sum'),
+                                 pat_cites_clean_hat = ('pat_cites_clean_hat', 'sum')))
         
         RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
    
@@ -1056,7 +1036,7 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, BLS_year_start, Year_end, dim=3):
+    def Up_Down_Green(self, BLS_year_start, Year_end):
         """""
         Strategic Complementarity for Greenification
         
@@ -1076,11 +1056,11 @@ class Processor:
         # ----------------------------------------------------------------
         
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
-        Ind_Pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_Pat_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         
         # Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
         
-        RD_shocks_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
+        RD_shocks_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         
@@ -1090,17 +1070,15 @@ class Processor:
         # -------- # 
         bin_len = 5
         bin_ends = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
-        count_cols = ['clean_pat_count', 'dirty_pat_count', 'pat_count_nc', 'pat_count', 
-                      'clean_pat_cites', 'dirty_pat_cites', 'pat_cites_nc', 'pat_cites']
 
-        def make_bins(df):
+        def make_bins(df, cols):
             frames = []
             for end in bin_ends:
                 w = df[(df['year'] > end - bin_len)
                        & (df['year'] <= end)]
                 if w.empty:
                     continue
-                frames.append(w.groupby('BLS_Industry', as_index=False)[count_cols]
+                frames.append(w.groupby('BLS_Industry', as_index=False)[cols]
                                .sum().assign(period=end))
             out = pd.concat(frames, ignore_index=True)
             idx = pd.MultiIndex.from_product(
@@ -1110,7 +1088,13 @@ class Processor:
                       .reindex(idx).fillna(0.0).reset_index())
             return out
         
-        Ind_Pat_df = make_bins(Ind_Pat_df)
+        pat_cols = ['clean_pat_count', 'dirty_pat_count', 'pat_count_nc', 'pat_count', 
+                      'clean_pat_cites', 'dirty_pat_cites', 'pat_cites_nc', 'pat_cites']
+        Ind_Pat_df = make_bins(Ind_Pat_yr_df, pat_cols)
+        
+        rd_cols   = ['pat_count_hat', 'pat_count_clean_hat',
+                    'pat_cites_hat', 'pat_cites_clean_hat']
+        RD_shocks_df = make_bins(RD_shocks_yr_df, rd_cols)
 
        
         # ---------------- #

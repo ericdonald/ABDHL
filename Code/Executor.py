@@ -35,7 +35,7 @@ API = 0
 # ----------------- #
 # Build Instruments #
 # ----------------- #
-#P.Instruments(BLS_year_start, Year_end)
+P.Instruments()
 
 
 # ---------------- #
