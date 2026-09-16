@@ -1143,8 +1143,9 @@ class Processor:
                               .reindex(index=bin_ends, columns=manu_idx_all)
                               .sort_index())
  
-        pat_wide  = wide('pat_count')
-        cite_wide = wide('pat_cites')
+        cln_p, drt_p, tot_p = wide('clean_pat_count'), wide('dirty_pat_count'), wide('pat_count')
+        cln_c, drt_c, tot_c = wide('clean_pat_cites'), wide('dirty_pat_cites'), wide('pat_cites')
+        dir_p, dir_c = cln_p + drt_p, cln_c + drt_c
         
         def estimate_kappa(cln_w, tot_w, min_den=100):
             c = cln_w.to_numpy(dtype=float).ravel()
@@ -1160,16 +1161,20 @@ class Processor:
             kap = p * (1 - p) / max(v - samp, 1e-12) - 1
             return float(np.clip(kap, 1.0, 200.0))
 
-        cln_p, cln_c = wide('clean_pat_count'), wide('clean_pat_cites')
 
-        κ_pat  = estimate_kappa(cln_p, pat_wide)
-        κ_cite = estimate_kappa(cln_c, cite_wide)
+        κ_dir_p = estimate_kappa(cln_p, dir_p)
+        κ_dir_c = estimate_kappa(cln_c, dir_c)
+        κ_pat   = estimate_kappa(cln_p, tot_p)
+        κ_cite  = estimate_kappa(cln_c, tot_c)
+        
+        def shrink(num, den, kappa):
+           gbar = (num.sum(axis=1) / den.sum(axis=1)).to_numpy()[:, None]
+           return ((num + kappa * gbar) / (den + kappa)).where(den > 0)
 
-        Gbar_p = (cln_p.sum(axis=1) / pat_wide.sum(axis=1)).to_numpy()[:, None]
-        Gbar_c = (cln_c.sum(axis=1) / cite_wide.sum(axis=1)).to_numpy()[:, None]
-
-        G_pat  = ((cln_p + κ_pat  * Gbar_p) / (pat_wide  + κ_pat )).where(pat_wide  > 0)
-        G_cite = ((cln_c + κ_cite * Gbar_c) / (cite_wide + κ_cite)).where(cite_wide > 0)
+        D_pat  = shrink(cln_p, dir_p, κ_dir_p)
+        D_cite = shrink(cln_c, dir_c, κ_dir_c)
+        G_pat  = shrink(cln_p, tot_p, κ_pat)
+        G_cite = shrink(cln_c, tot_c, κ_cite)
 
         keep     = np.isin(manu_idx_all, Ind_Pat_df['BLS_Industry'].unique())
         keep_idx = manu_idx_all[keep]
@@ -1185,15 +1190,11 @@ class Processor:
 
            w_up = S_sub   @ o                       
            w_dn = S_sub.T @ o                      
-           t_up = S_sub.sum(axis=1)               
-           t_dn = S_sub.sum(axis=0)
 
            up   = np.where(w_up > 0, (S_sub   @ v0) / np.where(w_up > 0, w_up, 1.0), np.nan)
            down = np.where(w_dn > 0, (S_sub.T @ v0) / np.where(w_dn > 0, w_dn, 1.0), np.nan)
-
-           cov_up = np.where(t_up > 0, w_up / np.where(t_up > 0, t_up, 1.0), np.nan)
-           cov_dn = np.where(t_dn > 0, w_dn / np.where(t_dn > 0, t_dn, 1.0), np.nan)
-           return up, down, cov_up, cov_dn
+           
+           return up, down
 
         frames = []
         for t in bin_ends:
@@ -1201,12 +1202,19 @@ class Processor:
             v_cite   = G_cite.loc[t].to_numpy(dtype=float)[keep]
             obs_pat  = np.isfinite(v_pat)
             obs_cite = np.isfinite(v_cite)
+            
+            v_pat_dir    = D_pat.loc[t].to_numpy(dtype=float)[keep]
+            v_cite_dir   = D_cite.loc[t].to_numpy(dtype=float)[keep]
+            obs_pat_dir  = np.isfinite(v_pat_dir)
+            obs_cite_dir = np.isfinite(v_cite_dir)
  
             S          = Σ_LI[t][np.ix_(keep, keep)]
-            s_up, s_dn = S.sum(axis=1), S.sum(axis=0)
  
-            up_p, dn_p, cov_up_p, cov_dn_p = partner_avg(S, v_pat,  obs_pat)
-            up_c, dn_c, cov_up_c, cov_dn_c = partner_avg(S, v_cite, obs_cite)
+            up_p, dn_p = partner_avg(S, v_pat,  obs_pat)
+            up_c, dn_c = partner_avg(S, v_cite, obs_cite)
+            
+            up_p_dir, dn_p_dir = partner_avg(S, v_pat_dir, obs_pat_dir)
+            up_c_dir, dn_c_dir = partner_avg(S, v_cite_dir, obs_cite_dir)
  
             frames.append(pd.DataFrame({
                 'BLS_Industry': keep_idx,
@@ -1215,16 +1223,18 @@ class Processor:
                 'down_G_pat':   dn_p,
                 'up_G_cite':    up_c,
                 'down_G_cite':  dn_c,
-                's_up':         s_up,
-                's_dn':         s_dn,
-                'cov_up':       cov_up_p,
-                'cov_dn':       cov_dn_p,
-                'n_obs_up':     int(obs_pat.sum()),
+                'up_D_pat':     up_p_dir,
+                'down_D_pat':   dn_p_dir,
+                'up_D_cite':    up_c_dir,
+                'down_D_cite':  dn_c_dir,
+                
             }))
  
         net_df = pd.concat(frames, ignore_index=True)
         net_df['net_G_pat']  = net_df['up_G_pat']  + net_df['down_G_pat']
         net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
+        net_df['net_D_pat']  = net_df['up_D_pat']  + net_df['down_D_pat']
+        net_df['net_D_cite'] = net_df['up_D_cite'] + net_df['down_D_cite']
  
         
         # ------------------ #
@@ -1234,6 +1244,14 @@ class Processor:
                                 / Ind_Pat_df['pat_count'].where(Ind_Pat_df['pat_count'] > 0))
         Ind_Pat_df['G_cite'] = (Ind_Pat_df['clean_pat_cites']
                                 / Ind_Pat_df['pat_cites'].where(Ind_Pat_df['pat_cites'] > 0))
+        
+        Ind_Pat_df['clim_pat_count'] = Ind_Pat_df['clean_pat_count'] + Ind_Pat_df['dirty_pat_count'] #Move to cleaner
+        Ind_Pat_df['clim_pat_cites'] = Ind_Pat_df['clean_pat_cites'] + Ind_Pat_df['dirty_pat_cites']
+        
+        Ind_Pat_df['D_pat']  = (Ind_Pat_df['clean_pat_count']
+                                / Ind_Pat_df['clim_pat_count'].where(Ind_Pat_df['clim_pat_count'] > 0))
+        Ind_Pat_df['D_cite'] = (Ind_Pat_df['clean_pat_cites']
+                                / Ind_Pat_df['clim_pat_cites'].where(Ind_Pat_df['clim_pat_cites'] > 0))
  
         reg_df = net_df.merge(Ind_Pat_df, on=['BLS_Industry', 'period'], how='left')
         
@@ -1241,9 +1259,9 @@ class Processor:
         # ---- #
         # Lags #
         # ---- #
-        lag_cols = ['up_G_pat', 'down_G_pat', 'net_G_pat',
-                    'up_G_cite', 'down_G_cite', 'net_G_cite',
-                    'G_pat', 'G_cite']
+        lag_cols = ['up_G_pat', 'down_G_pat', 'net_G_pat', 'up_D_pat', 'down_D_pat', 'net_D_pat',
+                    'up_G_cite', 'down_G_cite', 'net_G_cite', 'up_D_cite', 'down_D_cite', 'net_D_cite',
+                    'G_pat', 'G_cite', 'D_pat', 'D_cite']
         lagged = reg_df[['BLS_Industry', 'period'] + lag_cols].copy()
         lagged['period'] = lagged['period'] + bin_len
         lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
@@ -1286,7 +1304,7 @@ class Processor:
                 if not obs.any():
                     print(f'  {tag}: no finite shares in {t}, skipped')
                     continue
-                up, dn, _, _ = partner_avg(S_fix, v, obs)
+                up, dn = partner_avg(S_fix, v, obs)
                 rows.append(pd.DataFrame({'BLS_Industry': keep_idx, 'period': t,
                                           f'z_up_{tag}': up, f'z_dn_{tag}': dn}))
             if rows:
@@ -1394,10 +1412,16 @@ class Processor:
         # Green patent counts, lagged partner adoption
         m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['up_G_pat_lag', 'down_G_pat_lag', 'G_pat_lag'])
+        
+        m_pat_ud_dir  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
+                             ['up_D_pat_lag', 'down_D_pat_lag', 'D_pat_lag'])
  
         # Green citations, lagged partner adoption
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['up_G_cite_lag', 'down_G_cite_lag', 'G_cite_lag'])
+        
+        m_cit_ud_dir  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
+                             ['up_D_cite_lag', 'down_D_cite_lag', 'D_cite_lag'])
         
         # IV
         iv_pat_rd  = es.fit_poisson_iv(reg_df, 'clean_pat_count', 'pat_count_nc',
