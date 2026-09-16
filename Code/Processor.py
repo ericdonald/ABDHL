@@ -680,46 +680,69 @@ class Processor:
         
         
         # Zero Stage Regressions
-        firm_pat_panel_df = pd.merge(firm_pats_df,
+        firm_pat_wide_df = pd.merge(firm_pats_df,
                                 firm_inv_df,
                                 on=['gvkey', 'year'],
                                 how='inner'
                                 )
+        
+        type_map = {
+            'general': {'pat_count':  'pat_count',
+                        'pat_cites':  'pat_cites',
+                        'E_rho_pats': 'E_rho_pats',
+                        'E_rho_cites':'E_rho_cites'},
+            'clean':   {'pat_count':  'pat_count_clean',
+                        'pat_cites':  'pat_cites_clean',
+                        'E_rho_pats': 'E_rho_pats_clean',
+                        'E_rho_cites':'E_rho_cites_clean'},
+        }
+ 
+        id_cols = ['gvkey', 'BLS_Industry', 'year']
+        frames  = []
+        for tname, cmap in type_map.items():
+            missing = [c for c in cmap.values() if c not in firm_pat_wide_df.columns]
+            if missing:
+                raise KeyError(f'type "{tname}" needs columns {missing}')
+            sub = firm_pat_wide_df[id_cols + list(cmap.values())].copy()
+            sub = sub.rename(columns={v: k for k, v in cmap.items()})
+            sub['type'] = tname
+            frames.append(sub)
+ 
+        firm_pat_panel_df = pd.concat(frames, ignore_index=True)
                 
-        firm_pat_panel_df['ln_pat_count'] = np.log(firm_pat_panel_df['pat_count'].where(firm_pat_panel_df['pat_count'] > 0))
-        firm_pat_panel_df['ln_pat_count_clean'] = np.log(firm_pat_panel_df['pat_count_clean'].where(firm_pat_panel_df['pat_count_clean'] > 0))
+        for c in ['pat_count', 'pat_cites', 'E_rho_pats', 'E_rho_cites']:
+            firm_pat_panel_df[f'ln_{c}'] = np.log(
+                firm_pat_panel_df[c].where(firm_pat_panel_df[c] > 0))
         
-        firm_pat_panel_df['ln_pat_cites'] = np.log(firm_pat_panel_df['pat_cites'].where(firm_pat_panel_df['pat_cites'] > 0))
-        firm_pat_panel_df['ln_pat_cites_clean'] = np.log(firm_pat_panel_df['pat_cites_clean'].where(firm_pat_panel_df['pat_cites_clean'] > 0))
-        
-        firm_pat_panel_df['ln_E_rho_pats'] = np.log(firm_pat_panel_df['E_rho_pats'].where(firm_pat_panel_df['E_rho_pats'] > 0))
-        firm_pat_panel_df['ln_E_rho_pats_clean'] = np.log(firm_pat_panel_df['E_rho_pats_clean'].where(firm_pat_panel_df['E_rho_pats_clean'] > 0))
-        
-        firm_pat_panel_df['ln_E_rho_cites'] = np.log(firm_pat_panel_df['E_rho_cites'].where(firm_pat_panel_df['E_rho_cites'] > 0))
-        firm_pat_panel_df['ln_E_rho_cites_clean'] = np.log(firm_pat_panel_df['E_rho_cites_clean'].where(firm_pat_panel_df['E_rho_cites_clean'] > 0))
-        
-        firm_pat_panel_df['entity'] = firm_pat_panel_df['gvkey'].astype(str)
+        firm_pat_panel_df['entity'] = (firm_pat_panel_df['gvkey'].astype(str) + '_'
+                                          + firm_pat_panel_df['type'])
         firm_pat_panel_df = firm_pat_panel_df.set_index(['entity','year']).sort_index()
     
         m_pats = gpf.run_reg(firm_pat_panel_df['ln_pat_count'], firm_pat_panel_df['ln_E_rho_pats'], 'panel')
-        m_pats_clean = gpf.run_reg(firm_pat_panel_df['ln_pat_count_clean'], firm_pat_panel_df['ln_E_rho_pats_clean'], 'panel')
-
         m_cites = gpf.run_reg(firm_pat_panel_df['ln_pat_cites'], firm_pat_panel_df['ln_E_rho_cites'], 'panel')
-        m_cites_clean = gpf.run_reg(firm_pat_panel_df['ln_pat_cites_clean'], firm_pat_panel_df['ln_E_rho_cites_clean'], 'panel')
         
         firm_pat_panel_df['pat_count_hat'] = np.exp(m_pats.predict().fitted_values)
-        firm_pat_panel_df['pat_count_clean_hat'] = np.exp(m_pats_clean.predict().fitted_values)
-        
         firm_pat_panel_df['pat_cites_hat'] = np.exp(m_cites.predict().fitted_values)
-        firm_pat_panel_df['pat_cites_clean_hat'] = np.exp(m_cites_clean.predict().fitted_values)
         firm_pat_panel_df = firm_pat_panel_df.reset_index()
         
-        RD_shocks_df = (firm_pat_panel_df
-                            .groupby(['BLS_Industry', 'year'], as_index=False)
-                            .agg(pat_count_hat       = ('pat_count_hat',       'sum'),
-                                 pat_count_clean_hat = ('pat_count_clean_hat', 'sum'),
-                                 pat_cites_hat       = ('pat_cites_hat',       'sum'),
-                                 pat_cites_clean_hat = ('pat_cites_clean_hat', 'sum')))
+        hat_cols = ['pat_count_hat', 'pat_cites_hat']
+ 
+        firm_pat_panel_df[hat_cols] = firm_pat_panel_df[hat_cols].fillna(0.0)
+ 
+        ind_hat_df = (firm_pat_panel_df
+                      .pivot_table(index=['BLS_Industry', 'year'],
+                                   columns='type',
+                                   values=hat_cols,
+                                   aggfunc='sum',
+                                   fill_value=0.0))
+        ind_hat_df.columns = [f'{v}__{t}' for v, t in ind_hat_df.columns]
+        ind_hat_df = ind_hat_df.reset_index()
+ 
+        RD_shocks_df = ind_hat_df.rename(columns={
+            'pat_count_hat__general': 'pat_count_hat',
+            'pat_count_hat__clean':   'pat_count_clean_hat',
+            'pat_cites_hat__general': 'pat_cites_hat',
+            'pat_cites_hat__clean':   'pat_cites_clean_hat'})
         
         RD_shocks_df.to_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
    
@@ -1039,7 +1062,7 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, BLS_year_start, Year_end):
+    def Up_Down_Green(self, BLS_year_start, Year_end, bin_len=5):
         """""
         Strategic Complementarity for Greenification
         
@@ -1071,7 +1094,6 @@ class Processor:
         # -------- #
         # Bin Data #
         # -------- # 
-        bin_len = 5
         bin_ends = [y for y in range(BLS_year_start, Year_end + 1, bin_len) if y in IO_mats]
 
         def make_bins(df, cols):
