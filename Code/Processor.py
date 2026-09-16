@@ -1479,6 +1479,15 @@ class Processor:
                 print(f'\n{"="*78}\n{name}\n{"="*78}\n{m!r}')
  
         show()
+        
+        
+        ## Other IVs
+        ## Count vs cites, again
+        ## Other scaling
+        ## Control for own shock
+        ## Coefficiant on offset
+        ## IV net
+        ## own lag or industry fixed effects, not both (or average of pre-sample)
  
         self.reg_df = reg_df
         self.Models = Models
