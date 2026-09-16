@@ -1434,8 +1434,8 @@ class Processor:
                                     endog_cols=['up_G_cite_lag', 'down_G_cite_lag'],
                                     instrument_cols=['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'])
         
-        Models = {'pat_ud': m_pat_ud, 'pat_ivrd_ud': iv_pat_rd,
-                  'cit_ud': m_cit_ud, 'cit_ivrd_ud': iv_cit_rd}
+        Models = {'pat_ud': m_pat_ud, 'pat_ud_dir': m_pat_ud_dir, 'pat_ivrd_ud': iv_pat_rd,
+                  'cit_ud': m_cit_ud, 'cit_ud_dir': m_cit_ud_dir, 'cit_ivrd_ud': iv_cit_rd}
  
         def show(models=None):
             for name, m in (models or Models).items():
