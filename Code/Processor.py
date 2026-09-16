@@ -48,7 +48,7 @@ class Processor:
                                         "B01J8/20", "B01J8/22", "B01J8/24", "B01J8/26", "B01J8/28", "B01J8/30",
                                         "F02B", "F02D", "F02F", "F02M", "F02N", "F02P", "Y02T10/12", "Y02T10/40"]}
         self.manu_cols = [1, 93]
-        self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well ## Double check!
+        self.fossil_cols = [7-1, 8-1]#, 12-1] #Exclude electricity as well
         
         keys_path = self.Directory / ".keys"
         keys = {}
