@@ -26,7 +26,7 @@ where `XX` is the user's API key for the relevant data source.
   - [Inventors](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
   - [Location Crosswalk](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
 
-### Contained in [Raw Data](https://github.com/ericdonald/ABDHL/releases/download/v1.0.0/Raw.Data.zip):
+### Contained in Raw Data:
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
 - Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) and [Arora et al. (2021)](https://zenodo.org/records/13619821)
@@ -63,6 +63,6 @@ Results/Tables/
 Results/Figures/
 ```
 
-Download the [raw data](), unzip, and place the file(s) directly in `Raw Data/`.
+Download the [raw data](https://github.com/ericdonald/ABDHL/releases/download/v1.0.0/Raw.Data.zip), unzip, and place the file(s) directly in `Raw Data/`.
 
 ## List of Tables and Figures:
