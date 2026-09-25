@@ -425,7 +425,7 @@ class Processor:
         citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
         citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
         
-        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']],
+        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_section', 'cpc_class']][CPC_df['cpc_section'] != 'Y'],
                                             on='patent_id',
                                             how='right')
         citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
