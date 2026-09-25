@@ -1076,7 +1076,7 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, BLS_year_start, Year_end, bin_len=5):
+    def Up_Down_Green(self, BLS_year_start, Year_end, bin_len=5, wins=0.05):
         """""
         Strategic Complementarity for Greenification
         
@@ -1097,10 +1097,11 @@ class Processor:
         
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
         Ind_Pat_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        Ind_CO2_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
         
         # Ind_Pat_df_full = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
         
-        RD_shocks_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
+        # RD_shocks_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         
@@ -1132,11 +1133,43 @@ class Processor:
                       'clean_pat_cites', 'dirty_pat_cites', 'pat_cites_nc', 'pat_cites']
         Ind_Pat_df = make_bins(Ind_Pat_yr_df, pat_cols)
         
-        rd_cols   = ['pat_count_hat', 'pat_count_clean_hat', 'pat_count_dirty_hat',
-                    'pat_cites_hat', 'pat_cites_clean_hat', 'pat_cites_dirty_hat']
-        RD_shocks_df = make_bins(RD_shocks_yr_df, rd_cols)
+        # rd_cols   = ['pat_count_hat', 'pat_count_clean_hat', 'pat_count_dirty_hat',
+        #             'pat_cites_hat', 'pat_cites_clean_hat', 'pat_cites_dirty_hat']
+        # RD_shocks_df = make_bins(RD_shocks_yr_df, rd_cols)
 
-       
+
+        # --------- #
+        # Emissions #
+        # --------- # 
+        Ind_CO2_df = Ind_CO2_yr_df[Ind_CO2_yr_df['year'].isin(bin_ends)].copy()
+        Ind_CO2_df = Ind_CO2_df.rename(columns={'year': 'period'})
+        Ind_CO2_df = Ind_CO2_df[Ind_CO2_df['BLS_Industry'].isin(manu_idx_all)]
+
+        Ind_CO2_df['ln_CO2e_inten'] = np.log(Ind_CO2_df['CO2e_intensity_Industry'].where(
+                                        Ind_CO2_df['CO2e_intensity_Industry'] > 0))
+
+        lagged = Ind_CO2_df[['BLS_Industry', 'period', 'ln_CO2e_inten']].copy()
+        lagged['period'] = lagged['period'] + bin_len
+        lagged = lagged.rename(columns={'ln_CO2e_inten': 'ln_CO2e_inten_prev'})
+        Ind_CO2_df = Ind_CO2_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
+
+        Ind_CO2_df['dln_CO2'] = -(Ind_CO2_df['ln_CO2e_inten']
+                                  - Ind_CO2_df['ln_CO2e_inten_prev'])
+
+        bins_em = sorted(set(Ind_CO2_df['period']) & set(bin_ends))
+
+        idx = pd.MultiIndex.from_product([sorted(manu_idx_all), bins_em],
+                                         names=['BLS_Industry', 'period'])
+        Ind_CO2_df = (Ind_CO2_df.set_index(['BLS_Industry', 'period'])
+                                .reindex(idx).reset_index())
+
+        em_wide = (Ind_CO2_df.pivot(index='period', columns='BLS_Industry',
+                                    values='dln_CO2')
+                             .reindex(index=bins_em[1:], columns=manu_idx_all))
+        keep_em = np.isfinite(em_wide.to_numpy(dtype=float)).all(axis=0)
+        keep_em_idx = manu_idx_all[keep_em]
+        
+        
         # ---------------- #
         # Leontief Inverse #
         # ---------------- # 
@@ -1216,7 +1249,7 @@ class Processor:
             v_cite_dir   = D_cite.loc[t].to_numpy(dtype=float)[keep]
             obs_pat_dir  = np.isfinite(v_pat_dir)
             obs_cite_dir = np.isfinite(v_cite_dir)
- 
+             
             S          = Σ_LI[t][np.ix_(keep, keep)]
  
             up_p, dn_p = partner_avg(S, v_pat,  obs_pat)
@@ -1244,6 +1277,28 @@ class Processor:
         net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
         net_df['net_D_pat']  = net_df['up_D_pat']  + net_df['down_D_pat']
         net_df['net_D_cite'] = net_df['up_D_cite'] + net_df['down_D_cite']
+        
+        frames_em = []
+        for t in bins_em[1:]:
+            v_em = em_wide.loc[t].to_numpy(dtype=float)[keep_em]
+            obs__em  = np.isfinite(v_em)
+            
+            lo, hi = np.nanquantile(v_em, [wins, 1 - wins])
+            v_em = np.clip(v_em, lo, hi)
+ 
+            S = Σ_LI[t][np.ix_(keep_em, keep_em)]
+ 
+            up_em, dn_em = partner_avg(S, v_em,  obs__em)
+ 
+            frames_em.append(pd.DataFrame({
+                'BLS_Industry': keep_em_idx,
+                'period':       t,
+                'up_dln_CO2':   up_em,
+                'down_dln_CO2': dn_em,
+            }))
+            
+        net_df = net_df.merge(pd.concat(frames_em, ignore_index=True), on=['BLS_Industry', 'period'], how='left')
+        net_df['net_dln_CO2']  = net_df['up_dln_CO2'] + net_df['down_dln_CO2']
  
         
         # ------------------ #
@@ -1263,6 +1318,7 @@ class Processor:
                                 / Ind_Pat_df['clim_pat_cites'].where(Ind_Pat_df['clim_pat_cites'] > 0))
  
         reg_df = net_df.merge(Ind_Pat_df, on=['BLS_Industry', 'period'], how='left')
+        reg_df = reg_df.merge(Ind_CO2_df[['BLS_Industry', 'period', 'dln_CO2']][Ind_CO2_df['dln_CO2'] != 0], on=['BLS_Industry', 'period'], how='left')
         
         
         # ---- #
@@ -1270,74 +1326,75 @@ class Processor:
         # ---- #
         lag_cols = ['up_G_pat', 'down_G_pat', 'net_G_pat', 'up_D_pat', 'down_D_pat', 'net_D_pat',
                     'up_G_cite', 'down_G_cite', 'net_G_cite', 'up_D_cite', 'down_D_cite', 'net_D_cite',
-                    'G_pat', 'G_cite', 'D_pat', 'D_cite']
+                    'G_pat', 'G_cite', 'D_pat', 'D_cite',
+                    'net_dln_CO2', 'up_dln_CO2', 'down_dln_CO2', 'dln_CO2']
         lagged = reg_df[['BLS_Industry', 'period'] + lag_cols].copy()
         lagged['period'] = lagged['period'] + bin_len
         lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
         reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
         
         
-        # ------------------- #
-        # Network Instruments #
-        # ------------------- #
-        RD_shocks_df['pat_count_clim_hat'] = RD_shocks_df['pat_count_clean_hat'] + RD_shocks_df['pat_count_dirty_hat'] #Move to cleaner
-        RD_shocks_df['pat_cites_clim_hat'] = RD_shocks_df['pat_cites_clean_hat'] + RD_shocks_df['pat_cites_dirty_hat']
+        # # ------------------- #
+        # # Network Instruments #
+        # # ------------------- #
+        # RD_shocks_df['pat_count_clim_hat'] = RD_shocks_df['pat_count_clean_hat'] + RD_shocks_df['pat_count_dirty_hat'] #Move to cleaner
+        # RD_shocks_df['pat_cites_clim_hat'] = RD_shocks_df['pat_cites_clean_hat'] + RD_shocks_df['pat_cites_dirty_hat']
         
-        S_fix = Σ_LI[BLS_year_start][np.ix_(keep, keep)]
+        # S_fix = Σ_LI[BLS_year_start][np.ix_(keep, keep)]
 
-        RD_shock_periods = sorted(set(RD_shocks_df['period']))
+        # RD_shock_periods = sorted(set(RD_shocks_df['period']))
  
-        shock_defs = {
-            'rd_pat':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_hat',
-                         RD_shock_periods),
-            'rd_cite':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_hat',
-                         RD_shock_periods),
-            'rd_pat_dir':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_clim_hat',
-                         RD_shock_periods),
-            'rd_cite_dir':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_clim_hat',
-                         RD_shock_periods),
-        }
+        # shock_defs = {
+        #     'rd_pat':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_hat',
+        #                  RD_shock_periods),
+        #     'rd_cite':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_hat',
+        #                  RD_shock_periods),
+        #     'rd_pat_dir':   (RD_shocks_df,   'pat_count_clean_hat',   'pat_count_clim_hat',
+        #                  RD_shock_periods),
+        #     'rd_cite_dir':  (RD_shocks_df,   'pat_cites_clean_hat',   'pat_cites_clim_hat',
+        #                  RD_shock_periods),
+        # }
 
-        def shock_share(src, num_col, den_col, periods, wins=0.02):
-           num = (src.pivot(index='period', columns='BLS_Industry', values=num_col)
-                     .reindex(index=periods, columns=manu_idx_all))
-           den = (src.pivot(index='period', columns='BLS_Industry', values=den_col)
-                     .reindex(index=periods, columns=manu_idx_all))
-           w = num / den.where(den > 0)
-           if wins:
-               v = w.to_numpy(dtype=float)
-               if np.isfinite(v).any():
-                   lo, hi = np.nanquantile(v, [wins, 1 - wins])
-                   w = w.clip(lower=lo, upper=hi)
-           return w
+        # def shock_share(src, num_col, den_col, periods, wins=0.02):
+        #    num = (src.pivot(index='period', columns='BLS_Industry', values=num_col)
+        #              .reindex(index=periods, columns=manu_idx_all))
+        #    den = (src.pivot(index='period', columns='BLS_Industry', values=den_col)
+        #              .reindex(index=periods, columns=manu_idx_all))
+        #    w = num / den.where(den > 0)
+        #    if wins:
+        #        v = w.to_numpy(dtype=float)
+        #        if np.isfinite(v).any():
+        #            lo, hi = np.nanquantile(v, [wins, 1 - wins])
+        #            w = w.clip(lower=lo, upper=hi)
+        #    return w
 
-        z_parts = []
-        for tag, (src, num, den, periods) in shock_defs.items():
-            Gz, rows = shock_share(src, num, den, periods), []
-            for t in periods:
-                v   = Gz.loc[t].to_numpy(dtype=float)[keep]
-                obs = np.isfinite(v)
-                if not obs.any():
-                    print(f'  {tag}: no finite shares in {t}, skipped')
-                    continue
-                up, dn = partner_avg(S_fix, v, obs)
-                rows.append(pd.DataFrame({'BLS_Industry': keep_idx, 'period': t,
-                                          f'z_up_{tag}': up, f'z_dn_{tag}': dn}))
-            if rows:
-                z_parts.append(pd.concat(rows, ignore_index=True))
-            else:
-                print(f'  {tag}: NO usable periods')
+        # z_parts = []
+        # for tag, (src, num, den, periods) in shock_defs.items():
+        #     Gz, rows = shock_share(src, num, den, periods), []
+        #     for t in periods:
+        #         v   = Gz.loc[t].to_numpy(dtype=float)[keep]
+        #         obs = np.isfinite(v)
+        #         if not obs.any():
+        #             print(f'  {tag}: no finite shares in {t}, skipped')
+        #             continue
+        #         up, dn = partner_avg(S_fix, v, obs)
+        #         rows.append(pd.DataFrame({'BLS_Industry': keep_idx, 'period': t,
+        #                                   f'z_up_{tag}': up, f'z_dn_{tag}': dn}))
+        #     if rows:
+        #         z_parts.append(pd.concat(rows, ignore_index=True))
+        #     else:
+        #         print(f'  {tag}: NO usable periods')
  
-        z_df = z_parts[0]
-        for part in z_parts[1:]:
-            z_df = z_df.merge(part, on=['BLS_Industry', 'period'], how='outer')
-        z_cols_all = [c for c in z_df.columns if c.startswith('z_')]
+        # z_df = z_parts[0]
+        # for part in z_parts[1:]:
+        #     z_df = z_df.merge(part, on=['BLS_Industry', 'period'], how='outer')
+        # z_cols_all = [c for c in z_df.columns if c.startswith('z_')]
 
-        # Lag the instruments
-        z_lag = z_df.copy()
-        z_lag['period'] = z_lag['period'] + bin_len
-        z_lag = z_lag.rename(columns={c: f'{c}_lag' for c in z_cols_all})
-        reg_df = reg_df.merge(z_lag, on=['BLS_Industry', 'period'], how='left')
+        # # Lag the instruments
+        # z_lag = z_df.copy()
+        # z_lag['period'] = z_lag['period'] + bin_len
+        # z_lag = z_lag.rename(columns={c: f'{c}_lag' for c in z_cols_all})
+        # reg_df = reg_df.merge(z_lag, on=['BLS_Industry', 'period'], how='left')
         
         
         # ----------------------------------------------------------------
@@ -1381,56 +1438,56 @@ class Processor:
                            n_sectors=d['BLS_Industry'].nunique())
 
 
-        # ---------------------------------------------------------------- #
-        # First stage: do the instruments move the endogenous regressors?   #
-        # ---------------------------------------------------------------- #
-        def first_stage_matrix(endogs, z_cols, label=''):
-            cols = list(endogs) + list(z_cols)
-            d = reg_df.dropna(subset=cols).copy()
-            for c in cols:
-                d[c] = d[c] - d.groupby('BLS_Industry')[c].transform('mean')
-                d[c] = d[c] - d.groupby('period')[c].transform('mean')
-            X = np.column_stack([np.ones(len(d))] + [d[c].to_numpy(float) for c in z_cols])
-            k, rows, fitted = len(z_cols), [], {}
-            for e in endogs:
-                Y = d[e].to_numpy(float)
-                b, *_ = np.linalg.lstsq(X, Y, rcond=None)
-                res = Y - X @ b
-                r2  = 1 - (res**2).sum() / max(((Y - Y.mean())**2).sum(), 1e-12)
-                rows.append({'endog': e, 'N': len(d),
-                             'clusters': d['BLS_Industry'].nunique(),
-                             'partial R2': r2,
-                             'F': (r2 / max(1 - r2, 1e-12)) * (len(d) - k - 1) / k,
-                             **{c: b[i + 1] for i, c in enumerate(z_cols)}})
-                fitted[e] = X @ b
-            print(f'\nFirst stage {label} (sector + period demeaned)')
-            print(pd.DataFrame(rows).round(4).to_string(index=False))
-            f = pd.DataFrame(fitted)
-            if f.shape[1] == 2:
-                rr = f.corr().iloc[0, 1]
-                print(f'  corr(fitted {endogs[0]}, fitted {endogs[1]}) = {rr:+.3f}'
-                      f'{"   <-- directions NOT separately identified" if abs(rr) > 0.9 else ""}')
-            print('  F below ~10 means the instrument does not move the regressor; '
-                  'IV estimates\n  and their standard errors are then unreliable '
-                  'regardless of what they print.')
+        # # ---------------------------------------------------------------- #
+        # # First stage: do the instruments move the endogenous regressors?   #
+        # # ---------------------------------------------------------------- #
+        # def first_stage_matrix(endogs, z_cols, label=''):
+        #     cols = list(endogs) + list(z_cols)
+        #     d = reg_df.dropna(subset=cols).copy()
+        #     for c in cols:
+        #         d[c] = d[c] - d.groupby('BLS_Industry')[c].transform('mean')
+        #         d[c] = d[c] - d.groupby('period')[c].transform('mean')
+        #     X = np.column_stack([np.ones(len(d))] + [d[c].to_numpy(float) for c in z_cols])
+        #     k, rows, fitted = len(z_cols), [], {}
+        #     for e in endogs:
+        #         Y = d[e].to_numpy(float)
+        #         b, *_ = np.linalg.lstsq(X, Y, rcond=None)
+        #         res = Y - X @ b
+        #         r2  = 1 - (res**2).sum() / max(((Y - Y.mean())**2).sum(), 1e-12)
+        #         rows.append({'endog': e, 'N': len(d),
+        #                      'clusters': d['BLS_Industry'].nunique(),
+        #                      'partial R2': r2,
+        #                      'F': (r2 / max(1 - r2, 1e-12)) * (len(d) - k - 1) / k,
+        #                      **{c: b[i + 1] for i, c in enumerate(z_cols)}})
+        #         fitted[e] = X @ b
+        #     print(f'\nFirst stage {label} (sector + period demeaned)')
+        #     print(pd.DataFrame(rows).round(4).to_string(index=False))
+        #     f = pd.DataFrame(fitted)
+        #     if f.shape[1] == 2:
+        #         rr = f.corr().iloc[0, 1]
+        #         print(f'  corr(fitted {endogs[0]}, fitted {endogs[1]}) = {rr:+.3f}'
+        #               f'{"   <-- directions NOT separately identified" if abs(rr) > 0.9 else ""}')
+        #     print('  F below ~10 means the instrument does not move the regressor; '
+        #           'IV estimates\n  and their standard errors are then unreliable '
+        #           'regardless of what they print.')
  
-        first_stage_matrix(['up_G_pat_lag', 'down_G_pat_lag'],
-                           ['z_up_rd_pat_lag', 'z_dn_rd_pat_lag'],  'RD / patents')
+        # first_stage_matrix(['up_G_pat_lag', 'down_G_pat_lag'],
+        #                    ['z_up_rd_pat_lag', 'z_dn_rd_pat_lag'],  'RD / patents')
      
-        first_stage_matrix(['up_G_cite_lag', 'down_G_cite_lag'],
-                           ['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'], 'RD / cites')
+        # first_stage_matrix(['up_G_cite_lag', 'down_G_cite_lag'],
+        #                    ['z_up_rd_cite_lag', 'z_dn_rd_cite_lag'], 'RD / cites')
         
-        first_stage_matrix(['up_D_pat_lag', 'down_D_pat_lag'],
-                           ['z_up_rd_pat_dir_lag', 'z_dn_rd_pat_dir_lag'],  'RD / patents')
+        # first_stage_matrix(['up_D_pat_lag', 'down_D_pat_lag'],
+        #                    ['z_up_rd_pat_dir_lag', 'z_dn_rd_pat_dir_lag'],  'RD / patents')
      
-        first_stage_matrix(['up_D_cite_lag', 'down_D_cite_lag'],
-                           ['z_up_rd_cite_dir_lag', 'z_dn_rd_cite_dir_lag'], 'RD / cites')
+        # first_stage_matrix(['up_D_cite_lag', 'down_D_cite_lag'],
+        #                    ['z_up_rd_cite_dir_lag', 'z_dn_rd_cite_dir_lag'], 'RD / cites')
         
 
         # ---------- #
         # Estimation #
         # ---------- #
-        # Green patent counts, lagged partner adoption
+        # Patent counts
         m_pat_net  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
                              ['net_D_pat_lag'])
         
@@ -1442,8 +1499,11 @@ class Processor:
         
         m_pat_net_gen  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['net_G_pat_lag'])
+        
+        m_pat_em  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
+                             ['net_dln_CO2_lag'], entity_fe=False)
  
-        # Green citations, lagged partner adoption
+        # Patent citations
         m_cit_net  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
                              ['net_D_cite_lag'])
         
@@ -1455,6 +1515,9 @@ class Processor:
         
         m_cit_net_gen  = fit_ppml(reg_df, 'clean_pat_cites', 'pat_cites_nc',
                              ['net_G_cite_lag'])
+        
+        m_cit_em  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
+                             ['net_dln_CO2_lag'], entity_fe=False)
         
         # # IV
         # iv_pat_rd  = es.fit_poisson_iv(reg_df, 'clean_pat_count', 'pat_count_nc',
@@ -1478,8 +1541,8 @@ class Processor:
         #                             endog_cols=['up_D_cite_lag', 'down_D_cite_lag'],
         #                             instrument_cols=['z_up_rd_cite_dir_lag', 'z_dn_rd_cite_dir_lag'])
         
-        Models = {'pat_net': m_pat_net, 'pat_ud': m_pat_ud, 'pat_net_lag': m_pat_net_lag, 'pat_net_gen': m_pat_net_gen,
-                  'cit_net': m_cit_net, 'cit_ud': m_cit_ud, 'cit_net_lag': m_cit_net_lag, 'cit_net_gen': m_cit_net_gen}
+        Models = {'pat_net': m_pat_net, 'pat_ud': m_pat_ud, 'pat_net_lag': m_pat_net_lag, 'pat_net_gen': m_pat_net_gen, 'pat_em': m_pat_em,
+                  'cit_net': m_cit_net, 'cit_ud': m_cit_ud, 'cit_net_lag': m_cit_net_lag, 'cit_net_gen': m_cit_net_gen, 'cit_em': m_cit_em}
  
         def show(models=None):
             for name, m in (models or Models).items():
@@ -1488,10 +1551,10 @@ class Processor:
         show()
         
         
-        ## Govt IV with university
-        ## Other denominator for G
-        ## Control for own shock on IVs
         ## IV from network
+        ## Govt IV with university
+        ## Control for own shock on IVs
+        ## Other denominator for G
  
         
     
