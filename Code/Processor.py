@@ -425,7 +425,7 @@ class Processor:
         citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
         citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
         
-        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_section', 'cpc_class']][CPC_df['cpc_section'] != 'Y'],
+        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']][CPC_df['cpc_section'] != 'Y'],
                                             on='patent_id',
                                             how='right')
         citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
@@ -1104,6 +1104,7 @@ class Processor:
         # RD_shocks_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/RD_Shocks.pkl')
         
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
+        manu_J = manu_idx_all.size
         
         
         # -------- #
@@ -1166,8 +1167,6 @@ class Processor:
         em_wide = (Ind_CO2_df.pivot(index='period', columns='BLS_Industry',
                                     values='dln_CO2')
                              .reindex(index=bins_em[1:], columns=manu_idx_all))
-        keep_em = np.isfinite(em_wide.to_numpy(dtype=float)).all(axis=0)
-        keep_em_idx = manu_idx_all[keep_em]
         
         
         # ---------------- #
@@ -1280,18 +1279,18 @@ class Processor:
         
         frames_em = []
         for t in bins_em[1:]:
-            v_em = em_wide.loc[t].to_numpy(dtype=float)[keep_em]
+            v_em = em_wide.loc[t].to_numpy(dtype=float)
             obs__em  = np.isfinite(v_em)
             
             lo, hi = np.nanquantile(v_em, [wins, 1 - wins])
             v_em = np.clip(v_em, lo, hi)
  
-            S = Σ_LI[t][np.ix_(keep_em, keep_em)]
+            S = Σ_LI[t][:manu_J, :manu_J]
  
             up_em, dn_em = partner_avg(S, v_em,  obs__em)
  
             frames_em.append(pd.DataFrame({
-                'BLS_Industry': keep_em_idx,
+                'BLS_Industry': manu_idx_all,
                 'period':       t,
                 'up_dln_CO2':   up_em,
                 'down_dln_CO2': dn_em,
