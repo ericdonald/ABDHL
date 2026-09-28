@@ -72,7 +72,7 @@ class Processor:
                 Clean Data/BLS_Crosswalk.pkl
                 Clean Data/Ind_CO2.pkl
                 Clean Data/Ind_CO2_full.pkl
-                Raw Data/assignee.pkl
+                #Raw Data/assignee.pkl
                 Raw Data/CPC.pkl
                 Raw Data/applications.pkl
                 Raw Data/citations.pkl
@@ -519,7 +519,7 @@ class Processor:
         tech_pat_df['tech'] = tech_pat_df['cpc_subclass'] + '_' + tech_pat_df['type']
         
         tech_pat_df = tech_pat_df[['patent_id', 'tech', 'year', 'norm_cites']].drop_duplicates()
-        tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech_pat_df'].transform('count')
+        tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech'].transform('count')
         tech_pat_df['cite_weight'] = tech_pat_df['split_weight'] * tech_pat_df['norm_cites']
         
         tech_pat_df['pat_count'] = tech_pat_df.groupby('tech')['split_weight'].transform('sum')
