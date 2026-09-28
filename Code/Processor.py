@@ -62,7 +62,7 @@ class Processor:
 
         
         
-    def Cleaner(self, BLS_year_start, Year_start, Year_end, bin_len, API):
+    def Cleaner(self, BLS_year_start, Year_start, Year_end, bin_len, API, k_min=3, k_max=10):
         """""
         Clean Data
         
@@ -80,6 +80,7 @@ class Processor:
                 Raw Data/Patent_Locations.pkl
                 Clean Data/Inventor_Locations.pkl
                 Clean Data/state_rd_price.pkl
+                Clean Data/Spill_Net.pkl
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
@@ -419,6 +420,60 @@ class Processor:
         relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full', 'dirty']].drop_duplicates()
         
         
+        # ----------------- #
+        # Spillover Network #
+        # ----------------- #
+        rel = relevant_df[['patent_id', 'year', 'clean', 'dirty']].copy()
+        rel['types'] = [
+            (['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g']
+            for c, d in zip(rel['clean'], rel['dirty'])
+        ]
+        rel = rel[['patent_id', 'year', 'types']]
+    
+        cpc = CPC_df[['patent_id', 'cpc_subclass']].drop_duplicates()
+        cpc_counts = cpc.groupby('patent_id').size().rename('n_cpc').reset_index()
+    
+        cit = citations_df[['patent_id', 'citation_patent_id']].drop_duplicates()
+        cit = cit.merge(rel.rename(columns={'year': 'citing_year', 'types': 'citing_types'}), on='patent_id', how='inner')
+        cit = cit.merge(rel.rename(columns={'patent_id': 'citation_patent_id', 'year': 'cited_year', 'types': 'cited_types'}), on='citation_patent_id', how='inner')
+        cit = cit.merge(cpc_counts.rename(columns={'patent_id': 'citation_patent_id', 'n_cpc': 'n_cpc_q'}), on='citation_patent_id', how='inner')
+
+        cit = cit[(cit['citing_year'] > BLS_year_start-bin_len-10) 
+                                              & (cit['citing_year'] <= BLS_year_start-bin_len)]
+        cit['k'] = cit['citing_year'] - cit['cited_year']
+        cit = cit[(cit['k'] >= k_min) & (cit['k'] <= k_max)].copy()
+        
+        cit['n_types_q'] = cit['cited_types'].apply(len)
+        cit['cited_split'] = cit['n_cpc_q'] * cit['n_types_q']
+        citing_cpc = cpc.rename(columns={'cpc_subclass': 'cpc_p'})
+        left = cit.merge(citing_cpc, on='patent_id', how='inner')
+        left = left.explode('citing_types').rename(columns={'citing_types': 'type_p'})
+        left['i'] = left['cpc_p'] + '_' + left['type_p']
+        
+        cited_cpc = cpc.rename(columns={'patent_id': 'citation_patent_id', 'cpc_subclass': 'cpc_q'})
+        long = left.merge(cited_cpc, on='citation_patent_id', how='inner')
+        long = long.explode('cited_types').rename(columns={'cited_types': 'type_q'})
+        long['j'] = long['cpc_q'] + '_' + long['type_q']
+        long['weight'] = 1.0 / long['cited_split']
+        
+        N = long.groupby(['i', 'j', 'k'])['weight'].sum().reset_index(name='N_ijk')
+        TotalN = N.groupby(['i', 'k'])['N_ijk'].sum().reset_index(name='TotalN_jk')
+        
+        diag = N[N['i'] == N['j']][['i', 'k', 'N_ijk']].rename(columns={'N_ijk': 'N_iik'})
+
+        out = N.merge(TotalN, on=['i', 'k'], how='left')
+        out = out.merge(diag, on=['i', 'k'], how='left')
+        out['N_iik'] = out['N_iik'].fillna(0.0)
+        
+        out = out[out['i'] != out['j']].copy()
+        out['denom'] = out['TotalN_jk'] - out['N_iik']
+        out['S_ijk'] = np.where(out['denom'] > 0, out['N_ijk'] / out['denom'], np.nan)
+        
+        spill_net_df = out[['i', 'j', 'k', 'S_ijk']]
+        spill_net_df.to_pickle(f'{self.Directory}/Clean Data/Spill_Net.pkl')
+        
+        
+        
         # ------------------------- #
         # Patent Citation Weighting #
         # ------------------------- #
@@ -602,7 +657,7 @@ class Processor:
         ind_pat_shares_pre_df = pd.concat(frames, ignore_index=True)
         
         ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
-            
+        
             
             
     def Instruments(self):
