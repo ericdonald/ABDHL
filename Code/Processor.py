@@ -733,8 +733,8 @@ class Processor:
         
         KS_df['year'] = KS_df['spill_send_year'] + KS_df['k']
         
-        KS_df['BLS_tech_receipt_cnt'] = KS_df['BLS_tech_loading_cnt'] * KS_df['pat_count']
-        KS_df['BLS_tech_receipt_cit'] = KS_df['BLS_tech_loading_cit'] * KS_df['pat_cites']
+        KS_df['BLS_tech_receipt_cnt'] = KS_df['total_BLS_tech_loading_cnt'] * KS_df['pat_count']
+        KS_df['BLS_tech_receipt_cit'] = KS_df['total_BLS_tech_loading_cit'] * KS_df['pat_cites']
         
         KS_df['spill_shock_cnt'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cnt'].transform('sum')
         KS_df['spill_shock_cit'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cit'].transform('sum')
