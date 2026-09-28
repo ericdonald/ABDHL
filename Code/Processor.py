@@ -1229,13 +1229,15 @@ class Processor:
         # ---------------------- #
         # Network Greenification #
         # ---------------------- #
-        def partner_avg(S_sub, v, obs):
-           v0   = np.where(obs, v, 0.0)
-
-           up   = S_sub   @ v0 
-           down = S_sub.T @ v0 
-           
-           return up, down
+        def partner_avg(S_sub, v, obs, normalise=False):
+            v0 = np.where(obs, v, 0.0)
+            up, down = S_sub @ v0, S_sub.T @ v0
+            if not normalise:
+                return up, down
+            o = obs.astype(float)
+            w_up, w_dn = S_sub @ o, S_sub.T @ o
+            return (np.where(w_up > 0, up / np.where(w_up > 0, w_up, 1.0), np.nan),
+                    np.where(w_dn > 0, down / np.where(w_dn > 0, w_dn, 1.0), np.nan))
 
         frames = []
         for t in bin_ends:
