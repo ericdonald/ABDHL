@@ -81,6 +81,7 @@ class Processor:
                 Clean Data/Inventor_Locations.pkl
                 Clean Data/state_rd_price.pkl
                 Clean Data/Spill_Net.pkl
+                Clean Data/Tech_Pat.pkl
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
@@ -502,6 +503,30 @@ class Processor:
         )
         
         del PV_applications_df, relevant_df, citations_df
+        
+        
+        # ----------------------------- #
+        # Patenting by Technology Class #
+        # ----------------------------- #
+        tech_pat_df = pat_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
+                                            on='patent_id',
+                                            how='right')
+        
+        tech_pat_df['type'] = [
+            (['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g']
+            for c, d in zip(tech_pat_df['clean'], tech_pat_df['dirty'])]
+        tech_pat_df = tech_pat_df.explode('type')
+        tech_pat_df['tech'] = tech_pat_df['cpc_subclass'] + '_' + tech_pat_df['type']
+        
+        tech_pat_df = tech_pat_df[['patent_id', 'tech', 'year', 'norm_cites']].drop_duplicates()
+        tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech_pat_df'].transform('count')
+        tech_pat_df['cite_weight'] = tech_pat_df['split_weight'] * tech_pat_df['norm_cites']
+        
+        tech_pat_df['pat_count'] = tech_pat_df.groupby('tech')['split_weight'].transform('sum')
+        tech_pat_df['pat_cites'] = tech_pat_df.groupby('tech')['cite_weight'].transform('sum')
+        
+        tech_pat_df = tech_pat_df[['tech', 'year', 'pat_count', 'pat_cites']].drop_duplicates()
+        tech_pat_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Pat.pkl')
         
         
         # ------------------------ #
