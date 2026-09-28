@@ -16,6 +16,7 @@ import Processor as p
 
 P = p.Processor()
 BLS_year_start, Year_start, Year_mid, Year_end = (1997, 2012, 2017, 2022)
+bin_len = 5
 
 # ----------------------------------------------------------------
 
@@ -29,7 +30,7 @@ BLS_year_start, Year_start, Year_mid, Year_end = (1997, 2012, 2017, 2022)
 API = 0
 #Set to 1 for new API download
 
-#P.Cleaner(BLS_year_start, Year_start, Year_end, API)
+#P.Cleaner(BLS_year_start, Year_start, Year_end, bin_len, API)
 
 
 # ----------------- #

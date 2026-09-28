@@ -62,7 +62,7 @@ class Processor:
 
         
         
-    def Cleaner(self, BLS_year_start, Year_start, Year_end, API):
+    def Cleaner(self, BLS_year_start, Year_start, Year_end, bin_len, API):
         """""
         Clean Data
         
@@ -83,6 +83,7 @@ class Processor:
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_full.pkl
+                Clean Data/Ind_Pat_Shares_Pre.pkl
         """""
         
         # ----------------------------------------------------------------
@@ -294,17 +295,17 @@ class Processor:
 
         # ----------------------------------------------------------------
 
-        # -------------------- #
-        # PatentsView Assignee #
-        # -------------------- #
-        if API == 1:
-            PV_assignee_df = gpf.Extract_PatentsView('g_assignee_disambiguated', self.USPTO_API)
+        # # -------------------- #
+        # # PatentsView Assignee #
+        # # -------------------- #
+        # if API == 1:
+        #     PV_assignee_df = gpf.Extract_PatentsView('g_assignee_disambiguated', self.USPTO_API)
             
-            PV_assignee_df.to_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
-        else:
-            PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+        #     PV_assignee_df.to_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+        # else:
+        #     PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
             
-        del PV_assignee_df
+        # del PV_assignee_df
 
     
         # --------------------- #
@@ -445,7 +446,7 @@ class Processor:
             how='inner'
         )
         
-        del CPC_df, PV_applications_df, relevant_df, citations_df
+        del PV_applications_df, relevant_df, citations_df
         
         
         # ------------------------ #
@@ -508,9 +509,9 @@ class Processor:
         pat_ind_df['split_weight'] = 1 / pat_ind_df.groupby('patent_id')['BLS_Industry'].transform('count')
         
         
-        # ------------------------- #
-        # Clean Patenting by Sector #
-        # ------------------------- #
+        # --------------------------- #
+        # Climate Patenting by Sector #
+        # --------------------------- #
         annual_df = pat_ind_df.copy()
         annual_df['clean_w']           = annual_df['split_weight'] * annual_df['clean']
         annual_df['clean_full_w']      = annual_df['split_weight'] * annual_df['clean_full']
@@ -558,6 +559,49 @@ class Processor:
  
         ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         ind_pat_df_full.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_full.pkl')
+        
+        
+        # -------------------- #
+        # CPC Shares by Sector #
+        # -------------------- #
+        ind_pat_cpc_pre_df = pat_ind_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
+                                            on='patent_id',
+                                            how='right')
+        
+        
+        ind_pat_cpc_pre_df = ind_pat_cpc_pre_df[(ind_pat_cpc_pre_df['year'] > BLS_year_start-bin_len-10) 
+                                                      & (ind_pat_cpc_pre_df['year'] <= BLS_year_start-bin_len)]
+        panel_idx = pd.MultiIndex.from_product(
+            [sorted(CPC_df['cpc_subclass'].unique()), sorted(ind_pat_cpc_pre_df['BLS_Industry'].unique())],
+            names=['cpc_subclass', 'BLS_Industry'])
+        
+        frames = []
+        for ty in ['clean', 'dirty']:
+            clim_share = ind_pat_cpc_pre_df.copy()
+            clim_share = clim_share[clim_share[ty] == 1]
+            
+            clim_share['pat_weight'] = clim_share['split_weight'] / clim_share.groupby('patent_id')['cpc_subclass'].transform('count')
+            clim_share['cite_weight'] = clim_share['pat_weight'] * clim_share['norm_cites']
+        
+            clim_share['cpc_pat_count'] = clim_share.groupby(['BLS_Industry', 'cpc_subclass'])['pat_weight'].transform('sum')
+            clim_share['pat_count'] = clim_share.groupby('BLS_Industry')['pat_weight'].transform('sum')
+            clim_share['cpc_pat_share'] = clim_share['cpc_pat_count'] / clim_share['pat_count']
+        
+            clim_share['cpc_pat_cites'] = clim_share.groupby(['BLS_Industry', 'cpc_subclass'])['cite_weight'].transform('sum')
+            clim_share['pat_cites'] = clim_share.groupby('BLS_Industry')['cite_weight'].transform('sum')
+            clim_share['cpc_cite_share'] = clim_share['cpc_pat_cites'] / clim_share['pat_cites']
+        
+            clim_share = clim_share[['BLS_Industry', 'cpc_subclass', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+            clim_share = (clim_share.set_index(['cpc_subclass', 'BLS_Industry'])
+                                    .reindex(panel_idx)
+                                    .fillna(0.0)
+                                    .reset_index())
+            clim_share['type'] = ty
+            frames.append(clim_share)
+            
+        ind_pat_shares_pre_df = pd.concat(frames, ignore_index=True)
+        
+        ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
             
             
             
@@ -1076,7 +1120,7 @@ class Processor:
     
     
     
-    def Up_Down_Green(self, BLS_year_start, Year_end, bin_len=5, wins=0.05):
+    def Up_Down_Green(self, BLS_year_start, Year_end, bin_len, wins=0.05):
         """""
         Strategic Complementarity for Greenification
         
