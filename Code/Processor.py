@@ -510,7 +510,7 @@ class Processor:
         # ----------------------------- #
         tech_pat_df = pat_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
                                             on='patent_id',
-                                            how='right')
+                                            how='inner')
         
         tech_pat_df['type'] = [
             (['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g']
@@ -522,8 +522,8 @@ class Processor:
         tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech'].transform('count')
         tech_pat_df['cite_weight'] = tech_pat_df['split_weight'] * tech_pat_df['norm_cites']
         
-        tech_pat_df['pat_count'] = tech_pat_df.groupby('tech')['split_weight'].transform('sum')
-        tech_pat_df['pat_cites'] = tech_pat_df.groupby('tech')['cite_weight'].transform('sum')
+        tech_pat_df['pat_count'] = tech_pat_df.groupby(['tech', 'year'])['split_weight'].transform('sum')
+        tech_pat_df['pat_cites'] = tech_pat_df.groupby(['tech', 'year'])['cite_weight'].transform('sum')
         
         tech_pat_df = tech_pat_df[['tech', 'year', 'pat_count', 'pat_cites']].drop_duplicates()
         tech_pat_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Pat.pkl')
@@ -646,7 +646,7 @@ class Processor:
         # -------------------- #
         ind_pat_cpc_pre_df = pat_ind_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
                                             on='patent_id',
-                                            how='right')
+                                            how='inner')
         
         
         ind_pat_cpc_pre_df = ind_pat_cpc_pre_df[(ind_pat_cpc_pre_df['year'] > BLS_year_start-bin_len-10) 
@@ -739,6 +739,7 @@ class Processor:
         KS_df['spill_shock_cnt'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cnt'].transform('sum')
         KS_df['spill_shock_cit'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cit'].transform('sum')
         
+        KS_df = KS_df[['BLS_Industry', 'type', 'year', 'spill_shock_cnt', 'spill_shock_cit']].drop_duplicates()
         KS_df.to_pickle(f'{self.Directory}/Clean Data/KS_Shocks.pkl')
         
         # # ------------------------ #
