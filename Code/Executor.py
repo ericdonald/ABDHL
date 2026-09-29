@@ -48,7 +48,7 @@ API = 0
 # --------------------- #
 # Directional Incentive #
 # --------------------- #
-P.Up_Down_Green(BLS_year_start, Year_end)
+P.Up_Down_Green(BLS_year_start, Year_end, bin_len)
 
 
 # ----------------------- #
