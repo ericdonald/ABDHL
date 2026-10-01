@@ -724,7 +724,7 @@ class Processor:
         
         KS_df['BLS_tech_loading_cnt'] = KS_df['cpc_pat_share'] * KS_df['S_ijk']
         KS_df['BLS_tech_loading_cit'] = KS_df['cpc_cite_share'] * KS_df['S_ijk']
-        
+                
         KS_df['total_BLS_tech_loading_cnt'] = KS_df.groupby(['BLS_Industry', 'type', 'j', 'k'])['BLS_tech_loading_cnt'].transform('sum')
         KS_df['total_BLS_tech_loading_cit'] = KS_df.groupby(['BLS_Industry', 'type', 'j', 'k'])['BLS_tech_loading_cit'].transform('sum')
         #Diagonal already removed
@@ -734,23 +734,21 @@ class Processor:
                             on='j', how='inner')
         
         KS_df['year'] = KS_df['spill_send_year'] + KS_df['k']
+        KS_df['src_type'] = KS_df['j'].str[-1]
         
         KS_df['BLS_tech_receipt_cnt'] = KS_df['total_BLS_tech_loading_cnt'] * KS_df['pat_count']
         KS_df['BLS_tech_receipt_cit'] = KS_df['total_BLS_tech_loading_cit'] * KS_df['pat_cites']
         
-        KS_df['spill_shock_cnt'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cnt'].transform('sum')
-        KS_df['spill_shock_cit'] = KS_df.groupby(['BLS_Industry', 'type', 'year'])['BLS_tech_receipt_cit'].transform('sum')
+        KS_df['spill_shock_cnt'] = KS_df.groupby(['BLS_Industry', 'type', 'src_type', 'year'])['BLS_tech_receipt_cnt'].transform('sum')
+        KS_df['spill_shock_cit'] = KS_df.groupby(['BLS_Industry', 'type', 'src_type', 'year'])['BLS_tech_receipt_cit'].transform('sum')
         
-        KS_df = KS_df[['BLS_Industry', 'type', 'year', 'spill_shock_cnt', 'spill_shock_cit']].drop_duplicates()
+        KS_df = KS_df[['BLS_Industry', 'type', 'src_type', 'year', 'spill_shock_cnt', 'spill_shock_cit']].drop_duplicates()
         
-        KS_wide = KS_df.pivot(index=['BLS_Industry', 'year'], columns='type', 
+        KS_wide = KS_df.pivot(index=['BLS_Industry', 'year'], columns=['type', 'src_type'], 
                        values=['spill_shock_cnt', 'spill_shock_cit'])
 
-        KS_wide.columns = [f'{val}_{t}' for val, t in KS_wide.columns]
+        KS_wide.columns = [f'{v}_{t}_{s}' for v, t, s in KS_wide.columns]
         KS_df = KS_wide.reset_index()
-        
-        KS_df['spill_shock_cnt_clim'] = KS_df['spill_shock_cnt_clean'] + KS_df['spill_shock_cnt_dirty']
-        KS_df['spill_shock_cit_clim'] = KS_df['spill_shock_cit_clean'] + KS_df['spill_shock_cit_dirty']
         
         KS_df.to_pickle(f'{self.Directory}/Clean Data/KS_Shocks.pkl')
         
@@ -1307,8 +1305,13 @@ class Processor:
                       'clean_pat_cites', 'dirty_pat_cites', 'clim_pat_cites', 'pat_cites_nc', 'pat_cites']
         Ind_Pat_df = make_bins(Ind_Pat_yr_df, pat_cols)
         
-        ks_cols   = ['spill_shock_cnt_clean', 'spill_shock_cnt_dirty', 'spill_shock_cnt_clim',
-                     'spill_shock_cit_clean', 'spill_shock_cit_dirty', 'spill_shock_cit_clim']
+        ks_cols   = ['spill_shock_cnt_clean_g',
+               'spill_shock_cnt_clean_c', 'spill_shock_cnt_dirty_g',
+               'spill_shock_cnt_dirty_d', 'spill_shock_cnt_dirty_c',
+               'spill_shock_cnt_clean_d', 'spill_shock_cit_clean_g',
+               'spill_shock_cit_clean_c', 'spill_shock_cit_dirty_g',
+               'spill_shock_cit_dirty_d', 'spill_shock_cit_dirty_c',
+               'spill_shock_cit_clean_d']
         KS_shocks_df = make_bins(KS_shocks_yr_df, ks_cols)
         
         # rd_cols   = ['pat_count_hat', 'pat_count_clean_hat', 'pat_count_dirty_hat',
@@ -1366,8 +1369,8 @@ class Processor:
                               .reindex(index=bin_ends, columns=manu_idx_all)
                               .sort_index())
  
-        cln_p, dir_p, tot_p = wide('clean_pat_count'), wide('clim_pat_count'), wide('pat_count')
-        cln_c, dir_c, tot_c = wide('clean_pat_cites'), wide('clim_pat_cites'), wide('pat_cites')
+        cln_p, dln_p, dir_p, tot_p = wide('clean_pat_count'), wide('dirty_pat_count'), wide('clim_pat_count'), wide('pat_count')
+        cln_c, dln_c, dir_c, tot_c = wide('clean_pat_cites'), wide('dirty_pat_cites'), wide('clim_pat_cites'), wide('pat_cites')
         
         def estimate_kappa(cln_w, tot_w, min_den=100):
             c = cln_w.to_numpy(dtype=float).ravel()
@@ -1388,6 +1391,8 @@ class Processor:
         κ_dir_c = estimate_kappa(cln_c, dir_c)
         κ_pat   = estimate_kappa(cln_p, tot_p)
         κ_cite  = estimate_kappa(cln_c, tot_c)
+        κ_dir_d_p = estimate_kappa(dln_p, dir_p)
+        κ_dir_d_c = estimate_kappa(dln_c, dir_c)
         
         def shrink(num, den, kappa):
            gbar = (num.sum(axis=1) / den.sum(axis=1)).to_numpy()[:, None]
@@ -1395,6 +1400,10 @@ class Processor:
 
         D_pat  = shrink(cln_p, dir_p, κ_dir_p)
         D_cite = shrink(cln_c, dir_c, κ_dir_c)
+        
+        D_d_pat  = shrink(dln_p, dir_p, κ_dir_d_p)
+        D_d_cite = shrink(dln_c, dir_c, κ_dir_d_c)
+        
         G_pat  = shrink(cln_p, tot_p, κ_pat)
         G_cite = shrink(cln_c, tot_c, κ_cite)
 
@@ -1426,6 +1435,11 @@ class Processor:
             v_cite_dir   = D_cite.loc[t].to_numpy(dtype=float)[keep]
             obs_pat_dir  = np.isfinite(v_pat_dir)
             obs_cite_dir = np.isfinite(v_cite_dir)
+            
+            v_pat_dir_d    = D_d_pat.loc[t].to_numpy(dtype=float)[keep]
+            v_cite_dir_d   = D_d_cite.loc[t].to_numpy(dtype=float)[keep]
+            obs_pat_dir_d  = np.isfinite(v_pat_dir_d)
+            obs_cite_dir_d = np.isfinite(v_cite_dir_d)
              
             S          = Σ_LI[t][np.ix_(keep, keep)]
  
@@ -1434,6 +1448,9 @@ class Processor:
             
             up_p_dir, dn_p_dir = partner_avg(S, v_pat_dir, obs_pat_dir)
             up_c_dir, dn_c_dir = partner_avg(S, v_cite_dir, obs_cite_dir)
+            
+            up_p_dir_d, dn_p_dir_d = partner_avg(S, v_pat_dir_d, obs_pat_dir_d)
+            up_c_dir_d, dn_c_dir_d = partner_avg(S, v_cite_dir_d, obs_cite_dir_d)
  
             frames.append(pd.DataFrame({
                 'BLS_Industry': keep_idx,
@@ -1447,6 +1464,11 @@ class Processor:
                 'up_D_cite':    up_c_dir,
                 'down_D_cite':  dn_c_dir,
                 
+                'up_D_d_pat':     up_p_dir_d,
+                'down_D_d_pat':   dn_p_dir_d,
+                'up_D_d_cite':    up_c_dir_d,
+                'down_D_d_cite':  dn_c_dir_d,
+                
             }))
  
         net_df = pd.concat(frames, ignore_index=True)
@@ -1454,6 +1476,9 @@ class Processor:
         net_df['net_G_cite'] = net_df['up_G_cite'] + net_df['down_G_cite']
         net_df['net_D_pat']  = net_df['up_D_pat']  + net_df['down_D_pat']
         net_df['net_D_cite'] = net_df['up_D_cite'] + net_df['down_D_cite']
+        
+        net_df['net_D_d_pat']  = net_df['up_D_d_pat']  + net_df['down_D_d_pat']
+        net_df['net_D_d_cite'] = net_df['up_D_d_cite'] + net_df['down_D_d_cite']
         
         frames_em = []
         for t in bins_em[1:]:
@@ -1500,6 +1525,7 @@ class Processor:
         # ---- #
         lag_cols = ['up_G_pat', 'down_G_pat', 'net_G_pat', 'up_D_pat', 'down_D_pat', 'net_D_pat',
                     'up_G_cite', 'down_G_cite', 'net_G_cite', 'up_D_cite', 'down_D_cite', 'net_D_cite',
+                    'up_D_d_pat', 'down_D_d_pat', 'net_D_d_pat','up_D_d_cite', 'down_D_d_cite', 'net_D_d_cite',
                     'G_pat', 'G_cite', 'D_pat', 'D_cite',
                     'net_dln_CO2', 'up_dln_CO2', 'down_dln_CO2', 'dln_CO2']
         lagged = reg_df[['BLS_Industry', 'period'] + lag_cols].copy()
@@ -1508,9 +1534,9 @@ class Processor:
         reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
         
         
-        # ------------------- #
+        # ----------- #
         # Instruments #
-        # ------------------- #
+        # ----------- #
         S_fix = Σ_LI[BLS_year_start][np.ix_(keep, keep)]
         
         def shock_share(src, num_col, den_col, periods):
@@ -1606,44 +1632,44 @@ class Processor:
                            n_sectors=d['BLS_Industry'].nunique())
 
 
-        # ---------------------------------------------------------------- #
-        # First stage: do the instruments move the endogenous regressors?   #
-        # ---------------------------------------------------------------- #
-        def first_stage_matrix(endogs, z_cols, label=''):
-            cols = list(endogs) + list(z_cols)
-            d = reg_df.dropna(subset=cols).copy()
-            for c in cols:
-                d[c] = d[c] - d.groupby('BLS_Industry')[c].transform('mean')
-                d[c] = d[c] - d.groupby('period')[c].transform('mean')
-            X = np.column_stack([np.ones(len(d))] + [d[c].to_numpy(float) for c in z_cols])
-            k, rows, fitted = len(z_cols), [], {}
-            for e in endogs:
-                Y = d[e].to_numpy(float)
-                b, *_ = np.linalg.lstsq(X, Y, rcond=None)
-                res = Y - X @ b
-                r2  = 1 - (res**2).sum() / max(((Y - Y.mean())**2).sum(), 1e-12)
-                rows.append({'endog': e, 'N': len(d),
-                             'clusters': d['BLS_Industry'].nunique(),
-                             'partial R2': r2,
-                             'F': (r2 / max(1 - r2, 1e-12)) * (len(d) - k - 1) / k,
-                             **{c: b[i + 1] for i, c in enumerate(z_cols)}})
-                fitted[e] = X @ b
-            print(f'\nFirst stage {label} (sector + period demeaned)')
-            print(pd.DataFrame(rows).round(4).to_string(index=False))
-            f = pd.DataFrame(fitted)
-            if f.shape[1] == 2:
-                rr = f.corr().iloc[0, 1]
-                print(f'  corr(fitted {endogs[0]}, fitted {endogs[1]}) = {rr:+.3f}'
-                      f'{"   <-- directions NOT separately identified" if abs(rr) > 0.9 else ""}')
-            print('  F below ~10 means the instrument does not move the regressor; '
-                  'IV estimates\n  and their standard errors are then unreliable '
-                  'regardless of what they print.')
+        # # ---------------------------------------------------------------- #
+        # # First stage: do the instruments move the endogenous regressors?   #
+        # # ---------------------------------------------------------------- #
+        # def first_stage_matrix(endogs, z_cols, label=''):
+        #     cols = list(endogs) + list(z_cols)
+        #     d = reg_df.dropna(subset=cols).copy()
+        #     for c in cols:
+        #         d[c] = d[c] - d.groupby('BLS_Industry')[c].transform('mean')
+        #         d[c] = d[c] - d.groupby('period')[c].transform('mean')
+        #     X = np.column_stack([np.ones(len(d))] + [d[c].to_numpy(float) for c in z_cols])
+        #     k, rows, fitted = len(z_cols), [], {}
+        #     for e in endogs:
+        #         Y = d[e].to_numpy(float)
+        #         b, *_ = np.linalg.lstsq(X, Y, rcond=None)
+        #         res = Y - X @ b
+        #         r2  = 1 - (res**2).sum() / max(((Y - Y.mean())**2).sum(), 1e-12)
+        #         rows.append({'endog': e, 'N': len(d),
+        #                      'clusters': d['BLS_Industry'].nunique(),
+        #                      'partial R2': r2,
+        #                      'F': (r2 / max(1 - r2, 1e-12)) * (len(d) - k - 1) / k,
+        #                      **{c: b[i + 1] for i, c in enumerate(z_cols)}})
+        #         fitted[e] = X @ b
+        #     print(f'\nFirst stage {label} (sector + period demeaned)')
+        #     print(pd.DataFrame(rows).round(4).to_string(index=False))
+        #     f = pd.DataFrame(fitted)
+        #     if f.shape[1] == 2:
+        #         rr = f.corr().iloc[0, 1]
+        #         print(f'  corr(fitted {endogs[0]}, fitted {endogs[1]}) = {rr:+.3f}'
+        #               f'{"   <-- directions NOT separately identified" if abs(rr) > 0.9 else ""}')
+        #     print('  F below ~10 means the instrument does not move the regressor; '
+        #           'IV estimates\n  and their standard errors are then unreliable '
+        #           'regardless of what they print.')
  
-        first_stage_matrix(['up_D_pat_lag', 'down_D_pat_lag'],
-                           ['z_up_ks_pat_dir_lag', 'z_dn_ks_pat_dir_lag'],  'KS / patents')
+        # first_stage_matrix(['up_D_pat_lag', 'down_D_pat_lag'],
+        #                    ['z_up_ks_pat_dir_lag', 'z_dn_ks_pat_dir_lag'],  'KS / patents')
      
-        first_stage_matrix(['up_D_cite_lag', 'down_D_cite_lag'],
-                           ['z_up_ks_cite_dir_lag', 'z_dn_ks_cite_dir_lag'], 'KS / cites')
+        # first_stage_matrix(['up_D_cite_lag', 'down_D_cite_lag'],
+        #                    ['z_up_ks_cite_dir_lag', 'z_dn_ks_cite_dir_lag'], 'KS / cites')
         
         
         # ---------- #
@@ -1653,14 +1679,23 @@ class Processor:
         m_pat_net  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
                              ['net_D_pat_lag'])
         
+        m_pat_net_d  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
+                             ['net_D_d_pat_lag'])
+        
         m_pat_ud  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
                              ['up_D_pat_lag', 'down_D_pat_lag'])
+        
+        m_pat_ud_d  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
+                             ['up_D_d_pat_lag', 'down_D_d_pat_lag'])
         
         m_pat_net_lag  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
                              ['net_D_pat_lag', 'D_pat_lag'])
         
         m_pat_net_gen  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
                              ['net_G_pat_lag'])
+        
+        m_pat_ud_gen  = fit_ppml(reg_df, 'clean_pat_count', 'pat_count_nc',
+                             ['up_G_pat_lag', 'down_G_pat_lag'])
         
         m_pat_em  = fit_ppml(reg_df, 'clean_pat_count', 'dirty_pat_count',
                              ['net_dln_CO2_lag'], entity_fe=False)
@@ -1669,8 +1704,14 @@ class Processor:
         m_cit_net  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
                              ['net_D_cite_lag'])
         
+        m_cit_net_d  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
+                             ['net_D_d_cite_lag'])
+        
         m_cit_ud  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
                              ['up_D_cite_lag', 'down_D_cite_lag'])
+        
+        m_cit_ud_d  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
+                             ['up_D_d_cite_lag', 'down_D_d_cite_lag'])
         
         m_cit_net_lag  = fit_ppml(reg_df, 'clean_pat_cites', 'dirty_pat_cites',
                              ['net_D_cite_lag', 'D_cite_lag'])
