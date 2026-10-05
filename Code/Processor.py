@@ -1761,6 +1761,422 @@ class Processor:
  
         
     
+    UDG_BASE = dict(share='G',          # G = clean/all patents, D = clean/climate patents
+                    measure='pat',      # pat = counts, cite = citation-weighted
+                    bin_len=5,
+                    normalise=False,    # partner_avg normalisation of network weights
+                    shrink=True,        # kappa shrinkage toward the period mean
+                    direction='net',    # net = up + down, updown = separate
+                    own_lag=False,      # control for own lagged share
+                    rhs=None,           # network variable: None = same as share; P = placebo (dirty/all); E = emissions reduction
+                    rhs_meas=None,      # measure (pat/cite) of the network variable; None = same as measure
+                    controls=(),        # extra network controls, e.g. 'T_pat' (patent share), 'Q_cite' (relative cites/patent)
+                    entity_fe=True,
+                    time_fe=True,
+                    offset=None,        # None -> non-clean patents (G) / dirty patents (D)
+                    table='main',       # which table the spec is shown in
+                    panel='A')          # panel of the main table (baseline is repeated in each panel)
+
+
+    UDG_WINS = 0.05   # winsorising of the emissions RHS (cross-section within period)
+
+
+    @staticmethod
+    def partner_avg(S_sub, v, obs, normalise=False):
+        "Upstream and downstream network sums of v (optionally weight-normalised)."
+        v0 = np.where(obs, v, 0.0)
+        up, down = S_sub @ v0, S_sub.T @ v0
+        if not normalise:
+            return up, down
+        o = obs.astype(float)
+        w_up, w_dn = S_sub @ o, S_sub.T @ o
+        return (np.where(w_up > 0, up / np.where(w_up > 0, w_up, 1.0), np.nan),
+                np.where(w_dn > 0, down / np.where(w_dn > 0, w_dn, 1.0), np.nan))
+
+
+    def UDG_Panel(self, BLS_year_start, Year_end, bin_len, normalise=False, shrink=True):
+        """""
+        Regression panel for strategic complementarity: for each (share, measure) in
+        {G, D} x {pat, cite} builds the own share, up, down, net network shares, and their lags.
+
+        Returns: reg_df, kappas
+        """""
+        IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
+        Ind_Pat_yr_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
+        manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
+        bin_ends = sorted(y for y in range(Year_end, BLS_year_start - 1, -bin_len) if y in IO_mats)
+
+        # -------- #
+        # Bin Data #
+        # -------- #
+        pat_cols = ['clean_pat_count', 'dirty_pat_count', 'clim_pat_count', 'pat_count_nc', 'pat_count',
+                    'clean_pat_cites', 'dirty_pat_cites', 'clim_pat_cites', 'pat_cites_nc', 'pat_cites']
+        rel_bins = sorted(set(Ind_Pat_yr_df['year']).intersection(bin_ends))
+        frames = []
+        for end in rel_bins:
+            w = Ind_Pat_yr_df[(Ind_Pat_yr_df['year'] > end - bin_len) & (Ind_Pat_yr_df['year'] <= end)]
+            if not w.empty:
+                frames.append(w.groupby('BLS_Industry', as_index=False)[pat_cols].sum().assign(period=end))
+        Ind_Pat_df = pd.concat(frames, ignore_index=True)
+        idx = pd.MultiIndex.from_product([sorted(Ind_Pat_df['BLS_Industry'].unique()), rel_bins],
+                                         names=['BLS_Industry', 'period'])
+        Ind_Pat_df = (Ind_Pat_df.set_index(['BLS_Industry', 'period'])
+                                .reindex(idx).fillna(0.0).reset_index())
+
+        # ---------------- #
+        # Leontief Inverse #
+        # ---------------- #
+        def build_sigma_LI(IO_matrix):
+            S = np.linalg.inv(np.eye(IO_matrix.shape[0]) - IO_matrix)
+            np.fill_diagonal(S, 0.0)
+            return S
+        Sigma_LI = {year: build_sigma_LI(IO_mats[year]) for year in bin_ends}
+
+        # ------ #
+        # Shares #
+        # ------ #
+        def wide(col):
+            return (Ind_Pat_df.pivot(index='period', columns='BLS_Industry', values=col)
+                              .reindex(index=bin_ends, columns=manu_idx_all).sort_index())
+
+        def estimate_kappa(cln_w, tot_w, min_den=100):
+            c = cln_w.to_numpy(dtype=float).ravel()
+            n = tot_w.to_numpy(dtype=float).ravel()
+            ok = np.isfinite(c) & np.isfinite(n) & (n >= min_den)
+            if ok.sum() < 20:
+                print(f'  only {ok.sum()} sector-bins above {min_den}; falling back to kappa = 10')
+                return 10.0
+            p = np.nansum(c) / np.nansum(n)
+            v = np.var(c[ok] / n[ok], ddof=1)
+            samp = np.mean(p * (1 - p) / n[ok])
+            return float(np.clip(p * (1 - p) / max(v - samp, 1e-12) - 1, 1.0, 200.0))
+
+        def shrink_to_mean(num, den, kappa):
+            gbar = (num.sum(axis=1) / den.sum(axis=1)).to_numpy()[:, None]
+            return ((num + kappa * gbar) / (den + kappa)).where(den > 0)
+
+        shares, kappas = {}, {}
+        for meas, suf in [('pat', 'count'), ('cite', 'cites')]:
+            cln = wide(f'clean_pat_{suf}')
+            for sh, den in [('G', wide(f'pat_{suf}')), ('D', wide(f'clim_pat_{suf}'))]:
+                if shrink:
+                    kappas[(sh, meas)] = estimate_kappa(cln, den)
+                    shares[(sh, meas)] = shrink_to_mean(cln, den, kappas[(sh, meas)])
+                else:
+                    kappas[(sh, meas)] = np.nan
+                    shares[(sh, meas)] = (cln / den.where(den > 0))
+            # Placebo: dirty / all patents
+            dty, tot = wide(f'dirty_pat_{suf}'), wide(f'pat_{suf}')
+            if shrink:
+                kappas[('P', meas)] = estimate_kappa(dty, tot)
+                shares[('P', meas)] = shrink_to_mean(dty, tot, kappas[('P', meas)])
+            else:
+                kappas[('P', meas)] = np.nan
+                shares[('P', meas)] = dty / tot.where(tot > 0)
+            # Placebo for D: dirty / (clean + dirty)
+            clm = wide(f'clim_pat_{suf}')
+            if shrink:
+                kappas[('PD', meas)] = estimate_kappa(dty, clm)
+                shares[('PD', meas)] = shrink_to_mean(dty, clm, kappas[('PD', meas)])
+            else:
+                kappas[('PD', meas)] = np.nan
+                shares[('PD', meas)] = dty / clm.where(clm > 0)
+
+        # Controls: sum of Leontief weights (v = 1 for every sector, so up = row sum, down = column sum)
+        shares[('W', 'w')] = pd.DataFrame(1.0, index=bin_ends, columns=manu_idx_all)
+        kappas[('W', 'w')] = np.nan
+
+        # Controls: total-patent share and relative citations per patent
+        tot_p, tot_c = wide('pat_count'), wide('pat_cites')
+        shares[('T', 'pat')] = tot_p.div(tot_p.sum(axis=1), axis=0)
+        cpp = tot_c / tot_p.where(tot_p > 0)
+        shares[('Q', 'cite')] = cpp.div(tot_c.sum(axis=1) / tot_p.sum(axis=1), axis=0)
+        kappas[('T', 'pat')] = kappas[('Q', 'cite')] = np.nan
+
+        # Emissions: ln reduction in emissions intensity (winsorised by period)
+        co2 = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
+        co2 = co2[co2['year'].isin(bin_ends) & co2['BLS_Industry'].isin(manu_idx_all)].copy()
+        co2['ln_int'] = np.log(co2['CO2e_intensity_Industry'].where(co2['CO2e_intensity_Industry'] > 0))
+        ln_w = (co2.pivot(index='year', columns='BLS_Industry', values='ln_int')
+                   .reindex(index=bin_ends, columns=manu_idx_all))
+        dln_w = -(ln_w - ln_w.shift(1))
+        for t in dln_w.index:
+            v = dln_w.loc[t].to_numpy(dtype=float)
+            if np.isfinite(v).any():
+                lo, hi = np.nanquantile(v, [self.UDG_WINS, 1 - self.UDG_WINS])
+                dln_w.loc[t] = np.clip(v, lo, hi)
+        shares[('E', 'em')] = dln_w
+        kappas[('E', 'em')] = np.nan
+
+        # ------- #
+        # Network #
+        # ------- #
+        keep = np.isin(manu_idx_all, Ind_Pat_df['BLS_Industry'].unique())
+        keep_idx = manu_idx_all[keep]
+        net_frames = []
+        for t in bin_ends:
+            S = Sigma_LI[t][np.ix_(keep, keep)]
+            row = {'BLS_Industry': keep_idx, 'period': t}
+            for (sh, meas), sv in shares.items():
+                v = sv.loc[t].to_numpy(dtype=float)[keep]
+                if np.isfinite(v).any():
+                    up, dn = self.partner_avg(S, v, np.isfinite(v), normalise)
+                else:
+                    up = dn = np.full(len(v), np.nan)
+                row[f'own_{sh}_{meas}'] = v
+                row[f'up_{sh}_{meas}'] = up
+                row[f'down_{sh}_{meas}'] = dn
+                row[f'net_{sh}_{meas}'] = up + dn
+            net_frames.append(pd.DataFrame(row))
+        net_df = pd.concat(net_frames, ignore_index=True)
+        reg_df = net_df.merge(Ind_Pat_df, on=['BLS_Industry', 'period'], how='left')
+
+        # ---- #
+        # Lags #
+        # ---- #
+        lag_cols = [c for c in net_df.columns if c not in ('BLS_Industry', 'period')]
+        lagged = net_df[['BLS_Industry', 'period'] + lag_cols].copy()
+        lagged['period'] = lagged['period'] + bin_len
+        lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
+        reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
+        return reg_df, kappas
+
+
+    def UDG_Fit(self, df, y_col, offset_col, x_cols, entity_fe=True, time_fe=True):
+        "Poisson pseudo-ML with log(offset), sector and period dummies, SEs clustered by sector."
+        d = df.dropna(subset=[y_col, offset_col] + list(x_cols)).copy()
+        d = d[d[offset_col] > 0]
+        pos = d.groupby('BLS_Industry')[y_col].transform('sum') > 0
+        n_drop = int(d['BLS_Industry'][~pos].nunique())
+        d = d[pos]
+        if n_drop:
+            print(f'  UDG_Fit({y_col}): dropped {n_drop} sector(s) with no positive outcome.')
+        parts = [pd.Series(1.0, index=d.index, name='const'), d[list(x_cols)].astype(float)]
+        if entity_fe:
+            parts.append(pd.get_dummies(d['BLS_Industry'], prefix='sec', drop_first=True, dtype=float))
+        time_fe = time_fe and d['period'].nunique() > 1
+        if time_fe:
+            parts.append(pd.get_dummies(d['period'], prefix='per', drop_first=True, dtype=float))
+        X = pd.concat(parts, axis=1)
+        X.columns = [str(c) for c in X.columns]
+        res = sm.GLM(d[y_col].astype(float), X, family=sm.families.Poisson(),
+                     offset=np.log(d[offset_col].astype(float).to_numpy())
+                     ).fit(cov_type='cluster', cov_kwds={'groups': d['BLS_Industry'].to_numpy()},
+                           maxiter=200)
+        fe = (['sector'] if entity_fe else []) + (['period'] if time_fe else [])
+        return es.GLMWrap(res, y_col, list(x_cols), offset_col, fe,
+                          n_sectors=d['BLS_Industry'].nunique()), d['period'].nunique()
+
+
+    def UDG_Run(self, batch, specs, BLS_year_start, Year_end, description=''):
+        """""
+        Run a batch of specifications. Each spec is a dict with a unique 'id' and any overrides
+        of Processor.UDG_BASE. Re-running a batch replaces its rows in the registry.
+
+        Output: Results/registry.csv (one row per spec)
+                Results/Batches/<batch>/table_<measure>_<panel>.tex, models.txt, specs.csv
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        panels = {}
+        rows, models, fulls = [], {}, []
+
+        for sp in specs:
+            spec = {**self.UDG_BASE, **sp}
+            key = (spec['bin_len'], spec['normalise'], spec['shrink'])
+            if key not in panels:
+                panels[key] = self.UDG_Panel(BLS_year_start, Year_end, *key)
+            reg_df, kappas = panels[key]
+
+            sh, meas = spec['share'], spec['measure']
+            suf = {'pat': 'count', 'cite': 'cites'}[meas]
+            y_col = f'clean_pat_{suf}'
+            offset = spec['offset'] or (f'pat_{suf}_nc' if sh == 'G' else f'dirty_pat_{suf}')
+            rhs = spec['rhs'] or sh
+            rm = spec['rhs_meas'] or meas
+            rk = f'{rhs}_em' if rhs == 'E' else f'{rhs}_{rm}'
+            dirs = ['net'] if spec['direction'] == 'net' else ['up', 'down']
+            x_cols = [f'{d}_{rk}_lag' for d in dirs]
+            for c in spec['controls']:
+                x_cols += [f'{d}_{c}_lag' for d in dirs]
+            if spec['own_lag']:
+                x_cols.append(f'own_{sh}_{meas}_lag')
+
+            m, n_per = self.UDG_Fit(reg_df, y_col, offset, x_cols, spec['entity_fe'], spec['time_fe'])
+            models[spec['id']] = m
+
+            row = {'spec_id': spec['id'], 'batch': batch, 'label': spec.get('label', ''),
+                   'outcome': y_col, 'share': sh, 'rhs': rhs, 'rhs_meas': rm, 'controls': '+'.join(spec['controls']),
+                   'table': spec['table'], 'panel': spec['panel'], 'short': spec.get('short', str(spec['id']).split('_', 1)[-1]), 'measure': meas, 'bin_len': spec['bin_len'],
+                   'weights': 'normalised' if spec['normalise'] else 'non-normalised',
+                   'shrinkage': 'kappa' if spec['shrink'] else 'none',
+                   'kappa': kappas[(rhs, 'em' if rhs == 'E' else rm)], 'direction': spec['direction'],
+                   'own_lag': spec['own_lag'], 'offset': offset, 'estimator': 'PPML',
+                   'fe': '+'.join(m.fe) if m.fe else 'none', 'cluster': 'sector',
+                   'N': m.nobs, 'n_sectors': m.n_sectors, 'n_periods': n_per,
+                   'pseudo_r2': m.rsquared,
+                   'converged': getattr(m.glm, 'converged', np.nan),
+                   'run_date': datetime.now().strftime('%Y-%m-%d')}
+            for slot, var in [('net', f'net_{rk}_lag'), ('up', f'up_{rk}_lag'),
+                              ('down', f'down_{rk}_lag'), ('lag', f'own_{sh}_{meas}_lag')]:
+                if var in m.params.index:
+                    row[f'coef_{slot}'], row[f'se_{slot}'], row[f'p_{slot}'] = m.params[var], m.bse[var], m.pvalues[var]
+                else:
+                    row[f'coef_{slot}'] = row[f'se_{slot}'] = row[f'p_{slot}'] = np.nan
+            if spec['direction'] != 'net':
+                _, row['p_up_plus_down'] = m.test(f'{x_cols[0]} + {x_cols[1]} = 0')
+                _, row['p_up_eq_down'] = m.test(f'{x_cols[0]} = {x_cols[1]}')
+            row['notes'] = spec.get('notes', '')
+            rows.append(row)
+            print(f'\n{"="*78}\n{spec["id"]}  {spec.get("label", "")}\n{"="*78}\n{m!r}')
+
+        # -------- #
+        # Registry #
+        # -------- #
+        new = pd.DataFrame(rows)
+        reg_path = self.Directory / 'Results' / 'registry.csv'
+        if reg_path.exists():
+            old = pd.read_csv(reg_path)
+            old = old[old['batch'] != batch]
+            new = pd.concat([old, new], ignore_index=True)
+        new.to_csv(reg_path, index=False)
+        pd.DataFrame(rows).to_csv(outdir / 'specs.csv', index=False)
+        with open(outdir / 'models.txt', 'w') as f:
+            for k, m in models.items():
+                f.write(f'\n{"="*78}\n{k}\n{"="*78}\n{m!r}\n')
+
+        # ----- #
+        # Table #
+        # ----- #
+        out = pd.DataFrame(rows)
+        main = out[out['table'] == 'main']
+        for meas in main['measure'].unique():
+            mm = main[main['measure'] == meas]
+            base = mm[mm['spec_id'].str.endswith('_base')]
+            for p in sorted(mm['panel'].unique()):
+                sub = mm[mm['panel'] == p]
+                sub = pd.concat([base[~base['spec_id'].isin(sub['spec_id'])], sub])
+                self.UDG_Table(sub, outdir / f'table_{meas}_{p}.tex')
+        for name in [t for t in out['table'].unique() if t != 'main']:
+            ids = out.loc[out['table'] == name, 'spec_id']
+            self.UDG_ModelTable({i: models[i] for i in ids}, out.set_index('spec_id'), outdir / f'table_{name}.tex')
+        return models
+
+
+    def UDG_Table(self, reg, path):
+        "Write a batch table (one column per spec) from registry rows. All numbers come from the rows."
+        tex = lambda s: str(s).replace('_', r'\_')
+        labels = [('net', 'Net network'), ('up', 'Upstream'), ('down', 'Downstream'), ('lag', 'Own lagged share')]
+        cols = len(reg)
+        lines = [r'\begin{tabular}{l' + 'c' * cols + '}', r'\toprule',
+                 ' & ' + ' & '.join(f'({i + 1})' for i in range(cols)) + r' \\',
+                 ' & ' + ' & '.join(tex(s) for s in reg['short']) + r' \\', r'\midrule']
+        for slot, name in labels:
+            if reg[f'coef_{slot}'].isna().all():
+                continue
+            cs, ss = [], []
+            for _, r in reg.iterrows():
+                if np.isfinite(r[f'coef_{slot}']):
+                    cs.append(f"{r[f'coef_{slot}']:.3f}{gpf.get_stars(r[f'p_{slot}'])}")
+                    ss.append(f"({r[f'se_{slot}']:.3f})")
+                else:
+                    cs.append(''); ss.append('')
+            lines += [f'{name} & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+        lines += [r'\midrule',
+                  'Observations & ' + ' & '.join(f'{int(n):,}' for n in reg['N']) + r' \\',
+                  'Sectors & ' + ' & '.join(f'{int(n)}' for n in reg['n_sectors']) + r' \\',
+                  'Network variable & ' + ' & '.join(tex(s) for s in reg['rhs']) + r' \\',
+                  'Weights & ' + ' & '.join(tex(s) for s in reg['weights']) + r' \\',
+                  'Bin length (years) & ' + ' & '.join(f'{int(n)}' for n in reg['bin_len']) + r' \\',
+                  'Offset & ' + ' & '.join(tex(s) for s in reg['offset']) + r' \\',
+                  'Controls & ' + ' & '.join(tex(s).replace('W\\_w', 'weight sum') or 'none' if s else 'none' for s in reg['controls']) + r' \\',
+                  r'Shrinkage $\kappa$ & ' + ' & '.join(f'{k:.1f}' if np.isfinite(k) else '--' for k in reg['kappa']) + r' \\',
+                  'Fixed effects & ' + ' & '.join(tex(s) for s in reg['fe']) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+
+    @staticmethod
+    def udg_label(v):
+        "Readable row label for a regressor column name like up_G_cite_lag."
+        pre, _, stem = v.replace('_lag', '').partition('_')
+        stems = {'G_pat': 'clean share (patents)', 'G_cite': 'clean share (citations)',
+                 'D_pat': 'clean/(clean+dirty) (patents)', 'D_cite': 'clean/(clean+dirty) (citations)',
+                 'P_pat': 'dirty share (patents)', 'P_cite': 'dirty share (citations)',
+                 'PD_pat': 'dirty/(clean+dirty) (patents)', 'PD_cite': 'dirty/(clean+dirty) (citations)',
+                 'W_w': 'sum of Leontief weights',
+                 'E_em': 'emissions-intensity reduction', 'T_pat': 'total patents (share)',
+                 'Q_cite': 'citations per patent (relative)'}
+        pres = {'up': 'Upstream', 'down': 'Downstream', 'net': 'Net', 'own': 'Own'}
+        return f'{pres.get(pre, pre)} {stems.get(stem, stem)}'.replace('_', r'\_')
+
+
+    def UDG_ModelTable(self, models, info, path):
+        "Generic table: one column per model, one row per non-FE regressor. info is indexed by spec_id."
+        tex = lambda s: str(s).replace('_', r'\_')
+        ids = list(models)
+        rows_v = []
+        for i in ids:
+            for v in models[i].x:
+                if v not in rows_v:
+                    rows_v.append(v)
+        lines = [r'\begin{tabular}{l' + 'c' * len(ids) + '}', r'\toprule',
+                 ' & ' + ' & '.join(f'({k + 1})' for k in range(len(ids))) + r' \\',
+                 ' & ' + ' & '.join(tex(info.loc[i, 'short']) for i in ids) + r' \\', r'\midrule']
+        for v in rows_v:
+            cs, ss = [], []
+            for i in ids:
+                m = models[i]
+                if v in m.params.index:
+                    cs.append(f'{m.params[v]:.3f}{gpf.get_stars(m.pvalues[v])}')
+                    ss.append(f'({m.bse[v]:.3f})')
+                else:
+                    cs.append(''); ss.append('')
+            lines += [self.udg_label(v) + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+        lines += [r'\midrule',
+                  'Outcome & ' + ' & '.join(tex(info.loc[i, 'outcome']) for i in ids) + r' \\',
+                  'Offset & ' + ' & '.join(tex(info.loc[i, 'offset']) for i in ids) + r' \\',
+                  'Observations & ' + ' & '.join(f'{models[i].nobs:,}' for i in ids) + r' \\',
+                  'Sectors & ' + ' & '.join(f'{models[i].n_sectors}' for i in ids) + r' \\',
+                  'Fixed effects & ' + ' & '.join(tex('+'.join(models[i].fe) or 'none') for i in ids) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+
+    def UDG_Corr(self, batch, BLS_year_start, Year_end, bin_len=5):
+        """""
+        Correlations among the lagged up/down clean shares (patents and citations).
+        Panel A: raw. Panel B: after removing sector and period means.
+
+        Output: Results/Batches/<batch>/table_corr.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        reg_df, _ = self.UDG_Panel(BLS_year_start, Year_end, bin_len)
+        vs = ['up_G_pat_lag', 'down_G_pat_lag', 'up_G_cite_lag', 'down_G_cite_lag']
+        names = ['Up (patents)', 'Down (patents)', 'Up (citations)', 'Down (citations)']
+        d = reg_df.dropna(subset=vs)[['BLS_Industry', 'period'] + vs].copy()
+        within = d.copy()
+        for _ in range(100):
+            for g in ['BLS_Industry', 'period']:
+                within[vs] = within[vs] - within.groupby(g)[vs].transform('mean')
+
+        def panel(c, title):
+            c = c.to_numpy()
+            out = [r'\multicolumn{5}{l}{\textit{' + title + r'}} \\']
+            for i, nm in enumerate(names):
+                out.append(nm + ' & ' + ' & '.join(f'{c[i, j]:.3f}' if j <= i else '' for j in range(4)) + r' \\')
+            return out
+        lines = [r'\begin{tabular}{lcccc}', r'\toprule', ' & ' + ' & '.join(names) + r' \\', r'\midrule']
+        lines += panel(d[vs].corr(), f'Panel A: raw (N = {len(d)})') + [r'\midrule']
+        lines += panel(within[vs].corr(), 'Panel B: sector and period means removed') + [r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_corr.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(d[vs].corr().round(3)); print(within[vs].corr().round(3))
+
+
     def write_package_versions(self, packages):
         """""
         Table of Package Versions

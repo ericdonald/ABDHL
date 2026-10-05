@@ -22,6 +22,19 @@ the various modules of Processor are run.
 - I will describe the specifications I want you to run in batches. After each batch, update the registries and ask me about gaps. 
 - The results of each batch will be stored in two places Results/spec_description.tex and Results/registry.csv.
 Each batch is a set of specifications that I wnat you to describe in Results/spec_description.tex. The goal is to walk through various permutations of specifications to record what we have learned.
-Record the results in Results/registry.csv, one row per specification. You will then us this information to input the results as tables in Results/spec_description.tex.
-- Work on branch Claude. Do not commit unless I ask.
+Record the results in Results/registry.csv, one row per specification. You will then use this information to input the results as tables in Results/spec_description.tex.
+- Batch outputs (tables, model printouts) go in Results/Batches/<batch_name>/. Ignore Results/Tables and Results/Figures for now.
+- Specs are defined as dicts in Executor.py and run by Processor.UDG_Run; never hand-copy the regression code per batch. Start from no specifications and add cases as we go.
+
+## Baseline specification (UpDownGreen)
+- Outcome: clean patent count; share G = clean / all patents (kappa-shrunk toward the period mean, not winsorized; kappa shrinkage is something we permute later).
+- Five-year bins (bin_len=5); Leontief-inverse weights, non-normalized (partner_avg with normalise=False).
+- Regressor: net = up + down network G, lagged one bin. No own-lag control in the baseline (it is a permutation).
+- PPML, offset log(non-clean patents), sector and period FE, SEs clustered by sector.
+- CO2 outcomes and instruments are out of scope for now.
+- Batch 1 swaps G for D = clean/(clean+dirty) with offset = dirty (spec `share='D'` in Executor.make_specs). Clean+dirty equals `clim_pat_*` in Clean Data.
+
+## Environment notes
+- Run code from Claude's shell with /Applications/spyder-6/envs/spyder-runtime/bin/python (the env Spyder actually uses, Python 3.12). Do NOT use ~/Library/spyder-6/...: that is a stale copy whose numpy fails to load (duplicate LC_RPATH on macOS 26).
+- Run from the Code/ folder, e.g. `cd Code && /Applications/spyder-6/envs/spyder-runtime/bin/python Executor.py`.
 
