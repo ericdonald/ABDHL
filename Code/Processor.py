@@ -731,7 +731,8 @@ class Processor:
         """""
         Create Series of Greenification Shocks
     
-        Output: Clean Data/KS_Shocks.pkl
+        Output: Clean Data/Govt_Shocks.pkl
+                Clean Data/KS_Shocks.pkl
                 Clean Data/RD_Shocks.pkl
         """""
         
@@ -741,9 +742,11 @@ class Processor:
 
         # ----------------------------------------------------------------
         
+        gov_cpc_df = pd.read_pickle(f'{self.Directory}/Clean Data/Gov_CPC.pkl')
+        ind_pat_shares_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
+
         spill_net_df = pd.read_pickle(f'{self.Directory}/Clean Data/Spill_Net.pkl')
         tech_pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Tech_Pat.pkl')
-        ind_pat_shares_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre.pkl')
         
         IV_year_start = 1980
         
@@ -751,6 +754,42 @@ class Processor:
         PV_inventor_location_df = pd.read_pickle(f'{self.Directory}/Clean Data/Inventor_Locations.pkl')
         pat_firms_df = pd.read_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
         pat_firms_df = pat_firms_df[pat_firms_df['year'] >= IV_year_start]
+        
+        
+        # ------------------------ #
+        # Government Patent Shocks #
+        # ------------------------ #
+        govt_shocks_df = pd.merge(gov_cpc_df,
+                                    ind_pat_shares_df,
+                                    on='cpc_subclass',
+                                    how='inner'
+                                    )
+        
+        frames = []
+        for ty in ['clean', 'dirty', 'gen']:
+            shock = govt_shocks_df.copy()
+            shock = shock[shock['type'] == ty]
+            
+            shock['weighted_pat_govt'] = shock['cpc_pat_share'] * shock['gov_pat_count']
+            govt_shocks_df['pat_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_pat_govt'].transform('sum')
+            
+            shock['weighted_cite_govt'] = shock['cpc_cite_share'] * shock['gov_pat_cites']
+            shock['cite_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_cite_govt'].transform('sum')
+            
+            shock = shock[['BLS_Industry', 'year', 'type',
+                           'pat_govt_shock', 'cite_govt_shock']].drop_duplicates()
+
+            frames.append(shock)
+                
+        govt_shocks_df = pd.concat(frames, ignore_index=True)
+        
+        govt_shocks_wide = govt_shocks_df.pivot(index=['BLS_Industry', 'year'], columns=['type'], 
+                                              values=['pat_govt_shock', 'cite_govt_shock'])
+
+        govt_shocks_wide.columns = [f'{v}_{t}' for v, t in govt_shocks_wide.columns]
+        govt_shocks_df = govt_shocks_wide.reset_index()
+        
+        govt_shocks_df.to_pickle(f'{self.Directory}/Clean Data/Govt_Shocks.pkl')
         
         
         # ---------------- #
@@ -791,6 +830,7 @@ class Processor:
         KS_df = KS_wide.reset_index()
         
         KS_df.to_pickle(f'{self.Directory}/Clean Data/KS_Shocks.pkl')
+        
         
         # ------------------------ #
         # State R&D Price Exposure #
@@ -961,10 +1001,10 @@ class Processor:
         ind_hat_df = ind_hat_df.reset_index()
  
         RD_shocks_df = ind_hat_df.rename(columns={
-            'pat_count_hat__general': 'pat_count_hat',
+            'pat_count_hat__general': 'pat_count_hat_gen',
             'pat_count_hat__clean':   'pat_count_clean_hat',
             'pat_count_hat__dirty':   'pat_count_dirty_hat',
-            'pat_cites_hat__general': 'pat_cites_hat',
+            'pat_cites_hat__general': 'pat_cites_hat_gen',
             'pat_cites_hat__clean':   'pat_cites_clean_hat',
             'pat_cites_hat__dirty':   'pat_cites_dirty_hat'})
         
