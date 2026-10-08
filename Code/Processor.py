@@ -310,6 +310,12 @@ class Processor:
         
         Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]['patent_id'].drop_duplicates()
         del PV_assignee_df
+        
+        univ_pats_df = pd.read_csv(f'{self.Directory}/Raw Data/patentsview_govt_univ.csv')
+        
+        Gov_Pats_df = Gov_Pats_df.merge(univ_pats_df['patent_id'][univ_pats_df['univ_or_gov_nonprofit'] == 1],
+                             on='patent_id',
+                             how='outer')
 
     
         # --------------------- #
@@ -726,7 +732,7 @@ class Processor:
         Create Series of Greenification Shocks
     
         Output: Clean Data/KS_Shocks.pkl
-                #Clean Data/RD_Shocks.pkl
+                Clean Data/RD_Shocks.pkl
         """""
         
         # ----------------------------------------------------------------
