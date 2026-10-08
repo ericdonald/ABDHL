@@ -312,6 +312,7 @@ class Processor:
         del PV_assignee_df
         
         univ_pats_df = pd.read_csv(f'{self.Directory}/Raw Data/patentsview_govt_univ.csv')
+        univ_pats_df['patent_id'] = univ_pats_df['patent_id'].astype(str)
         
         Gov_Pats_df = Gov_Pats_df.merge(univ_pats_df[['patent_id']][univ_pats_df['univ_or_gov_nonprofit'] == 1],
                              on='patent_id',
@@ -328,6 +329,9 @@ class Processor:
             CPC_df.to_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
         else:
             CPC_df = pd.read_pickle(f'{self.Directory}/Raw Data/CPC.pkl')
+            
+            cpc4_df = CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'].drop_duplicates()
+            cpc3_df = CPC_df[['patent_id', 'cpc_class']][CPC_df['cpc_section'] != 'Y'].drop_duplicates()
                 
         
         # ------------------------ #
@@ -439,7 +443,7 @@ class Processor:
         ]
         rel = rel[['patent_id', 'year', 'types']]
     
-        cpc = CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'].drop_duplicates()
+        cpc = cpc4_df.copy()
         cpc_counts = cpc.groupby('patent_id').size().rename('n_cpc').reset_index()
     
         cit = citations_df[['patent_id', 'citation_patent_id']].drop_duplicates()
@@ -490,7 +494,7 @@ class Processor:
         citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
         citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
         
-        citations_df = citations_df.merge(CPC_df[['patent_id', 'cpc_class']][CPC_df['cpc_section'] != 'Y'],
+        citations_df = citations_df.merge(cpc3_df,
                                             on='patent_id',
                                             how='right')
         citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
@@ -516,7 +520,7 @@ class Processor:
         # ----------------------------- #
         # Patenting by Technology Class #
         # ----------------------------- #
-        tech_pat_df = pat_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
+        tech_pat_df = pat_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'].drop_duplicates(),
                                             on='patent_id',
                                             how='inner')
         
@@ -771,7 +775,7 @@ class Processor:
             shock = shock[shock['type'] == ty]
             
             shock['weighted_pat_govt'] = shock['cpc_pat_share'] * shock['gov_pat_count']
-            govt_shocks_df['pat_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_pat_govt'].transform('sum')
+            shock['pat_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_pat_govt'].transform('sum')
             
             shock['weighted_cite_govt'] = shock['cpc_cite_share'] * shock['gov_pat_cites']
             shock['cite_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_cite_govt'].transform('sum')
