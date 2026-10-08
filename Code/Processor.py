@@ -669,7 +669,7 @@ class Processor:
         for ty in ['clean', 'dirty', 'gen']:
             clim_share = ind_pat_cpc_pre_df.copy()
             if ty == 'gen':
-                clim_share = clim_share[(clim_share['clean'] == 0) and (clim_share['dirty'] == 0)]
+                clim_share = clim_share[(clim_share['clean'] == 0) & (clim_share['dirty'] == 0)]
             else:
                 clim_share = clim_share[clim_share[ty] == 1]
             
