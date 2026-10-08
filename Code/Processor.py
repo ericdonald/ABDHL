@@ -520,9 +520,9 @@ class Processor:
         # ----------------------------- #
         # Patenting by Technology Class #
         # ----------------------------- #
-        tech_pat_df = pat_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'].drop_duplicates(),
-                                            on='patent_id',
-                                            how='inner')
+        tech_pat_df = pat_df.merge(cpc4_df,
+                                    on='patent_id',
+                                    how='inner')
         
         tech_pat_df['type'] = [
             (['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g']
@@ -658,7 +658,7 @@ class Processor:
         # -------------------- #
         # CPC Shares by Sector #
         # -------------------- #
-        ind_pat_cpc_pre_df = pat_ind_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
+        ind_pat_cpc_pre_df = pat_ind_df.merge(cpc4_df,
                                             on='patent_id',
                                             how='inner')
         
@@ -707,7 +707,7 @@ class Processor:
                              on='patent_id',
                              how='inner')
         
-        gov_cpc_df = Gov_Pats_df.merge(CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'],
+        gov_cpc_df = Gov_Pats_df.merge(cpc4_df,
                              on='patent_id',
                              how='inner')
         
