@@ -308,7 +308,7 @@ class Processor:
         else:
             PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
         
-        Gov_Pats_df = PV_assignee_df[PV_assignee_df['assignee_type']==6]['patent_id'].drop_duplicates()
+        Gov_Pats_df = PV_assignee_df[['patent_id']][PV_assignee_df['assignee_type']==6].drop_duplicates()
         del PV_assignee_df
         
         univ_pats_df = pd.read_csv(f'{self.Directory}/Raw Data/patentsview_govt_univ.csv')
