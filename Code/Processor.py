@@ -313,7 +313,7 @@ class Processor:
         
         univ_pats_df = pd.read_csv(f'{self.Directory}/Raw Data/patentsview_govt_univ.csv')
         
-        Gov_Pats_df = Gov_Pats_df.merge(univ_pats_df['patent_id'][univ_pats_df['univ_or_gov_nonprofit'] == 1],
+        Gov_Pats_df = Gov_Pats_df.merge(univ_pats_df[['patent_id']][univ_pats_df['univ_or_gov_nonprofit'] == 1],
                              on='patent_id',
                              how='outer')
 
