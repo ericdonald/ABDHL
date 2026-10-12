@@ -36,7 +36,7 @@ API = 0
 # ----------------- #
 # Build Instruments #
 # ----------------- #
-#P.Instruments()
+P.Instruments()
 
 
 # ---------------- #
@@ -83,6 +83,8 @@ def make_specs(tag, share, extra_offsets=()):
         add('wsumud',   'Control: sum of weights, up/down', controls=['W_w'], direction='updown', panel='A')
         add('offall',   'Offset: all patents, net', offset=off_all, panel='C')
         add('offallud', 'Offset: all patents, up/down', offset=off_all, direction='updown', panel='C')
+        add('annual',   'Annual outcome, regressor from bin ending 5 years earlier, net', annual=True, panel='E')
+        add('annualud', 'Annual outcome, regressor from bin ending 5 years earlier, up/down', annual=True, direction='updown', panel='E')
         for name, col in extra_offsets:
             add(f'{name}',   f'Offset: {name}, net', offset=f'{col}_{suf}', panel='C')
             add(f'{name}ud', f'Offset: {name}, up/down', offset=f'{col}_{suf}', direction='updown', panel='C')
@@ -114,6 +116,106 @@ P.UDG_Corr(batch, BLS_year_start, Year_end)
 # ------------------------------------------------------ #
 batch = 'batch1_D'
 specs = make_specs('b1', 'D', extra_offsets=[('offcd', 'clim_pat')])
+P.UDG_Run(batch, specs, BLS_year_start, Year_end)
+
+
+# ---------------------------------------------------------------- #
+# Instrumented specifications: G (clean / all) with iv = source       #
+# ---------------------------------------------------------------- #
+def make_iv_specs(tag, src):
+    "IV permutation set around the baseline. The network G is instrumented by the clean/gen shock ratio from src."
+    specs = []
+    for m in ['pat', 'cite']:
+        suf = 'count' if m == 'pat' else 'cites'
+        def add(name, label, iv=src, **kw):
+            specs.append(dict(id=f'{tag}_{m}_{name}', short=name, measure=m, share='G', iv=iv, label=label, **kw))
+        add('noiv',     'Same estimator, no instrument', iv='none', panel='A')
+        add('base',     'Baseline IV: no own lag', panel='A')
+        add('updown',   'Separate up/down', direction='updown', panel='A')
+        add('ownlag',   'Own lagged share', own_lag=True, panel='A')
+        add('wsum',     'Control: sum of weights, net', controls=['W_w'], panel='A')
+        add('wsumud',   'Control: sum of weights, up/down', controls=['W_w'], direction='updown', panel='A')
+        add('norm',     'Normalised weights, net', normalise=True, panel='B')
+        add('normud',   'Normalised weights, up/down', normalise=True, direction='updown', panel='B')
+        add('bin3',     'Three-year bins', bin_len=3, panel='B')
+        add('noshr',    'No kappa shrinkage, net', shrink=False, panel='B')
+        add('noshrud',  'No kappa shrinkage, up/down', shrink=False, direction='updown', panel='B')
+        add('offall',   'Offset: all patents, net', offset=f'pat_{suf}', panel='C')
+        add('offallud', 'Offset: all patents, up/down', offset=f'pat_{suf}', direction='updown', panel='C')
+        add('wins',     'Instrument winsorised at 5/95, net', iv_wins=0.05, panel='D')
+        add('winsud',   'Instrument winsorised at 5/95, up/down', iv_wins=0.05, direction='updown', panel='D')
+        if src == 'gov':
+            add('lag2',     'Instrument lagged two bins, net', iv_lags=(2,), panel='D')
+            add('lag2ud',   'Instrument lagged two bins, up/down', iv_lags=(2,), direction='updown', panel='D')
+            add('lag12',    'Instruments lagged one and two bins, net', iv_lags=(1, 2), panel='D')
+            add('lag12ud',  'Instruments lagged one and two bins, up/down', iv_lags=(1, 2), direction='updown', panel='D')
+        if src == 'ks':
+            add('wt',       'Within-type spillovers (clean from clean / general from general), net', iv='kswt', panel='D')
+            add('wtud',     'Within-type spillovers, up/down', iv='kswt', direction='updown', panel='D')
+            add('wtwins',   'Within-type spillovers, winsorised at 5/95, net', iv='kswt', iv_wins=0.05, panel='D')
+            add('wtwinsud', 'Within-type spillovers, winsorised at 5/95, up/down', iv='kswt', iv_wins=0.05, direction='updown', panel='D')
+    return specs
+
+
+# ---------------------------------------------- #
+# Batch 2: instrument = government patents       #
+# ---------------------------------------------- #
+batch = 'batch2_gov'
+specs = make_iv_specs('b2', 'gov')
+P.UDG_Run(batch, specs, BLS_year_start, Year_end)
+
+
+# ---------------------------------------------- #
+# Batch 3: instrument = state R&D-price exposure  #
+# ---------------------------------------------- #
+batch = 'batch3_rd'
+specs = make_iv_specs('b3', 'rd')
+P.UDG_Run(batch, specs, BLS_year_start, Year_end)
+P.RD_ZeroStage(batch)
+
+
+# ---------------------------------------------- #
+# Batch 4: instrument = knowledge spillovers      #
+# ---------------------------------------------- #
+batch = 'batch4_ks'
+specs = make_iv_specs('b4', 'ks')
+P.KS_Proportions(batch, BLS_year_start, Year_end)
+P.UDG_Run(batch, specs, BLS_year_start, Year_end)
+
+
+# ---------------------------------------------- #
+# Batch 4: instrument = knowledge spillovers      #
+# ---------------------------------------------- #
+batch = 'batch4_ks'
+P.KS_Shares(batch, BLS_year_start, Year_end, bin_len)
+specs = make_iv_specs('b4', 'ks')
+P.UDG_Run(batch, specs, BLS_year_start, Year_end)
+
+
+# ---------------------------------------------------------- #
+# Batch 5: asinh(clean patents) on network asinh(clean patents) #
+# ---------------------------------------------------------- #
+def make_asinh_specs(tag):
+    "Levels specification: OLS of asinh(clean) on the network sums of winsorised asinh(clean)."
+    specs = []
+    for m in ['pat', 'cite']:
+        def add(name, label, **kw):
+            specs.append(dict(id=f'{tag}_{m}_{name}', short=name, measure=m, share='A', label=label, **kw))
+        add('base',     'Baseline: no own lag', panel='A')
+        add('updown',   'Separate up/down', direction='updown', panel='A')
+        add('ownlag',   'Own lagged level', own_lag=True, panel='A')
+        add('wsum',     'Control: sum of weights, net', controls=['W_w'], panel='A')
+        add('wsumud',   'Control: sum of weights, up/down', controls=['W_w'], direction='updown', panel='A')
+        add('norm',     'Normalised weights, net', normalise=True, panel='B')
+        add('normud',   'Normalised weights, up/down', normalise=True, direction='updown', panel='B')
+        add('bin3',     'Three-year bins', bin_len=3, panel='B')
+        add('annual',   'Annual outcome, net', annual=True, panel='C')
+        add('annualud', 'Annual outcome, up/down', annual=True, direction='updown', panel='C')
+    return specs
+
+
+batch = 'batch5_asinh'
+specs = make_asinh_specs('b5')
 P.UDG_Run(batch, specs, BLS_year_start, Year_end)
 
 

@@ -55,7 +55,8 @@ class GLMWrap:
 
     def __repr__(self):
         head = f'{self.y} ~ {" + ".join(self.x)}'
-        spec = (f'PPML (Poisson pseudo-ML), offset log({self.offset}), '
+        spec = (f'OLS, ' if self.offset is None else f'PPML (Poisson pseudo-ML), offset log({self.offset}), ')
+        spec = (spec + f'{" + ".join(self.fe) if self.fe else "no"} FE, SE clustered by sector') if self.offset is None else (f'PPML (Poisson pseudo-ML), offset log({self.offset}), '
                 f'{" + ".join(self.fe) if self.fe else "no"} FE, '
                 f'SE clustered by sector')
         info = [f'N = {self.nobs}']
