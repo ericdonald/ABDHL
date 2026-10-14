@@ -1421,7 +1421,8 @@ class Processor:
         For each source in ivs ('gov', 'ks', 'rd') it also builds the instrument share Z<src> (clean/gen
         shock ratio, see UDG_Instrument) and its network sums, using the Leontief inverse fixed at the first bin.
         iv_wins: if set, instrument shares are winsorised at [iv_wins, 1-iv_wins] across industries within each period.
-        clean: 'all' = baseline clean definition (Y02E, Y02P, Y02T, B60L); 'y02p' = Y02P only (Ind_Pat_Y02P.pkl).
+        clean: 'all' = baseline clean definition (Y02E, Y02P, Y02T, B60L); 'y02p' = Y02P only (Ind_Pat_Y02P.pkl);
+               'entry' = firms' first clean patents over firms at risk (Ind_Pat_Entry.pkl, see Firm_Entry).
         fixed_w: all network sums (regressors and controls, not only the instruments) use the Leontief inverse of the first
         bin instead of the inverse of each bin, so that changes in the network cannot drive the regressors.
         annual: regressors are built from rolling bin_len-year windows ending in every year (so the regressor for
@@ -1430,7 +1431,7 @@ class Processor:
         Returns: reg_df, kappas
         """""
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
-        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{'_Y02P' if clean == 'y02p' else ''}.pkl")
+        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{ {'y02p': '_Y02P', 'entry': '_Entry'}.get(clean, '') }.pkl")
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         if annual:
             bin_ends = sorted(y for y in range(BLS_year_start, Year_end + 1) if y in IO_mats)
@@ -2271,6 +2272,344 @@ class Processor:
             ids = out.loc[out['table'] == name, 'spec_id']
             self.UDG_ModelTable({i: models[i] for i in ids}, out.set_index('spec_id'), outdir / f'table_{name}.tex')
         return models
+
+
+    def Firm_Entry(self, first_year=1987):
+        """""
+        Extensive-margin adoption from firm patenting: a firm "adopts" clean technology when it files its first clean patent.
+        For each industry and year: entry = number of firms whose first clean patent is filed that year (split over the
+        industries of those patents); at risk = number of firms active in the industry (a patent there up to that year,
+        split equally over their industries) that have not filed a clean patent before the year. Firms whose first clean
+        patent predates the sample are treated as already adopted.
+
+        Output: Clean Data/Ind_Pat_Entry.pkl in the layout of Ind_Pat.pkl, with clean_pat_count = entry and
+        pat_count = firm-years at risk, so that G = entry / at risk is an adoption hazard (UDG_Panel clean='entry').
+        """""
+        pf = pd.read_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean']]
+        pf = pf.drop_duplicates(['patent_id', 'gvkey', 'BLS_Industry'])
+        first_clean = pf.loc[pf['clean'] == 1].groupby('gvkey')['year'].min()
+        # entry: share of the firm's first-year clean patents in each industry
+        c = pf[(pf['clean'] == 1) & (pf['year'] == pf['gvkey'].map(first_clean))]
+        w = c.groupby(['gvkey', 'BLS_Industry']).size().rename('n').reset_index()
+        w['entry'] = w['n'] / w.groupby('gvkey')['n'].transform('sum')
+        w['year'] = w['gvkey'].map(first_clean)
+        entry = w.groupby(['BLS_Industry', 'year'])['entry'].sum()
+        # at risk: firm-industry pairs with a first patent in the industry up to the year, firm not adopted before the year
+        fs = pf.groupby(['gvkey', 'BLS_Industry'])['year'].min().rename('fs_year').reset_index()
+        fs['fc'] = fs['gvkey'].map(first_clean).fillna(9999)
+        years = range(first_year, int(pf['year'].max()) + 1)
+        rows = []
+        for y in years:
+            a = fs[(fs['fs_year'] <= y) & (fs['fc'] >= y)]
+            n_ind = fs[fs['fs_year'] <= y].groupby('gvkey')['BLS_Industry'].transform('count')   # industries of the firm so far
+            wt = 1.0 / n_ind.reindex(a.index)
+            r = (a.assign(w=wt).groupby('BLS_Industry')['w'].sum().rename('at_risk').reset_index())
+            r['year'] = y
+            rows.append(r)
+        risk = pd.concat(rows, ignore_index=True)
+        ind = sorted(risk['BLS_Industry'].unique())
+        idx = pd.MultiIndex.from_product([ind, list(years)], names=['BLS_Industry', 'year'])
+        out = (risk.set_index(['BLS_Industry', 'year'])[['at_risk']].reindex(idx).fillna(0.0)
+                   .join(entry.rename('entry'), how='left').fillna({'entry': 0.0}).reset_index())
+        out['entry'] = out['entry'].clip(upper=out['at_risk'].clip(lower=0))   # adopters not active before are counted as at risk
+        res = pd.DataFrame({'BLS_Industry': out['BLS_Industry'], 'year': out['year'],
+                            'clean_pat_count': out['entry'], 'dirty_pat_count': 0.0, 'pat_count': out['at_risk'],
+                            'clean_pat_cites': out['entry'], 'dirty_pat_cites': 0.0, 'pat_cites': out['at_risk']})
+        res['pat_count_nc'] = res['pat_count'] - res['clean_pat_count']
+        res['pat_cites_nc'] = res['pat_count_nc']
+        res['clim_pat_count'] = res['clean_pat_count']
+        res['clim_pat_cites'] = res['clean_pat_cites']
+        res = res[res['BLS_Industry'] != 71]
+        res.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Entry.pkl')
+        return res
+
+
+    def IO_Validation(self, batch, BLS_year_start, Year_end, bin_len=5, dim=3):
+        """""
+        Does clean patenting predict changes in the supply chain? Following the figures of IO_Change: the outcome is the
+        total-variation distance between an industry's input-requirement row at the start and end of a bin, in the
+        reduced form (fossil-fuel columns dropped and rows renormalised) and from the Leontief inverse. Regressors are
+        the industry's clean patenting in the same bin or the bin before (asinh of clean patents; clean share; first-clean
+        entry). Columns: OLS and WLS (weights = emissions^(1/dim) in 2012) with period effects, and WLS with sector and
+        period effects; standard errors clustered by industry.
+
+        Output: Results/Batches/<batch>/io_validation.csv, table_io_validation.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        IO = pd.read_pickle(D + 'IO_Networks.pkl')
+        pat = pd.read_pickle(D + 'Ind_Pat.pkl')
+        co2 = pd.read_pickle(D + 'Ind_CO2.pkl')
+        ent_path = Path(D + 'Ind_Pat_Entry.pkl')
+        ent = pd.read_pickle(ent_path) if ent_path.exists() else None
+        manu = np.arange(self.manu_cols[0] - 1, self.manu_cols[1])
+        J = IO[BLS_year_start].shape[0]
+
+        def reduced(M):
+            Mm = M[manu, :]
+            r = np.delete(Mm, self.fossil_cols, axis=1)
+            return r * Mm.sum(axis=1, keepdims=True) / r.sum(axis=1, keepdims=True)
+
+        def leontief(M):
+            return np.linalg.inv(np.eye(J) - M)[manu, :]
+
+        def tv(A, B):
+            return 0.5 * np.abs(B - A).sum(axis=1)
+
+        ends = [e for e in range(BLS_year_start + bin_len, Year_end + 1, bin_len)]
+        def window(df, col, e):
+            w = df[(df['year'] > e - bin_len) & (df['year'] <= e)]
+            return w.groupby('BLS_Industry')[col].sum()
+
+        w12 = co2[co2['year'] == 2012].set_index('BLS_Industry')['CO2e_Industry'] ** (1 / dim)
+        rows = []
+        for e in ends:
+            A, B = IO[e - bin_len], IO[e]
+            d = pd.DataFrame({'BLS_Industry': manu + 1, 'period': e,
+                              'tv_red': tv(reduced(A), reduced(B)), 'tv_li': tv(leontief(A), leontief(B))})
+            for lab, ee in [('', e), ('_lag', e - bin_len)]:
+                cl, tot = window(pat, 'clean_pat_count', ee), window(pat, 'pat_count', ee)
+                d['ln_clean' + lab] = np.arcsinh(d['BLS_Industry'].map(cl).fillna(0.0))
+                d['G' + lab] = (d['BLS_Industry'].map(cl) / d['BLS_Industry'].map(tot).where(d['BLS_Industry'].map(tot) > 0))
+                if ent is not None:
+                    en = window(ent, 'clean_pat_count', ee)
+                    d['ln_entry' + lab] = np.arcsinh(d['BLS_Industry'].map(en).fillna(0.0))
+            d['w'] = d['BLS_Industry'].map(w12)
+            rows.append(d)
+        df = pd.concat(rows, ignore_index=True)
+        df = df[df['w'].notna() & df['BLS_Industry'].isin(pat['BLS_Industry'].unique())]
+
+        def fit(d, x, y, weighted, sector_fe):
+            d = d.dropna(subset=[x, y])
+            parts = [pd.Series(1.0, index=d.index, name='const'), d[[x]].astype(float),
+                     pd.get_dummies(d['period'], prefix='p', drop_first=True, dtype=float)]
+            if sector_fe:
+                parts.append(pd.get_dummies(d['BLS_Industry'], prefix='s', drop_first=True, dtype=float))
+            X = pd.concat(parts, axis=1)
+            X.columns = [str(c) for c in X.columns]
+            kw = dict(cov_type='cluster', cov_kwds={'groups': d['BLS_Industry'].to_numpy()})
+            m = (sm.WLS(d[y], X, weights=d['w']) if weighted else sm.OLS(d[y], X)).fit(**kw)
+            return m.params[x], m.bse[x], m.pvalues[x], len(d), d['BLS_Industry'].nunique(), m.rsquared
+
+        regs = [('ln_clean', 'asinh(clean patents)'), ('G', 'Clean share $G$')]
+        if ent is not None:
+            regs.append(('ln_entry', 'asinh(first clean patents)'))
+        specs = [('OLS, period FE', False, False), ('WLS, period FE', True, False), ('WLS, sector + period FE', True, True)]
+        out = []
+        for y, ylab in [('tv_red', 'Reduced form (fossil columns dropped)'), ('tv_li', 'Leontief inverse')]:
+            for x, xlab in regs:
+                for timing in ['', '_lag']:
+                    for slab, wt, sfe in specs:
+                        b, se, p, n, ns, r2 = fit(df, x + timing, y, wt, sfe)
+                        out.append(dict(outcome=y, regressor=x, timing='same bin' if timing == '' else 'previous bin',
+                                        spec=slab, coef=b, se=se, p=p, N=n, n_sectors=ns, r2=r2))
+        out = pd.DataFrame(out)
+        out.to_csv(outdir / 'io_validation.csv', index=False)
+        cols = [(t, s_) for t in ['same bin', 'previous bin'] for s_, _, _ in specs]
+        lines = [r'\begin{tabular}{l' + 'c' * len(cols) + '}', r'\toprule',
+                 r' & \multicolumn{3}{c}{Same bin} & \multicolumn{3}{c}{Previous bin} \\',
+                 r'\cmidrule(lr){2-4}\cmidrule(lr){5-7}',
+                 ' & ' + ' & '.join(['OLS', 'WLS', 'WLS, FE'] * 2) + r' \\', r'\midrule']
+        for y, ylab in [('tv_red', 'Reduced form (fossil columns dropped)'), ('tv_li', 'Leontief inverse')]:
+            lines.append(r'\multicolumn{7}{l}{\textit{Outcome: TV distance, ' + ylab + r'}} \\')
+            for x, xlab in regs:
+                sub = out[(out['outcome'] == y) & (out['regressor'] == x)]
+                cs, ss = [], []
+                for t, sl in cols:
+                    r = sub[(sub['timing'] == t) & (sub['spec'] == [sp[0] for sp in specs][[sp[0] for sp in specs].index(sl)])].iloc[0]
+                    cs.append(f"{r.coef:.3f}{gpf.get_stars(r.p)}"); ss.append(f"({r.se:.3f})")
+                lines += [xlab + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+            lines.append(r'\midrule')
+        n0 = out.iloc[0]
+        lines += ['Observations (first column) & ' + str(int(n0.N)) + ' & & & & & ' + r' \\', r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_io_validation.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(out.round(3).to_string())
+        return out
+
+
+    def Old_Benchmark(self, batch, BLS_year_start, Year_start, Year_mid, Year_end, bin_len=5, dim=3, lower=0.1):
+        """""
+        Benchmark: the network regressions of the previously submitted version of the paper (branch Old, Up_Down_Green:
+        Network_Regressions_Net / _Net_WLS / _Lagged / _UpDown), run on the current Clean Data. Outcomes: reduction in
+        log emissions intensity, clean patent share, clean citation share, on the network of the partners' emission
+        reduction, clean patent share or clean citation share. OLS (WLS: weights^(1/dim)) with bin effects, standard errors
+        clustered by industry, estimation samples winsorised at the 10th and 90th percentiles, shares > 0. The network is
+        the old one: the manufacturing block of the input-output matrix (diagonal zeroed, rows divided by the full-economy
+        row totals), its Leontief inverse minus the identity for upstream, the transpose for downstream; the shares of
+        industries without data are set to zero; the emission regressor uses the positive part of the reduction.
+
+        Output: Results/Batches/<batch>/old_benchmark.csv, table_old_{net,wls,lag,updown}.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        IO = pd.read_pickle(D + 'IO_Networks.pkl')
+        co2 = pd.read_pickle(D + 'Ind_CO2.pkl')
+        co2_full = pd.read_pickle(D + 'Ind_CO2_full.pkl')
+        ann = pd.read_pickle(D + 'Ind_Pat.pkl')
+        bin_ends = list(range(BLS_year_start, Year_end + 1, bin_len))
+        manu_slice = slice(self.manu_cols[0] - 1, self.manu_cols[1])
+        manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
+        M = len(manu_idx_all)
+
+        manu_IO = {}
+        for y in bin_ends:
+            A = IO[y].copy()
+            np.fill_diagonal(A, 0.0)
+            tot = A.sum(axis=1)
+            denom = tot[manu_slice, np.newaxis]
+            manu_IO[y] = A[manu_slice, manu_slice] / np.where(denom == 0, 1, denom)
+
+        def network(IO_manu, z_wide, idx):
+            in_manu = np.isin(idx, manu_idx_all)
+            emb = np.searchsorted(manu_idx_all, idx[in_manu])
+            LI = np.linalg.inv(np.eye(M) - IO_manu)
+            z = np.zeros(M)
+            z[emb] = np.nan_to_num(z_wide)
+            return pd.DataFrame({'BLS_Industry': idx[in_manu], 'up': ((LI - np.eye(M)) @ z)[emb],
+                                 'down': ((LI - np.eye(M)).T @ z)[emb]})
+
+        # emissions
+        def em_panel(df):
+            w = df.pivot(index='BLS_Industry', columns='year', values=['CO2e_intensity_Industry', 'CO2e_Industry']).dropna()
+            idx = w.index.to_numpy(dtype=int)
+            in_manu = np.isin(idx, manu_idx_all)
+            parts = []
+            for (a, b), ye in [((Year_start, Year_mid), Year_mid), ((Year_mid, Year_end), Year_end)]:
+                dlog = -(np.log(w['CO2e_intensity_Industry'][b].to_numpy()) - np.log(w['CO2e_intensity_Industry'][a].to_numpy()))
+                base = pd.DataFrame({'BLS_Industry': idx, 'period': ye, 'dlog_CO2e_inten': dlog,
+                                     'CO2e_Industry': w['CO2e_Industry'][a].to_numpy()})
+                net = network(manu_IO[ye], np.maximum(dlog[in_manu], 0), idx).rename(columns={'up': 'up_dlog_em', 'down': 'down_dlog_em'})
+                parts.append(base.merge(net, on='BLS_Industry', how='left'))
+            return pd.concat(parts, ignore_index=True)
+
+        em_df = em_panel(co2)
+        wide_full = co2_full.pivot(index='BLS_Industry', columns='year', values='CO2e_intensity_Industry').dropna()
+        idx_full = wide_full.index.to_numpy(dtype=int)
+
+        # patents
+        frames = []
+        for y in bin_ends:
+            w = ann[(ann['year'] > y - bin_len) & (ann['year'] <= y)]
+            g = w.groupby('BLS_Industry')[['clean_pat_count', 'pat_count', 'clean_pat_cites', 'pat_cites']].sum().reindex(wide_full.index)
+            g['clean_pat_share'] = g['clean_pat_count'] / g['pat_count'].where(g['pat_count'] > 0)
+            g['clean_cite_share'] = g['clean_pat_cites'] / g['pat_cites'].where(g['pat_cites'] > 0)
+            out = g.reset_index()
+            out['period'] = y
+            in_manu = np.isin(idx_full, manu_idx_all)
+            for col, nm in [('clean_pat_share', 'pat_count'), ('clean_cite_share', 'pat_cite')]:
+                net = network(manu_IO[y], g[col].to_numpy()[in_manu], idx_full).rename(columns={'up': f'up_{nm}', 'down': f'down_{nm}'})
+                out = out.merge(net, on='BLS_Industry', how='left')
+            frames.append(out)
+        pat = pd.concat(frames, ignore_index=True)
+        reg = pat.merge(em_df, on=['BLS_Industry', 'period'], how='left')
+        reg = reg[reg['BLS_Industry'].isin(manu_idx_all)].sort_values(['BLS_Industry', 'period']).copy()
+        for k in ['dlog_em', 'pat_count', 'pat_cite']:
+            reg[f'net_{k}'] = reg[f'up_{k}'] + reg[f'down_{k}']
+        for c in ['net_dlog_em', 'net_pat_count', 'net_pat_cite', 'up_dlog_em', 'down_dlog_em', 'up_pat_count',
+                  'down_pat_count', 'up_pat_cite', 'down_pat_cite']:
+            reg[c + '_lag'] = reg.groupby('BLS_Industry')[c].shift(1)
+
+        def wins(d, cols):
+            d = d.copy()
+            for c in cols:
+                lo, hi = d[c].quantile(lower), d[c].quantile(1 - lower)
+                d[c] = d[c].clip(lower=lo, upper=hi)
+            return d
+
+        def fit(df, y, xs, wcol=None, sub=None):
+            d = sub if sub is not None else df
+            fe = pd.get_dummies(d['period'], drop_first=True, dtype=float)
+            X = sm.add_constant(pd.concat([d[xs], fe], axis=1))
+            kw = dict(cov_type='cluster', cov_kwds={'groups': d['BLS_Industry']})
+            return (sm.OLS(d[y], X) if wcol is None else sm.WLS(d[y], X, d[wcol] ** (1 / dim))).fit(**kw)
+
+        allc = ['up_dlog_em', 'down_dlog_em', 'net_dlog_em', 'up_pat_count', 'down_pat_count', 'net_pat_count',
+                'up_pat_cite', 'down_pat_cite', 'net_pat_cite']
+        reg_em = wins(reg.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten'] + allc)
+        reg_cnt = wins(reg[reg['clean_pat_share'] > 0], ['clean_pat_share', 'up_dlog_em', 'down_dlog_em', 'net_dlog_em',
+                                                         'up_pat_count', 'down_pat_count', 'net_pat_count'])
+        reg_cit = wins(reg[reg['clean_cite_share'] > 0], ['clean_cite_share', 'up_dlog_em', 'down_dlog_em', 'net_dlog_em',
+                                                          'up_pat_cite', 'down_pat_cite', 'net_pat_cite'])
+        reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
+        lagc = ['net_dlog_em_lag', 'net_pat_count_lag', 'net_pat_cite_lag', 'up_dlog_em_lag', 'down_dlog_em_lag',
+                'up_pat_count_lag', 'down_pat_count_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']
+        reg_em_lag = wins(reg.dropna(subset=['dlog_CO2e_inten', 'net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag',
+                                             'net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']), ['dlog_CO2e_inten'] + lagc)
+        reg_cnt_lag = wins(reg[reg['clean_pat_share'] > 0].dropna(subset=['net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag']),
+                           ['clean_pat_share'] + lagc)
+        reg_cit_lag = wins(reg[reg['clean_cite_share'] > 0].dropna(subset=['net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']),
+                           ['clean_cite_share'] + lagc)
+        reg_em_em_lag = wins(reg.dropna(subset=['dlog_CO2e_inten', 'net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+                             ['dlog_CO2e_inten'] + lagc)
+        reg_cnt_em_lag = wins(reg[reg['clean_pat_share'] > 0].dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+                              ['clean_pat_share'] + lagc)
+        reg_cit_em_lag = wins(reg[reg['clean_cite_share'] > 0].dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
+                              ['clean_cite_share'] + lagc)
+
+        # seven columns: emissions reduction on (em, patents, citations); patent share on (em, patents); citation share on (em, citations)
+        def cols_for(kind):
+            if kind == 'net':
+                return [(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], None, None), (reg_em, 'dlog_CO2e_inten', ['net_pat_count'], None, None),
+                        (reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], None, None),
+                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], None, None),
+                        (reg_cit, 'clean_cite_share', ['net_dlog_em'], None, reg_cit_em), (reg_cit, 'clean_cite_share', ['net_pat_cite'], None, None)]
+            if kind == 'wls':
+                return [(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], 'CO2e_Industry', None), (reg_em, 'dlog_CO2e_inten', ['net_pat_count'], 'CO2e_Industry', None),
+                        (reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], 'CO2e_Industry', None),
+                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], 'clean_pat_count', reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], 'clean_pat_count', None),
+                        (reg_cit, 'clean_cite_share', ['net_dlog_em'], 'clean_pat_cites', reg_cit_em), (reg_cit, 'clean_cite_share', ['net_pat_cite'], 'clean_pat_cites', None)]
+            if kind == 'lag':
+                return [(reg_em_em_lag, 'dlog_CO2e_inten', ['net_dlog_em_lag'], None, None), (reg_em_lag, 'dlog_CO2e_inten', ['net_pat_count_lag'], None, None),
+                        (reg_em_lag, 'dlog_CO2e_inten', ['net_pat_cite_lag'], None, None),
+                        (reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'], None, reg_cnt_em_lag), (reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'], None, None),
+                        (reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'], None, reg_cit_em_lag), (reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'], None, None)]
+            return [(reg_em, 'dlog_CO2e_inten', ['up_dlog_em', 'down_dlog_em'], None, None), (reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], None, None),
+                    (reg_em, 'dlog_CO2e_inten', ['up_pat_cite', 'down_pat_cite'], None, None),
+                    (reg_cnt, 'clean_pat_share', ['up_dlog_em', 'down_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], None, None),
+                    (reg_cit, 'clean_cite_share', ['up_dlog_em', 'down_dlog_em'], None, reg_cit_em), (reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'], None, None)]
+
+        row_defs = {
+            'net': [('net_dlog_em', 'Network log emissions-intensity reduction'), ('net_pat_count', 'Network clean patent share'),
+                    ('net_pat_cite', 'Network clean citation share')],
+            'lag': [('net_dlog_em_lag', 'Network log emissions-intensity reduction (lag)'), ('net_pat_count_lag', 'Network clean patent share (lag)'),
+                    ('net_pat_cite_lag', 'Network clean citation share (lag)')],
+            'updown': [('up_dlog_em', 'Upstream log emissions-intensity reduction'), ('down_dlog_em', 'Downstream log emissions-intensity reduction'),
+                       ('up_pat_count', 'Upstream clean patent share'), ('down_pat_count', 'Downstream clean patent share'),
+                       ('up_pat_cite', 'Upstream clean citation share'), ('down_pat_cite', 'Downstream clean citation share')]}
+        row_defs['wls'] = row_defs['net']
+        all_rows = []
+        for kind in ['net', 'wls', 'lag', 'updown']:
+            models = []
+            for d, y, xs, w, sub in cols_for(kind):
+                m = fit(d, y, xs, w, sub)
+                models.append(m)
+                for x in xs:
+                    all_rows.append(dict(table=kind, outcome=y, term=x, coef=m.params[x], se=m.bse[x], p=m.pvalues[x],
+                                         N=int(m.nobs), r2=m.rsquared))
+            lines = [r'\begin{tabular}{lccccccc}', r'\toprule',
+                     r' & \multicolumn{3}{c}{Emissions-intensity reduction} & \multicolumn{2}{c}{Clean patent share} & \multicolumn{2}{c}{Clean citation share} \\',
+                     r'\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}',
+                     ' & ' + ' & '.join(f'({i})' for i in range(1, 8)) + r' \\', r'\midrule']
+            for var, lab in row_defs[kind]:
+                cs, ss = [], []
+                for m in models:
+                    if var in m.params.index:
+                        cs.append(f"{m.params[var]:.3f}{gpf.get_stars(m.pvalues[var])}"); ss.append(f"({m.bse[var]:.3f})")
+                    else:
+                        cs.append(''); ss.append('')
+                lines += [lab + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+            lines += [r'\midrule', '$R^2$ & ' + ' & '.join(f'{m.rsquared:.3f}' for m in models) + r' \\',
+                      'Observations & ' + ' & '.join(str(int(m.nobs)) for m in models) + r' \\', r'\bottomrule', r'\end{tabular}']
+            with open(outdir / f'table_old_{kind}.tex', 'w') as f:
+                f.write('\n'.join(lines) + '\n')
+        out = pd.DataFrame(all_rows)
+        out.to_csv(outdir / 'old_benchmark.csv', index=False)
+        print(out.round(3).to_string())
+        return out
 
 
     def UDG_Summary(self, path, rows, cols):

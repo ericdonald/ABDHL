@@ -41,6 +41,7 @@ API = 0   # set to 1 for a new API download
 #P.Spillover_Shocks('_cg', asinh_pat=True); P.KS_Recv('_cg', asinh_pat=True); P.KS_CleanAgg('_cg', asinh_pat=True)
 
 #P.IO_Change(Year_start, Year_mid, Year_end)     # input-output change graphs
+#P.Firm_Entry()                                  # firms' first clean patents (Ind_Pat_Entry.pkl), from Pat_Firms
 
 
 # ----------------------------------------------------------------
@@ -166,6 +167,26 @@ def make_asinh_specs(tag):
     return specs
 
 
+def make_entry_specs(tag):
+    "Extensive-margin adoption: firms' first clean patents over firms at risk (Processor.Firm_Entry), counts only."
+    specs = []
+    def add(name, label, **kw):
+        specs.append(dict(id=f'{tag}_pat_{name}', short=name, measure='pat', share='G', clean='entry', label=label, panel='A', **kw))
+    add('base',     'Entry hazard: baseline')
+    add('updown',   'Separate up/down', direction='updown')
+    add('ownlag',   'Own lagged hazard', own_lag=True)
+    add('wsum',     'Control: sum of weights, net', controls=['W_w'])
+    add('norm',     'Normalised weights, net', normalise=True)
+    add('noshr',    'No kappa shrinkage, net', shrink=False)
+    add('bin3',     'Three-year bins', bin_len=3)
+    add('annual',   'Annual outcome, net', annual=True)
+    add('mtrend',   'Network-mass x period controls, net', mass_trend=True)
+    add('mtrendud', 'Network-mass x period controls, up/down', mass_trend=True, direction='updown')
+    add('fixw',     'Fixed first-bin network weights, net', fixed_w=True)
+    add('fixwud',   'Fixed first-bin network weights, up/down', fixed_w=True, direction='updown')
+    return specs
+
+
 def renormalised(tag, src_n):
     "Limited set with the class-level ratio renormalised over classes where it is defined (ratio instruments)."
     out = []
@@ -227,12 +248,18 @@ for batch, src, tag in [('batch7_govcl', 'govcl', 'b7g'), ('batch7_ksagg', 'ksag
     P.UDG_Run(batch, make_iv_specs(tag, src, asinh=True), BLS_year_start, Year_end)
 
 
+# Batch 8: adoption as a firm's first clean patent (entry hazard)
+P.UDG_Run('batch8_entry', make_entry_specs('b8'), BLS_year_start, Year_end)
+
+
 # ----------------------------------------------------------------
 
 # Diagnostics and summary tables for the main text (Results/Summary).
 
 # ----------------------------------------------------------------
 
+P.IO_Validation('diag_io_validation', BLS_year_start, Year_end, bin_len)   # does clean patenting predict changes in input shares?
+P.Old_Benchmark('diag_old_benchmark', BLS_year_start, Year_start, Year_mid, Year_end, bin_len)   # patent regressions of the submitted version (branch Old)
 P.UDG_OwnFirstStage('diag_first_stage', BLS_year_start, Year_end, ['gov', 'rd', 'rdcf', 'ks', 'kswt', 'govr', 'ksr', 'govcl', 'ksagg'])
 
 cols = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat'), ('$D$, citations', 'b1', 'cite')]
