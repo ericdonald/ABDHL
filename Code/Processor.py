@@ -75,11 +75,18 @@ class Processor:
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_Shares_Pre.pkl
+                Clean Data/Spill_Net{,_cg}{,_c3,_mg}_Diag.pkl  (spillover shares with the own-technology term kept)
+                Clean Data/Gov_CPC*.pkl now also hold gov_{dirty,gen,gen2}_{count,cites} (type-specific government series)
+                Clean Data/Ind_Pat_Shares_Cur{,_cg}{,_c3,_mg}.pkl  (industry x year x unit x type shares, contemporaneous; nonzero rows)
                 Clean Data/Gov_CPC.pkl
                 Clean Data/Ind_Pat_Y02P.pkl   (clean = Y02P only)
+                Clean Data/Ind_Pat_Cite5.pkl   (citation weights from citations received within five years of the filing year; Pat_Firms.pkl gets norm_cites5)
                 Clean Data/Spill_Net_cg{,_c3}.pkl, Tech_Pat_cg{,_c3}.pkl, Ind_Pat_Shares_Pre_cg{,_c3}.pkl
                     (clean / general types only: dirty patents are general)
                 Clean Data/Spill_Clean_Net_cg{,_c3}.pkl   (citations of all clean patents to technologies, by lag)
+                Clean Data/Spill_Net_cg_mg.pkl, Tech_Pat_cg_mg.pkl   (technologies = CPC main group, the part of cpc_group before the slash, x clean / general)
+                Clean Data/Ind_Pat_Shares_Pre_mg.pkl, Ind_Pat_Shares_Pre_cg_mg.pkl, Gov_CPC_mg.pkl
+                    (same objects at the CPC main-group level; the column named cpc_subclass holds the main group)
                 Clean Data/Ind_Pre_Clean.pkl   (pre-sample clean share of each sector)
                 Clean Data/Spill_Net_c3.pkl, Tech_Pat_c3.pkl, Ind_Pat_Shares_Pre_c3.pkl, Gov_CPC_c3.pkl
                     (same objects at 3-digit CPC class; the column named cpc_subclass holds the class)
@@ -339,6 +346,11 @@ class Processor:
             
         cpc4_df = CPC_df[['patent_id', 'cpc_subclass']][CPC_df['cpc_section'] != 'Y'].drop_duplicates()
         cpc3_df = CPC_df[['patent_id', 'cpc_class']][CPC_df['cpc_section'] != 'Y'].drop_duplicates()
+        # CPC main group: the part of the group code before the slash (F23J15 for F23J15/00, A01D2017 for A01D2017/00),
+        # a level finer than the subclass; the number of characters varies with the length of the main-group number
+        cpcmg_df = CPC_df[['patent_id', 'cpc_group']][CPC_df['cpc_section'] != 'Y'].dropna()
+        cpcmg_df['cpc_main'] = cpcmg_df['cpc_group'].str.split('/').str[0]
+        cpcmg_df = cpcmg_df[['patent_id', 'cpc_main']].drop_duplicates()
                 
         
         # ------------------------ #
@@ -442,12 +454,16 @@ class Processor:
         relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full', 'clean_p', 'dirty']].drop_duplicates()
         
         
-        # Technology classes at two granularities: 4-digit subclass (baseline files) and 3-digit class (files with suffix _c3).
-        # In the _c3 files the column called cpc_subclass holds the 3-character CPC class.
-        cpc_levels = [('cpc_subclass', ''), ('cpc_class', '_c3')]
+        # Technology classes at three granularities: 4-digit subclass (baseline files), 3-digit class (files with suffix _c3)
+        # and the CPC main group, the part of cpc_group before the slash (suffix _mg). In the _c3 and _mg files the column
+        # called cpc_subclass holds the class or the main group.
+        cpc_levels = [('cpc_subclass', ''), ('cpc_class', '_c3'), ('cpc_main', '_mg')]
         def cpc_unit_df(unit):
-            d = cpc4_df if unit == 'cpc_subclass' else cpc3_df
+            d = {'cpc_subclass': cpc4_df, 'cpc_class': cpc3_df, 'cpc_main': cpcmg_df}[unit]
             return d.rename(columns={unit: 'cpc_unit'})
+        def unit_universe(unit):
+            "Technology classes that exist at a level (the earlier levels use all codes of CPC_df, as before)."
+            return sorted(cpcmg_df['cpc_main'].unique()) if unit == 'cpc_main' else sorted(CPC_df[unit].unique())
         # Patent types for the spillover files: 'cdg' = clean / dirty / general (baseline files);
         # 'cg' = clean / general only, where general means not clean (files with suffix _cg; dirty patents are general).
         type_schemes = [('cdg', ''), ('cg', '_cg')]
@@ -455,6 +471,7 @@ class Processor:
             if scheme == 'cg':
                 return [['c'] if c == 1 else ['g'] for c in clean]
             return [(['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g'] for c, d in zip(clean, dirty)]
+        
         
         # ----------------- #
         # Spillover Network #
@@ -465,6 +482,8 @@ class Processor:
             rel = rel[['patent_id', 'year', 'types']]
     
             for _unit, _sfx in cpc_levels:
+                if _unit == 'cpc_main' and _ts == 'cdg':
+                    continue   # the main-group level is used with the clean / general types only
                 cpc = cpc_unit_df(_unit)
                 cpc_counts = cpc.groupby('patent_id').size().rename('n_cpc').reset_index()
     
@@ -481,12 +500,8 @@ class Processor:
                 cit['n_types_q'] = cit['cited_types'].apply(len)
                 cit['cited_split'] = cit['n_cpc_q'] * cit['n_types_q']
                 citing_cpc = cpc.rename(columns={'cpc_unit': 'cpc_p'})
-                left = cit.merge(citing_cpc, on='patent_id', how='inner')
-                left = left.explode('citing_types').rename(columns={'citing_types': 'type_p'})
-                left['i'] = left['cpc_p'] + '_' + left['type_p']
-        
                 cited_cpc = cpc.rename(columns={'patent_id': 'citation_patent_id', 'cpc_unit': 'cpc_q'})
-                if _ts == 'cg':
+                if _ts == 'cg' and _unit != 'cpc_main':
                     # Spillovers from all clean citing patents (one aggregate recipient): share of their citations, by lag,
                     # that go to each technology j (class x clean/general), pre-sample window as above.
                     cc = cit[cit['citing_types'].apply(lambda t: 'c' in t)][['patent_id', 'citation_patent_id', 'k', 'cited_types', 'cited_split']]
@@ -497,12 +512,22 @@ class Processor:
                     ccn['S_jk'] = ccn['N_jk'] / ccn.groupby('k')['N_jk'].transform('sum')
                     ccn[['j', 'k', 'S_jk']].to_pickle(f'{self.Directory}/Clean Data/Spill_Clean_Net{_tsfx}{_sfx}.pkl')
                     del cc, ccn
-                long = left.merge(cited_cpc, on='citation_patent_id', how='inner')
-                long = long.explode('cited_types').rename(columns={'cited_types': 'type_q'})
-                long['j'] = long['cpc_q'] + '_' + long['type_q']
-                long['weight'] = 1.0 / long['cited_split']
-        
-                N = long.groupby(['i', 'j', 'k'])['weight'].sum().reset_index(name='N_ijk')
+                # at the main-group level the pair table is large, so it is built one citation lag at a time
+                k_list = list(range(k_min, k_max + 1)) if _unit == 'cpc_main' else [None]
+                N_parts = []
+                for _k in k_list:
+                    cit_k = cit if _k is None else cit[cit['k'] == _k]
+                    left = cit_k.merge(citing_cpc, on='patent_id', how='inner')
+                    left = left.explode('citing_types').rename(columns={'citing_types': 'type_p'})
+                    left['i'] = left['cpc_p'] + '_' + left['type_p']
+                    long = left.merge(cited_cpc, on='citation_patent_id', how='inner')
+                    long = long.explode('cited_types').rename(columns={'cited_types': 'type_q'})
+                    long['j'] = long['cpc_q'] + '_' + long['type_q']
+                    long['weight'] = 1.0 / long['cited_split']
+                    N_parts.append(long.groupby(['i', 'j', 'k'])['weight'].sum().reset_index(name='N_ijk'))
+                    del cit_k, left, long
+                N = pd.concat(N_parts, ignore_index=True)
+                del N_parts
                 TotalN = N.groupby(['i', 'k'])['N_ijk'].sum().reset_index(name='TotalN_jk')
         
                 diag = N[N['i'] == N['j']][['i', 'k', 'N_ijk']].rename(columns={'N_ijk': 'N_iik'})
@@ -511,21 +536,33 @@ class Processor:
                 out = out.merge(diag, on=['i', 'k'], how='left')
                 out['N_iik'] = out['N_iik'].fillna(0.0)
         
+                # variant with the own-technology term kept in the matrix and in the denominator
+                (out.assign(S_ijk=out['N_ijk'] / out['TotalN_jk'])[['i', 'j', 'k', 'S_ijk']]
+                    .to_pickle(f'{self.Directory}/Clean Data/Spill_Net{_tsfx}{_sfx}_Diag.pkl'))
+
                 out = out[out['i'] != out['j']].copy()
                 out['denom'] = out['TotalN_jk'] - out['N_iik']
                 out['S_ijk'] = np.where(out['denom'] > 0, out['N_ijk'] / out['denom'], np.nan)
         
                 spill_net_df = out[['i', 'j', 'k', 'S_ijk']]
                 spill_net_df.to_pickle(f'{self.Directory}/Clean Data/Spill_Net{_tsfx}{_sfx}.pkl')
-                del cit, left, long, N, TotalN, diag, out, spill_net_df, cpc, cpc_counts, citing_cpc, cited_cpc
-        
+                del cit, N, TotalN, diag, out, spill_net_df, cpc, cpc_counts, citing_cpc, cited_cpc
         
         
         # ------------------------- #
         # Patent Citation Weighting #
         # ------------------------- #
+        # Citations received within five years of the cited patent's filing year (citing filing year minus cited filing year
+        # between 0 and 5); right-truncated for recent filings, which is not adjusted here.
+        _yr = PV_applications_df.drop_duplicates('patent_id').set_index('patent_id')['year']
+        _cy = citations_df['patent_id'].map(_yr)
+        _ky = citations_df['citation_patent_id'].map(_yr)
+        _in5 = ((_cy - _ky) >= 0) & ((_cy - _ky) <= 5)
+        _cites5 = citations_df.loc[_in5, 'citation_patent_id'].value_counts()
+        del _cy, _ky, _in5
         citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
-        citations_df = citations_df[['citation_patent_id', 'cites']].drop_duplicates()
+        citations_df['cites5'] = citations_df['citation_patent_id'].map(_cites5)
+        citations_df = citations_df[['citation_patent_id', 'cites', 'cites5']].drop_duplicates()
         citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
         
         citations_df = citations_df.merge(cpc3_df,
@@ -537,12 +574,15 @@ class Processor:
         
         citations_df['cites'] = citations_df['cites'].fillna(0)
         citations_df['cites'] = citations_df['cites'] + 1
+        citations_df['cites5'] = citations_df['cites5'].fillna(0) + 1
         
         citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
         citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
+        citations_df['cpc_cites5'] = citations_df.groupby(['cpc_class', 'year'])['cites5'].transform('mean')
+        citations_df['norm_cites5'] = citations_df['cites5'] / citations_df.groupby('patent_id')['cpc_cites5'].transform('mean')
         
         pat_df = pd.merge(
-            citations_df[['patent_id', 'norm_cites']].drop_duplicates(),
+            citations_df[['patent_id', 'norm_cites', 'norm_cites5']].drop_duplicates(),
             relevant_df,
             on='patent_id',
             how='inner'
@@ -556,6 +596,8 @@ class Processor:
         # ----------------------------- #
         for _ts, _tsfx in type_schemes:
             for _unit, _sfx in cpc_levels:
+                if _unit == 'cpc_main' and _ts == 'cdg':
+                    continue   # the main-group level is used with the clean / general types only
                 tech_pat_df = pat_df.merge(cpc_unit_df(_unit),
                                             on='patent_id',
                                             how='inner')
@@ -581,10 +623,19 @@ class Processor:
         discern_df = pd.read_csv(f'{self.Directory}/Raw Data/discern_pat_grant_1980_2021.csv', low_memory=False)
         KPSS_df = pd.read_csv(f'{self.Directory}/Raw Data/KPSS_match_patent_permno_2023.csv')
         gvkey_df = pd.read_csv(f'{self.Directory}/Raw Data/permno_gvkey.csv')
+        FCDI_df = pd.read_stata(f'{self.Directory}/Raw Data/cw_patent_compustat_adhps.dta')
         
-        KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
         discern_df = discern_df.rename(columns={"permno_adj": "permno"})
+        KPSS_df = KPSS_df.rename(columns={"patent_num": "patent_id"})
         gvkey_df = gvkey_df.rename(columns={"permno_adj": "permno"})
+        FCDI_df = FCDI_df.rename(columns={"patent": "patent_id"})
+        
+        # patent numbers appear with and without leading zeros (and as floats) across the sources: put them on one format
+        # before any comparison, so that the same patent is recognised in every source
+        _norm_pid = lambda x: x.astype(str).str.strip().str.replace(r'\.0+$', '', regex=True).str.lstrip('0').replace({'': np.nan, 'nan': np.nan, 'None': np.nan})
+        for _df in (discern_df, KPSS_df, FCDI_df):
+            _df['patent_id'] = _norm_pid(_df['patent_id'])
+        discern_df, KPSS_df, FCDI_df = (d_.dropna(subset=['patent_id']) for d_ in (discern_df, KPSS_df, FCDI_df))
         
         new_pats = KPSS_df[~KPSS_df['patent_id'].isin(discern_df['patent_id'])]
 
@@ -594,7 +645,21 @@ class Processor:
                                     on='permno',
                                     how='inner'
                                          )
-        pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']]
+        pat_firm_crosswalk_df = pat_firm_crosswalk_df[['patent_id', 'gvkey']].dropna().drop_duplicates()
+        
+        # Union with the third crosswalk (links already in DISCERN / KPSS are not duplicated)
+        FCDI_links = FCDI_df[['patent_id', 'gvkey']].copy()
+        for _c in ['gvkey']:   # gvkey is text in the .dta; put it on the dtype of the existing crosswalk
+            if pd.api.types.is_numeric_dtype(pat_firm_crosswalk_df[_c]):
+                FCDI_links[_c] = pd.to_numeric(FCDI_links[_c].astype(str).str.strip(), errors='coerce')
+        FCDI_links = FCDI_links.dropna()
+        if pd.api.types.is_numeric_dtype(pat_firm_crosswalk_df['gvkey']):
+            FCDI_links['gvkey'] = FCDI_links['gvkey'].astype(pat_firm_crosswalk_df['gvkey'].dtype)
+        FCDI_links = FCDI_links.drop_duplicates()
+        pat_firm_crosswalk_df = pat_firm_crosswalk_df.merge(FCDI_links,
+                                    on=['patent_id', 'gvkey'],
+                                    how='outer')
+        pat_firm_crosswalk_df = pat_firm_crosswalk_df.dropna().drop_duplicates()
         
         
         # --------- #
@@ -626,8 +691,8 @@ class Processor:
                             on='naics2022_6',
                             how='inner')
         
-        pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites']].drop_duplicates()
-        pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites']].drop_duplicates()
+        pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites', 'norm_cites5']].drop_duplicates()
+        pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites', 'norm_cites5']].drop_duplicates()
         
         pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
         pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
@@ -646,6 +711,9 @@ class Processor:
         annual_df['clean_cite_w']      = annual_df['clean_w']      * annual_df['norm_cites']
         annual_df['clean_p_cite_w']    = annual_df['clean_p_w']    * annual_df['norm_cites']
         annual_df['dirty_cite_w']      = annual_df['dirty_w']      * annual_df['norm_cites']
+        annual_df['cite5_w']           = annual_df['split_weight'] * annual_df['norm_cites5']
+        annual_df['clean_cite5_w']     = annual_df['clean_w']      * annual_df['norm_cites5']
+        annual_df['dirty_cite5_w']     = annual_df['dirty_w']      * annual_df['norm_cites5']
  
         agg_base = dict(clean_pat_count = ('clean_w',      'sum'),
                         dirty_pat_count = ('dirty_w',      'sum'),
@@ -661,8 +729,17 @@ class Processor:
                         dirty_pat_cites = ('dirty_cite_w',   'sum'),
                         pat_cites       = ('cite_w',         'sum'))
 
+        agg_c5 = dict(clean_pat_count = ('clean_w',        'sum'),
+                      dirty_pat_count = ('dirty_w',        'sum'),
+                      pat_count       = ('split_weight',   'sum'),
+                      clean_pat_cites = ('clean_cite5_w',  'sum'),
+                      dirty_pat_cites = ('dirty_cite5_w',  'sum'),
+                      pat_cites       = ('cite5_w',        'sum'))
+
         ind_pat_df = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
                                     .agg(**agg_base))
+        ind_pat_df_c5 = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
+                                    .agg(**agg_c5))
         ind_pat_df_y02p = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
                                     .agg(**agg_y02p))
         panel_idx = pd.MultiIndex.from_product(
@@ -677,11 +754,16 @@ class Processor:
                            .reindex(panel_idx)
                            .fillna(0.0)
                            .reset_index())
+        ind_pat_df_c5 = (ind_pat_df_c5.set_index(['BLS_Industry', 'year'])
+                           .reindex(panel_idx)
+                           .fillna(0.0)
+                           .reset_index())
  
         ind_pat_df = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
         ind_pat_df_y02p = ind_pat_df_y02p[ind_pat_df_y02p['BLS_Industry'] != 71]
+        ind_pat_df_c5 = ind_pat_df_c5[ind_pat_df_c5['BLS_Industry'] != 71]
         
-        for frame in (ind_pat_df, ind_pat_df_y02p):
+        for frame in (ind_pat_df, ind_pat_df_y02p, ind_pat_df_c5):
             frame['pat_count_nc'] = frame['pat_count'] - frame['clean_pat_count']
             frame['pat_cites_nc'] = frame['pat_cites'] - frame['clean_pat_cites']
             frame['clim_pat_count'] = frame['clean_pat_count'] + frame['dirty_pat_count']
@@ -689,6 +771,7 @@ class Processor:
  
         ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         ind_pat_df_y02p.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Y02P.pkl')
+        ind_pat_df_c5.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Cite5.pkl')
         
         
         # -------------------- #
@@ -715,7 +798,7 @@ class Processor:
                 ind_pat_cpc_pre_df = ind_pat_cpc_pre_df[(ind_pat_cpc_pre_df['year'] > BLS_year_start-bin_len-10) 
                                                               & (ind_pat_cpc_pre_df['year'] <= BLS_year_start-bin_len)]
                 panel_idx = pd.MultiIndex.from_product(
-                    [sorted(CPC_df[_unit].unique()), sorted(ind_pat_cpc_pre_df['BLS_Industry'].unique())],
+                    [unit_universe(_unit), sorted(ind_pat_cpc_pre_df['BLS_Industry'].unique())],
                     names=['cpc_unit', 'BLS_Industry'])
         
                 frames = []
@@ -753,6 +836,30 @@ class Processor:
                 ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre{_tsfx}{_sfx}.pkl')
         
         
+        # Contemporaneous distribution: each industry's share of type-k patents over units in the year of filing
+        # (nonzero rows only; used for the shock-relevance check with contemporaneous weights)
+        for _ts, _tsfx in type_schemes:
+            for _unit, _sfx in cpc_levels:
+                _cur = pat_ind_df.merge(cpc_unit_df(_unit), on='patent_id', how='inner')
+                _cur['pw'] = _cur['split_weight'] / _cur.groupby('patent_id')['cpc_unit'].transform('nunique')
+                _cur_frames = []
+                for ty in (['clean', 'dirty', 'gen', 'all'] if _ts == 'cdg' else ['clean', 'gen']):
+                    if ty == 'gen' and _ts == 'cg':
+                        _c = _cur[_cur['clean'] == 0]
+                    elif ty == 'gen':
+                        _c = _cur[(_cur['clean'] == 0) & (_cur['dirty'] == 0)]
+                    elif ty == 'all':
+                        _c = _cur
+                    else:
+                        _c = _cur[_cur[ty] == 1]
+                    _g = _c.groupby(['BLS_Industry', 'year', 'cpc_unit'])['pw'].sum().rename('cpc_pat_count').reset_index()
+                    _g['cpc_pat_share'] = _g['cpc_pat_count'] / _g.groupby(['BLS_Industry', 'year'])['cpc_pat_count'].transform('sum')
+                    _g['type'] = ty
+                    _cur_frames.append(_g)
+                (pd.concat(_cur_frames, ignore_index=True).rename(columns={'cpc_unit': 'cpc_subclass'})
+                   .to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Cur{_tsfx}{_sfx}.pkl'))
+        del _cur
+
         # ------------------------ #
         # Government Patent Series #
         # ------------------------ #
@@ -771,16 +878,24 @@ class Processor:
             gov_cpc_df['clean_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['clean']
             gov_cpc_df['clean_cite_weight'] = gov_cpc_df['cite_weight'] * gov_cpc_df['clean']
         
+            # type-specific series: clean, dirty, general (neither clean nor dirty; 'gen2' = not clean, for the clean / general scheme)
+            for _tn, _ind in [('dirty', gov_cpc_df['dirty']),
+                              ('gen', (1 - gov_cpc_df['clean']) * (1 - gov_cpc_df['dirty'])),
+                              ('gen2', 1 - gov_cpc_df['clean'])]:
+                gov_cpc_df[f'{_tn}_weight'] = gov_cpc_df['pat_weight'] * _ind
+                gov_cpc_df[f'{_tn}_cite_weight'] = gov_cpc_df['cite_weight'] * _ind
+                gov_cpc_df[f'gov_{_tn}_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])[f'{_tn}_weight'].transform('sum')
+                gov_cpc_df[f'gov_{_tn}_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])[f'{_tn}_cite_weight'].transform('sum')
             gov_cpc_df['gov_pat_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['pat_weight'].transform('sum')
             gov_cpc_df['gov_pat_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['cite_weight'].transform('sum')
             gov_cpc_df['gov_clean_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['clean_weight'].transform('sum')
             gov_cpc_df['gov_clean_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['clean_cite_weight'].transform('sum')
         
             gov_cpc_df = gov_cpc_df[['cpc_unit', 'year', 'gov_pat_count', 'gov_pat_cites',
-                                     'gov_clean_count', 'gov_clean_cites']].drop_duplicates()
+                                     'gov_clean_count', 'gov_clean_cites'] + [f'gov_{t}_{m}' for t in ['dirty', 'gen', 'gen2'] for m in ['count', 'cites']]].drop_duplicates()
         
             panel_idx = pd.MultiIndex.from_product(
-                   [sorted(CPC_df[_unit].unique()), list(range(BLS_year_start-2*bin_len+1, Year_end+1))],
+                   [unit_universe(_unit), list(range(BLS_year_start-2*bin_len+1, Year_end+1))],
                    names=['cpc_unit', 'year'])
             gov_cpc_df = (gov_cpc_df.set_index(['cpc_unit', 'year'])
                                   .reindex(panel_idx)
@@ -792,7 +907,7 @@ class Processor:
         
 
 
-    def Instruments(self, sfx='', asinh_pat=False):
+    def Instruments(self, sfx='', asinh_pat=False, spill=True, type_gov=False):
         """""
         Create Series of Greenification Shocks
 
@@ -815,8 +930,6 @@ class Processor:
         ind_pat_shares_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre{sfx}.pkl')
 
         
-        
-        
         # ------------------------ #
         # Government Patent Shocks #
         # ------------------------ #
@@ -833,6 +946,8 @@ class Processor:
         for ty in ['clean', 'dirty', 'gen']:
             shock = govt_shocks_df.copy()
             shock = shock[shock['type'] == ty]
+            if type_gov:   # the government series of the same type as the recipient type
+                shock['gov_pat_count'], shock['gov_pat_cites'] = shock[f'gov_{ty}_count'], shock[f'gov_{ty}_cites']
             
             shock['weighted_pat_govt'] = shock['cpc_pat_share'] * shock['gov_pat_count']
             shock['pat_govt_shock'] = shock.groupby(['BLS_Industry', 'year'])['weighted_pat_govt'].transform('sum')
@@ -853,12 +968,13 @@ class Processor:
         govt_shocks_wide.columns = [f'{v}_{t}' for v, t in govt_shocks_wide.columns]
         govt_shocks_df = govt_shocks_wide.reset_index()
         
-        govt_shocks_df.to_pickle(f"{self.Directory}/Clean Data/Govt_Shocks{sfx}{'_asinh' if asinh_pat else ''}.pkl")
-        if asinh_pat:
+        govt_shocks_df.to_pickle(f"{self.Directory}/Clean Data/Govt_Shocks{sfx}{'_Type' if type_gov else ''}{'_asinh' if asinh_pat else ''}.pkl")
+        if asinh_pat or type_gov:
             return
         
         
-        self.Spillover_Shocks(sfx)
+        if spill:
+            self.Spillover_Shocks(sfx)
         if sfx:
             return
 
@@ -1385,6 +1501,10 @@ class Processor:
                     controls=(),        # extra network controls, e.g. 'T_pat' (patent share), 'Q_cite' (relative cites/patent)
                     annual=False,       # True = single-year outcome/offset, regressor from the rolling window ending bin_len years earlier
                     mass_trend=False,   # control for (sector's fixed network weight sum) x (period effects)
+                    fill_missing=False, # partners with undefined share enter at the aggregate share of the bin
+                    direct_s=False,     # direct input-output coefficients instead of the Leontief inverse
+                    max_period=None,    # last outcome bin used in the estimation sample
+                    drop_sectors=(),    # industries left out of the estimation sample (they remain partners)
                     free_offset=False,  # log(offset) as a regressor with an estimated coefficient (PPML only)
                     fixed_w=False,      # network sums use the first-bin Leontief inverse (also for the regressor and controls)
                     clean='all',        # clean-patent definition: 'all' (Y02E/P/T, B60L) or 'y02p' (Y02P only)
@@ -1414,7 +1534,7 @@ class Processor:
                 np.where(w_dn > 0, down / np.where(w_dn > 0, w_dn, 1.0), np.nan))
 
 
-    def UDG_Panel(self, BLS_year_start, Year_end, bin_len, normalise=False, shrink=True, ivs=(), annual=False, iv_wins=None, clean='all', fixed_w=False):
+    def UDG_Panel(self, BLS_year_start, Year_end, bin_len, normalise=False, shrink=True, ivs=(), annual=False, iv_wins=None, clean='all', fixed_w=False, fill_missing=False, direct_s=False):
         """""
         Regression panel for strategic complementarity: for each (share, measure) in
         {G, D} x {pat, cite} builds the own share, up, down, net network shares, and their lags.
@@ -1423,6 +1543,10 @@ class Processor:
         iv_wins: if set, instrument shares are winsorised at [iv_wins, 1-iv_wins] across industries within each period.
         clean: 'all' = baseline clean definition (Y02E, Y02P, Y02T, B60L); 'y02p' = Y02P only (Ind_Pat_Y02P.pkl);
                'entry' = firms' first clean patents over firms at risk (Ind_Pat_Entry.pkl, see Firm_Entry).
+               'cite5' = citation weights from citations received within five years after the filing year (Ind_Pat_Cite5.pkl).
+        fill_missing: a partner whose share is undefined (no patents in the bin) enters at the aggregate share of the bin
+        (the shrinkage formula at zero patents) instead of contributing zero.
+        direct_s: network weights are the direct input-output coefficients (diagonal zeroed) instead of the Leontief inverse.
         fixed_w: all network sums (regressors and controls, not only the instruments) use the Leontief inverse of the first
         bin instead of the inverse of each bin, so that changes in the network cannot drive the regressors.
         annual: regressors are built from rolling bin_len-year windows ending in every year (so the regressor for
@@ -1431,7 +1555,7 @@ class Processor:
         Returns: reg_df, kappas
         """""
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
-        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{ {'y02p': '_Y02P', 'entry': '_Entry'}.get(clean, '') }.pkl")
+        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{ {'y02p': '_Y02P', 'entry': '_Entry', 'cap': '_Cap', 'cite5': '_Cite5'}.get(clean, '') }.pkl")
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         if annual:
             bin_ends = sorted(y for y in range(BLS_year_start, Year_end + 1) if y in IO_mats)
@@ -1459,7 +1583,7 @@ class Processor:
         # Leontief Inverse #
         # ---------------- #
         def build_sigma_LI(IO_matrix):
-            S = np.linalg.inv(np.eye(IO_matrix.shape[0]) - IO_matrix)
+            S = IO_matrix.copy() if direct_s else np.linalg.inv(np.eye(IO_matrix.shape[0]) - IO_matrix)
             np.fill_diagonal(S, 0.0)
             return S
         Sigma_LI = {year: build_sigma_LI(IO_mats[year]) for year in bin_ends}
@@ -1485,7 +1609,14 @@ class Processor:
 
         def shrink_to_mean(num, den, kappa):
             gbar = (num.sum(axis=1) / den.sum(axis=1)).to_numpy()[:, None]
-            return ((num + kappa * gbar) / (den + kappa)).where(den > 0)
+            out = (num + kappa * gbar) / (den + kappa)
+            return out if fill_missing else out.where(den > 0)
+
+        def raw_share(num, den):
+            r = num / den.where(den > 0)
+            if fill_missing:
+                r = r.where(den > 0, (num.sum(axis=1) / den.sum(axis=1)).to_numpy()[:, None])
+            return r
 
         shares, kappas = {}, {}
         for meas, suf in [('pat', 'count'), ('cite', 'cites')]:
@@ -1496,7 +1627,7 @@ class Processor:
                     shares[(sh, meas)] = shrink_to_mean(cln, den, kappas[(sh, meas)])
                 else:
                     kappas[(sh, meas)] = np.nan
-                    shares[(sh, meas)] = (cln / den.where(den > 0))
+                    shares[(sh, meas)] = raw_share(cln, den)
             # Placebo: dirty / all patents
             dty, tot = wide(f'dirty_pat_{suf}'), wide(f'pat_{suf}')
             if shrink:
@@ -1504,7 +1635,7 @@ class Processor:
                 shares[('P', meas)] = shrink_to_mean(dty, tot, kappas[('P', meas)])
             else:
                 kappas[('P', meas)] = np.nan
-                shares[('P', meas)] = dty / tot.where(tot > 0)
+                shares[('P', meas)] = raw_share(dty, tot)
             # Placebo for D: dirty / (clean + dirty)
             clm = wide(f'clim_pat_{suf}')
             if shrink:
@@ -1512,7 +1643,7 @@ class Processor:
                 shares[('PD', meas)] = shrink_to_mean(dty, clm, kappas[('PD', meas)])
             else:
                 kappas[('PD', meas)] = np.nan
-                shares[('PD', meas)] = dty / clm.where(clm > 0)
+                shares[('PD', meas)] = raw_share(dty, clm)
 
         # Controls: sum of Leontief weights (v = 1 for every sector, so up = row sum, down = column sum)
         shares[('W', 'w')] = pd.DataFrame(1.0, index=bin_ends, columns=manu_idx_all)
@@ -1765,15 +1896,104 @@ class Processor:
         return out
 
 
-    def Spillover_Shocks(self, sfx='', asinh_pat=False):
+    def _sparse_spill(self, sfx, asinh_pat=False, what='shocks', diag=False):
+        """""
+        Sparse-matrix version of Spillover_Shocks / KS_Recv for large technology sets (CPC main groups).
+        what='shocks': industry x year receipts by recipient type and source type (same output as Spillover_Shocks);
+        what='recv': class x type x year receipts (same output as KS_Recv).
+        """""
+        import scipy.sparse as sps
+        D = f'{self.Directory}/Clean Data/'
+        sn = pd.read_pickle(D + f"Spill_Net{sfx}{'_Diag' if diag else ''}.pkl")
+        tp = pd.read_pickle(D + f'Tech_Pat{sfx}.pkl')
+        if asinh_pat:
+            tp[['pat_count', 'pat_cites']] = np.arcsinh(tp[['pat_count', 'pat_cites']])
+        sh = None
+        if what == 'shocks':
+            sh = pd.read_pickle(D + f'Ind_Pat_Shares_Pre{sfx}.pkl')
+            sh = sh[sh['type'] != 'all']
+            sh = sh.assign(tech=sh['cpc_subclass'] + '_' + sh['type'].str[:1])
+        sn = sn.dropna(subset=['S_ijk'])
+        techs = sorted(set(sn['i']) | set(sn['j']) | set(tp['tech']) | (set(sh['tech']) if sh is not None else set()))
+        tid = {t: n for n, t in enumerate(techs)}
+        T = len(techs)
+        y0, y1 = int(tp['year'].min()), int(tp['year'].max()) + 10
+        Y = y1 - y0 + 1
+        Pc, Pq = np.zeros((T, Y)), np.zeros((T, Y))
+        ti, yi = tp['tech'].map(tid).to_numpy(), tp['year'].to_numpy(int) - y0
+        Pc[ti, yi], Pq[ti, yi] = tp['pat_count'].to_numpy(), tp['pat_cites'].to_numpy()
+        src_letter = np.array([t[-1] for t in techs])
+        lags = sorted(sn['k'].unique())
+        S = {}
+        for l in lags:
+            sub = sn[sn['k'] == l]
+            S[l] = sps.csr_matrix((sub['S_ijk'].to_numpy(), (sub['i'].map(tid).to_numpy(), sub['j'].map(tid).to_numpy())), shape=(T, T))
+
+        def shift(M, l):
+            out = np.zeros_like(M); l = int(l)
+            out[:, l:] = M[:, :Y - l]
+            return out
+
+        if what == 'recv':
+            Rc, Rq = np.zeros((T, Y)), np.zeros((T, Y))
+            for l in lags:
+                Rc += shift(S[l] @ Pc, l); Rq += shift(S[l] @ Pq, l)
+            r = []
+            for arr, nm in [(Rc, 'cnt'), (Rq, 'cit')]:
+                nz = np.nonzero(arr)
+                r.append(pd.DataFrame({'i': np.array(techs)[nz[0]], 'year': nz[1] + y0, nm: arr[nz]}))
+            r = r[0].merge(r[1], on=['i', 'year'], how='outer').fillna(0.0)
+            r['cpc_subclass'] = r['i'].str[:-2]
+            r['type'] = r['i'].str[-1].map({'c': 'clean', 'd': 'dirty', 'g': 'gen'})
+            wide = r.pivot(index=['cpc_subclass', 'year'], columns='type', values=['cnt', 'cit']).fillna(0.0)
+            wide.columns = [f'recv_{v}_{t}' for v, t in wide.columns]
+            return wide.reset_index()
+
+        inds = sorted(sh['BLS_Industry'].unique())
+        iid = {b: n for n, b in enumerate(inds)}
+        frames = []
+        for typ in sorted(sh['type'].unique()):
+            sub = sh[sh['type'] == typ]
+            res = {}
+            for wcol, P, nm in [('cpc_pat_share', Pc, 'cnt'), ('cpc_cite_share', Pq, 'cit')]:
+                s_ = sub[sub[wcol] > 0]
+                W = sps.csr_matrix((s_[wcol].to_numpy(), (s_['BLS_Industry'].map(iid).to_numpy(), s_['tech'].map(tid).to_numpy())),
+                                   shape=(len(inds), T))
+                for src in sorted(set(src_letter)):
+                    cols = np.where(src_letter == src)[0]
+                    acc = np.zeros((len(inds), Y))
+                    for l in lags:
+                        L = (W @ S[l])[:, cols]
+                        acc += shift(np.asarray(L @ P[cols, :]), l)
+                    res[(nm, src)] = acc
+            for src in sorted(set(src_letter)):
+                for nm in ['cnt', 'cit']:
+                    arr = res[(nm, src)]
+                    nz = np.nonzero(arr)
+                    frames.append(pd.DataFrame({'BLS_Industry': np.array(inds)[nz[0]], 'year': nz[1] + y0,
+                                                f'spill_shock_{nm}_{typ}_{src}': arr[nz]}))
+        out = frames[0]
+        for f_ in frames[1:]:
+            out = out.merge(f_, on=['BLS_Industry', 'year'], how='outer')
+        return out
+
+
+    def Spillover_Shocks(self, sfx='', asinh_pat=False, diag=False):
         """""
         Knowledge-spillover shocks received by each industry and recipient type, by source type and year.
         sfx selects the files: '' (clean/dirty/general, 4-digit), '_c3' (3-digit), '_cg' (clean/general only, 4-digit),
         '_cg_c3' (clean/general only, 3-digit).
 
+        diag=True uses the network that keeps the own-technology term (Spill_Net*_Diag.pkl) and writes KS_Shocks{sfx}_Diag.pkl.
+
         Output: Clean Data/KS_Shocks{sfx}.pkl
         """""
-        spill_net_df = pd.read_pickle(f'{self.Directory}/Clean Data/Spill_Net{sfx}.pkl')
+        dsfx = '_Diag' if diag else ''
+        if '_mg' in sfx:   # main groups: sparse matrices
+            KS_df = self._sparse_spill(sfx, asinh_pat, 'shocks', diag)
+            KS_df.to_pickle(f"{self.Directory}/Clean Data/KS_Shocks{sfx}{dsfx}{'_asinh' if asinh_pat else ''}.pkl")
+            return KS_df
+        spill_net_df = pd.read_pickle(f'{self.Directory}/Clean Data/Spill_Net{sfx}{dsfx}.pkl')
         tech_pat_df = pd.read_pickle(f'{self.Directory}/Clean Data/Tech_Pat{sfx}.pkl')
         if asinh_pat:
             tech_pat_df[['pat_count', 'pat_cites']] = np.arcsinh(tech_pat_df[['pat_count', 'pat_cites']])
@@ -1814,7 +2034,7 @@ class Processor:
         KS_wide.columns = [f'{v}_{t}_{s}' for v, t, s in KS_wide.columns]
         KS_df = KS_wide.reset_index()
         
-        KS_df.to_pickle(f"{self.Directory}/Clean Data/KS_Shocks{sfx}{'_asinh' if asinh_pat else ''}.pkl")
+        KS_df.to_pickle(f"{self.Directory}/Clean Data/KS_Shocks{sfx}{dsfx}{'_asinh' if asinh_pat else ''}.pkl")
         return KS_df
 
 
@@ -1839,7 +2059,7 @@ class Processor:
         return out
 
 
-    def KS_Recv(self, sfx='', asinh_pat=False):
+    def KS_Recv(self, sfx='', asinh_pat=False, diag=False):
         """""
         Spillovers received by recipient technology class, type and year: for each recipient (class, type) the
         citation-share-weighted patenting of its source technologies, recv(i, y) = sum_j S_ij,k * Pat_j,y-k.
@@ -1848,7 +2068,12 @@ class Processor:
         Output: Clean Data/KS_Recv.pkl  (columns cpc_subclass, year, recv_{cnt,cit}_{clean,dirty,gen})
         """""
         D = f'{self.Directory}/Clean Data/'
-        sn = pd.read_pickle(D + f'Spill_Net{sfx}.pkl')
+        dsfx = '_Diag' if diag else ''
+        if '_mg' in sfx:   # main groups: sparse matrices
+            wide = self._sparse_spill(sfx, asinh_pat, 'recv', diag)
+            wide.to_pickle(D + f"KS_Recv{sfx}{dsfx}{'_asinh' if asinh_pat else ''}.pkl")
+            return wide
+        sn = pd.read_pickle(D + f'Spill_Net{sfx}{dsfx}.pkl')
         tp = pd.read_pickle(D + f'Tech_Pat{sfx}.pkl').rename(columns={'tech': 'j', 'year': 'send_year'})
         if asinh_pat:   # source patenting as asinh(patents), so that large technologies do not dominate
             tp[['pat_count', 'pat_cites']] = np.arcsinh(tp[['pat_count', 'pat_cites']])
@@ -1866,7 +2091,7 @@ class Processor:
         wide = r.pivot(index=['cpc_subclass', 'year'], columns='type', values=['cnt', 'cit']).fillna(0.0)
         wide.columns = [f'recv_{v}_{t}' for v, t in wide.columns]
         wide = wide.reset_index()
-        wide.to_pickle(D + f"KS_Recv{sfx}{'_asinh' if asinh_pat else ''}.pkl")
+        wide.to_pickle(D + f"KS_Recv{sfx}{dsfx}{'_asinh' if asinh_pat else ''}.pkl")
         return wide
 
 
@@ -1883,7 +2108,10 @@ class Processor:
         D = f'{self.Directory}/Clean Data/'
         lnsfx = '_asinh' if '_asinh' in src else ''   # patent levels entering the shocks as inverse hyperbolic sines
         src = src.replace('_asinh', '')
-        sfx = '_c3' if src.endswith('_c3') else ''   # 3-digit CPC class version of the government / spillover shocks
+        dg = '_Diag' if src.endswith('_diag') else ''   # spillover network that keeps the own-technology term
+        tg = '_Type' if src.endswith('_type') else ''   # government series of the recipient's own type
+        src = src[:-5] if dg else src[:-5] if tg else src
+        sfx = '_c3' if src.endswith('_c3') else '_mg' if src.endswith('_mg') else ''   # 3-digit class / main-group versions
         src = src[:-3] if sfx else src
         if src in ('govcl', 'ksagg'):
             # Aggregate shock x sector exposure: the sector's pre-sample clean share times a single national series,
@@ -1923,7 +2151,7 @@ class Processor:
                                   'num': g[f'gov_clean_{"count" if meas == "pat" else "cites"}'],
                                   'den': g[f'gov_pat_{"count" if meas == "pat" else "cites"}']})
             else:
-                kr = pd.read_pickle(D + f'KS_Recv_cg{sfx}{lnsfx}.pkl')   # clean / general types only
+                kr = pd.read_pickle(D + f'KS_Recv_cg{sfx}{dg}{lnsfx}.pkl')   # clean / general types only
                 t = pd.DataFrame({'cpc_subclass': kr['cpc_subclass'], 'year': kr['year'],
                                   'num': kr[f'recv_{c}_clean'], 'den': kr[f'recv_{c}_gen']})
             Wm = W.to_numpy(float)
@@ -1945,14 +2173,14 @@ class Processor:
             return pd.DataFrame(out).T.reindex(index=bin_ends)
         c, n = ('cnt', 'pat') if meas == 'pat' else ('cit', 'cite')
         if src == 'gov':
-            df = pd.read_pickle(D + f'Govt_Shocks{sfx}{lnsfx}.pkl')
+            df = pd.read_pickle(D + f'Govt_Shocks{sfx}{tg}{lnsfx}.pkl')
             num, den = df[f'{n}_govt_shock_clean'], df[f'{n}_govt_shock_gen']
         elif src == 'ks':
-            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{lnsfx}.pkl')   # clean / general types only
+            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{lnsfx}.pkl')   # clean / general types only
             num = df[[x for x in df.columns if x.startswith(f'spill_shock_{c}_clean_')]].fillna(0.0).sum(axis=1)
             den = df[[x for x in df.columns if x.startswith(f'spill_shock_{c}_gen_')]].fillna(0.0).sum(axis=1)
         elif src == 'kswt':
-            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{lnsfx}.pkl')
+            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{lnsfx}.pkl')
             num, den = df[f'spill_shock_{c}_clean_c'].fillna(0.0), df[f'spill_shock_{c}_gen_g'].fillna(0.0)
         elif src in ('rd', 'rdcf'):
             df = pd.read_pickle(D + ('RD_Shocks_cf.pkl' if src == 'rdcf' else 'RD_Shocks.pkl'))
@@ -2116,15 +2344,19 @@ class Processor:
         panels = {}
         rows, models, fulls = [], {}, []
         g_sectors = {}
-        ivs = tuple(sorted({sp['iv'] for sp in specs if str(sp.get('iv')).replace('_c3', '').replace('_asinh', '') in ('gov', 'ks', 'kswt', 'rd', 'rdcf', 'govr', 'govrn', 'ksr', 'ksrn', 'govcl', 'ksagg')}))
+        ivs = tuple(sorted({sp['iv'] for sp in specs if str(sp.get('iv')).replace('_c3', '').replace('_mg', '').replace('_asinh', '').replace('_diag', '').replace('_type', '') in ('gov', 'ks', 'kswt', 'rd', 'rdcf', 'govr', 'govrn', 'ksr', 'ksrn', 'govcl', 'ksagg')}))
 
         for sp in specs:
             spec = {**self.UDG_BASE, **sp}
-            key = (spec['bin_len'], spec['normalise'], spec['shrink'], spec['annual'], spec['iv_wins'], spec['clean'], spec['fixed_w'])
+            key = (spec['bin_len'], spec['normalise'], spec['shrink'], spec['annual'], spec['iv_wins'], spec['clean'], spec['fixed_w'], spec['fill_missing'], spec['direct_s'])
             if key not in panels:
                 panels[key] = self.UDG_Panel(BLS_year_start, Year_end, key[0], key[1], key[2], ivs=ivs,
-                                             annual=key[3], iv_wins=key[4], clean=key[5], fixed_w=key[6])
+                                             annual=key[3], iv_wins=key[4], clean=key[5], fixed_w=key[6], fill_missing=key[7], direct_s=key[8])
             reg_df, kappas = panels[key]
+            if spec['max_period']:
+                reg_df = reg_df[reg_df['period'] <= spec['max_period']]
+            if spec['drop_sectors']:   # not estimated, but still partners of the other industries
+                reg_df = reg_df[~reg_df['BLS_Industry'].isin(spec['drop_sectors'])]
 
             sh, meas = spec['share'], spec['measure']
             suf = {'pat': 'count', 'cite': 'cites'}[meas]
@@ -2133,9 +2365,9 @@ class Processor:
                 y_col = f'asinh_clean_pat_{suf}'
                 # restrict to the sectors that enter the G baseline (positive non-clean offset, some clean outcome)
                 if meas not in g_sectors:
-                    if (5, False, True, False, None, 'all', False) not in panels:
-                        panels[(5, False, True, False, None, 'all', False)] = self.UDG_Panel(BLS_year_start, Year_end, 5, False, True, ivs=ivs)
-                    gb = panels[(5, False, True, False, None, 'all', False)][0]
+                    if (5, False, True, False, None, 'all', False, False, False) not in panels:
+                        panels[(5, False, True, False, None, 'all', False, False, False)] = self.UDG_Panel(BLS_year_start, Year_end, 5, False, True, ivs=ivs)
+                    gb = panels[(5, False, True, False, None, 'all', False, False, False)][0]
                     gb = gb.dropna(subset=[f'clean_pat_{suf}', f'pat_{suf}_nc', f'net_G_{meas}_lag'])
                     gb = gb[gb[f'pat_{suf}_nc'] > 0]
                     tot = gb.groupby('BLS_Industry')[f'clean_pat_{suf}'].sum()
@@ -2204,6 +2436,8 @@ class Processor:
                    'estimator': 'OLS' if sh == 'A' else 'PPML' if not iv else ('FE-Poisson (GMM)' if iv == 'none' else 'FE-Poisson IV (GMM)'),
                    'instrument': iv or '', 'outcome_freq': 'annual' if spec['annual'] else 'bin', 'clean_def': spec['clean'],
                    'mass_trend': bool(spec['mass_trend']), 'free_offset': bool(spec['free_offset']),
+                   'fill_missing': bool(spec['fill_missing']), 'direct_s': bool(spec['direct_s']),
+                   'max_period': spec['max_period'] if spec['max_period'] else np.nan,
                    'iv_wins': spec['iv_wins'] if spec['iv_wins'] else np.nan,
                    'iv_lags': '+'.join(str(l) for l in spec['iv_lags']) if iv and iv != 'none' else '',
                    'hansen_p': getattr(m, 'J_p', np.nan) if iv else np.nan,
@@ -2610,6 +2844,449 @@ class Processor:
         out.to_csv(outdir / 'old_benchmark.csv', index=False)
         print(out.round(3).to_string())
         return out
+
+
+    def Cap_Citations(self, q=0.99):
+        """""
+        Industry-year patent table with citation weights capped at their q-quantile (unweighted, over all patent-industry
+        records), rebuilt from Pat_Firms.pkl with the construction of the Cleaner (patents split equally over their
+        industries). Counts are unchanged. A coauthor suggestion (see the note in the repository discussion).
+
+        Output: Clean Data/Ind_Pat_Cap.pkl in the layout of Ind_Pat.pkl (used by UDG_Panel with clean='cap')
+        """""
+        D = f'{self.Directory}/Clean Data/'
+        pf = pd.read_pickle(D + 'Pat_Firms.pkl')[['patent_id', 'year', 'BLS_Industry', 'clean', 'dirty', 'norm_cites']].drop_duplicates()
+        pf['w'] = 1.0 / pf.groupby('patent_id')['BLS_Industry'].transform('count')
+        cap = pf['norm_cites'].quantile(q)
+        pf['nc'] = pf['norm_cites'].clip(upper=cap)
+        pf['clean_w'], pf['dirty_w'] = pf['w'] * pf['clean'], pf['w'] * pf['dirty']
+        pf['cite_w'], pf['clean_cite_w'], pf['dirty_cite_w'] = pf['w'] * pf['nc'], pf['clean_w'] * pf['nc'], pf['dirty_w'] * pf['nc']
+        g = pf.groupby(['BLS_Industry', 'year'], as_index=False).agg(
+            clean_pat_count=('clean_w', 'sum'), dirty_pat_count=('dirty_w', 'sum'), pat_count=('w', 'sum'),
+            clean_pat_cites=('clean_cite_w', 'sum'), dirty_pat_cites=('dirty_cite_w', 'sum'), pat_cites=('cite_w', 'sum'))
+        ref = pd.read_pickle(D + 'Ind_Pat.pkl')
+        idx = pd.MultiIndex.from_frame(ref[['BLS_Industry', 'year']])
+        g = g.set_index(['BLS_Industry', 'year']).reindex(idx).fillna(0.0).reset_index()
+        g['pat_count_nc'] = g['pat_count'] - g['clean_pat_count']
+        g['pat_cites_nc'] = g['pat_cites'] - g['clean_pat_cites']
+        g['clim_pat_count'] = g['clean_pat_count'] + g['dirty_pat_count']
+        g['clim_pat_cites'] = g['clean_pat_cites'] + g['dirty_pat_cites']
+        g.to_pickle(D + 'Ind_Pat_Cap.pkl')
+        chk = ref.merge(g, on=['BLS_Industry', 'year'], suffixes=('', '_c'))
+        print(f'cap = {cap:.2f}; max |count difference| vs Ind_Pat: {(chk.clean_pat_count - chk.clean_pat_count_c).abs().max():.2e}')
+        return g
+
+
+    def Shock_Relevance(self, batch, BLS_year_start, Year_end, bin_len=5, last_outcome=2017, sfx='', cur=False):
+        """""
+        Does the industry-type shock predict patenting of that type in that industry, before any shares or network?
+        Level regressions for (industry i, type k, bin t): PPML of the patents of type k in industry i and bin t on
+        asinh of the shock Z^k_it (same bin, or lagged one bin), with industry-by-type and type-by-bin effects, standard
+        errors clustered by industry. Government shock: Z^k = sum over classes of the industry's pre-sample type-k class
+        shares times government patenting (types clean / dirty / general). Spillover shock: spillovers received by the
+        industry's type-k technologies from all source types (types clean / general). Placebo: the shock of the other type.
+
+        cur=True replaces the industry's pre-sample class distribution by its distribution in the year of the shock (Ind_Pat_Shares_Cur*.pkl),
+        which is mechanically related to current patenting and is shown only to see whether the correlations are sensible.
+
+        Output: Results/Batches/<batch>/shock_relevance.csv, table_shock_relevance.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        pf = pd.read_pickle(D + 'Pat_Firms.pkl')[['patent_id', 'year', 'BLS_Industry', 'clean', 'dirty']].drop_duplicates()
+        pf['w'] = 1.0 / pf.groupby('patent_id')['BLS_Industry'].transform('count')
+        pf['n_clean'] = pf['w'] * pf['clean']
+        pf['n_dirty'] = pf['w'] * pf['dirty']
+        pf['n_gen3'] = pf['w'] * (1 - pf['clean']) * (1 - pf['dirty'])
+        pf['n_gen2'] = pf['w'] * (1 - pf['clean'])
+        ends = list(range(BLS_year_start, Year_end + 1, bin_len))
+        inds = sorted(pd.read_pickle(D + 'Ind_Pat.pkl')['BLS_Industry'].unique())
+        inds = [i for i in inds if self.manu_cols[0] <= i <= self.manu_cols[1]]
+
+        def binned(df, cols, year='year'):
+            out = []
+            for e in ends:
+                w = df[(df[year] > e - bin_len) & (df[year] <= e)]
+                g = w.groupby('BLS_Industry')[cols].sum().reindex(inds).fillna(0.0)
+                g['period'] = e
+                out.append(g.reset_index())
+            return pd.concat(out, ignore_index=True)
+
+        pat = binned(pf, ['n_clean', 'n_dirty', 'n_gen3', 'n_gen2'])
+        if cur:   # contemporaneous class distribution of the industry's type-k patents
+            shc = pd.read_pickle(D + f'Ind_Pat_Shares_Cur{sfx}.pkl')
+            g_ = pd.read_pickle(D + f'Gov_CPC{sfx}.pkl')[['cpc_subclass', 'year', 'gov_pat_count']]
+            m_ = shc[shc['type'].isin(['clean', 'dirty', 'gen'])].merge(g_, on=['cpc_subclass', 'year'])
+            m_['v'] = m_['cpc_pat_share'] * m_['gov_pat_count']
+            gov = m_.groupby(['BLS_Industry', 'year', 'type'])['v'].sum().unstack('type').fillna(0.0)
+            gov.columns = [f'pat_govt_shock_{c}' for c in gov.columns]
+            gov = gov.reset_index()
+            shg = pd.read_pickle(D + f'Ind_Pat_Shares_Cur_cg{sfx}.pkl')
+            kr_ = pd.read_pickle(D + f'KS_Recv_cg{sfx}.pkl')
+            ks = None
+            for t_, c_ in [('clean', 'z_clean'), ('gen', 'z_gen')]:
+                m_ = shg[shg['type'] == t_].merge(kr_[['cpc_subclass', 'year', f'recv_cnt_{t_}']], on=['cpc_subclass', 'year'])
+                m_[c_] = m_['cpc_pat_share'] * m_[f'recv_cnt_{t_}']
+                z_ = m_.groupby(['BLS_Industry', 'year'], as_index=False)[c_].sum()
+                ks = z_ if ks is None else ks.merge(z_, on=['BLS_Industry', 'year'], how='outer')
+            ks = ks.fillna(0.0)
+            del shc, shg, m_
+        else:
+            gov = pd.read_pickle(D + f'Govt_Shocks{sfx}.pkl')
+            ks = pd.read_pickle(D + f'KS_Shocks_cg{sfx}.pkl')
+            ks['z_clean'] = ks[[c for c in ks.columns if c.startswith('spill_shock_cnt_clean_')]].fillna(0.0).sum(axis=1)
+            ks['z_gen'] = ks[[c for c in ks.columns if c.startswith('spill_shock_cnt_gen_')]].fillna(0.0).sum(axis=1)
+        gov = binned(gov, [c for c in gov.columns if c.startswith('pat_govt_shock_')])
+        ks = binned(ks, ['z_clean', 'z_gen'])
+
+        def long_panel(types, ycols, zcols):
+            frames = []
+            for k, yc, zc in zip(types, ycols, zcols):
+                d = pat[['BLS_Industry', 'period', yc]].rename(columns={yc: 'y'}).merge(
+                    zcols_df[['BLS_Industry', 'period', zc]].rename(columns={zc: 'z'}), on=['BLS_Industry', 'period'])
+                d['type'] = k
+                frames.append(d)
+            return pd.concat(frames, ignore_index=True)
+
+        def lag(d, c):
+            l = d[['BLS_Industry', 'period', 'type', c]].copy()
+            l['period'] += bin_len
+            return d.merge(l.rename(columns={c: c + '_lag'}), on=['BLS_Industry', 'period', 'type'], how='left')
+
+        def fit(d, zc, types):
+            d = d[d['type'].isin(types)].dropna(subset=['y', zc]).copy()
+            d = d[d['period'] <= last_outcome] if last_outcome else d
+            d['grp'] = d['BLS_Industry'].astype(str) + '_' + d['type']
+            d = d[d.groupby('grp')['y'].transform('sum') > 0]
+            d['tp'] = d['type'] + '_' + d['period'].astype(str)
+            x = np.arcsinh(d[zc].astype(float))
+            X = pd.concat([pd.Series(1.0, index=d.index, name='const'), x.rename('z'),
+                           pd.get_dummies(d['grp'], prefix='g', drop_first=True, dtype=float),
+                           pd.get_dummies(d['tp'], prefix='t', drop_first=True, dtype=float)], axis=1)
+            X.columns = [str(c) for c in X.columns]
+            y = d['y'].astype(float)
+            fam = sm.families.Poisson()
+            try:
+                m = sm.GLM(y, X, family=fam).fit(cov_type='cluster', cov_kwds={'groups': d['BLS_Industry'].to_numpy()}, maxiter=200)
+            except ValueError:   # IRLS diverged: start from a constant-only fit with the log of the mean
+                start = np.zeros(X.shape[1]); start[0] = np.log(y.mean())
+                m = sm.GLM(y, X, family=fam).fit(start_params=start, method='bfgs', maxiter=2000,
+                                                 cov_type='cluster', cov_kwds={'groups': d['BLS_Industry'].to_numpy()})
+            return m.params['z'], m.bse['z'], m.pvalues['z'], int(m.nobs), d['BLS_Industry'].nunique()
+
+        rows = []
+        for name, types, ycols, zdf, zcols, plc in [
+                ('Government patents', ['clean', 'dirty', 'general'], ['n_clean', 'n_dirty', 'n_gen3'], gov,
+                 ['pat_govt_shock_clean', 'pat_govt_shock_dirty', 'pat_govt_shock_gen'], {'clean': 'general', 'dirty': 'clean', 'general': 'dirty'}),
+                ('Spillovers received', ['clean', 'general'], ['n_clean', 'n_gen2'], ks, ['z_clean', 'z_gen'], {'clean': 'general', 'general': 'clean'})]:
+            zcols_df = zdf
+            panel = long_panel(types, ycols, zcols)
+            panel = lag(panel, 'z')
+            # placebo shock: shock of another type for the same industry and bin
+            zmap = dict(zip(types, zcols))
+            oth = zdf.set_index(['BLS_Industry', 'period'])
+            panel['z_other'] = [oth.loc[(i, t), zmap[plc[k]]] if (i, t) in oth.index else np.nan
+                                for i, t, k in zip(panel['BLS_Industry'], panel['period'], panel['type'])]
+            panel = lag(panel, 'z_other')
+            for lab, ty, zc in [('All types, same bin', types, 'z'), ('All types, previous bin', types, 'z_lag'),
+                                ('All types, shock of another type (placebo)', types, 'z_other'),
+                                ('All types, previous-bin shock of another type (placebo)', types, 'z_other_lag')] + \
+                               [(f'{t.capitalize()} only, same bin', [t], 'z') for t in types] + \
+                               [(f'{t.capitalize()} only, previous bin', [t], 'z_lag') for t in types]:
+                b, se, p, n, ns = fit(panel, zc, ty)
+                rows.append(dict(shock=name, spec=lab, coef=b, se=se, p=p, N=n, n_industries=ns))
+        out = pd.DataFrame(rows)
+        out.to_csv(outdir / 'shock_relevance.csv', index=False)
+        labs = list(dict.fromkeys(out['spec']))
+        shocks = list(dict.fromkeys(out['shock']))
+        lines = [r'\begin{tabular}{l' + 'c' * len(shocks) + '}', r'\toprule', ' & ' + ' & '.join(shocks) + r' \\', r'\midrule']
+        for lab in labs:
+            cs, ss = [], []
+            for sh in shocks:
+                r = out[(out['shock'] == sh) & (out['spec'] == lab)]
+                if len(r):
+                    r = r.iloc[0]; cs.append(f"{r.coef:.3f}{gpf.get_stars(r.p)}"); ss.append(f"({r.se:.3f})")
+                else:
+                    cs.append(''); ss.append('')
+            lines += [lab + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+        lines += [r'\midrule', 'Observations (first row) & ' + ' & '.join(str(int(out[(out['shock'] == sh)].iloc[0].N)) for sh in shocks) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_shock_relevance.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(out.round(3).to_string())
+        return out
+
+
+    def Match_Coverage(self, batch, BLS_year_start, Year_end, bin_len=5):
+        """""
+        Share of US patents (any assignee) that are matched to a Compustat firm and an input-output industry, by filing-year
+        window, for all patents and for clean patents. All patents = the sum of the saved patent counts by technology and
+        year (each patent has total weight one), clean patents = the clean technologies of the clean / general types.
+
+        Output: Results/Batches/<batch>/match_coverage.csv, table_match_coverage.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        tp = pd.read_pickle(D + 'Tech_Pat_cg.pkl')
+        tot = tp.groupby('year')['pat_count'].sum()
+        clean_tot = tp[tp['tech'].str.endswith('_c')].groupby('year')['pat_count'].sum()
+        pf = pd.read_pickle(D + 'Pat_Firms.pkl')[['patent_id', 'year', 'clean']].drop_duplicates('patent_id')
+        m, mc = pf.groupby('year').size(), pf[pf['clean'] == 1].groupby('year').size()
+        df = pd.DataFrame({'all': tot, 'matched': m, 'clean_all': clean_tot, 'clean_matched': mc}).fillna(0.0)
+        wins = [(e - bin_len + 1, e) for e in range(BLS_year_start, Year_end + 1, bin_len)]
+        wins += [(BLS_year_start - bin_len + 1, Year_end)]
+        rows = []
+        for lo, hi in wins:
+            d = df.loc[lo:hi].sum()
+            rows.append(dict(window=f'{lo}--{hi}', all=d['all'], matched=d['matched'], share=d['matched'] / d['all'],
+                             clean_all=d['clean_all'], clean_matched=d['clean_matched'], clean_share=d['clean_matched'] / d['clean_all']))
+        out = pd.DataFrame(rows)
+        out.to_csv(outdir / 'match_coverage.csv', index=False)
+        lines = [r'\begin{tabular}{lrrcrrc}', r'\toprule',
+                 r' & \multicolumn{3}{c}{All patents} & \multicolumn{3}{c}{Clean patents} \\',
+                 r'\cmidrule(lr){2-4}\cmidrule(lr){5-7}',
+                 r'Filing years & Filed & Matched & Share & Filed & Matched & Share \\', r'\midrule']
+        for k, r in out.iterrows():
+            if k == len(out) - 1:
+                lines.append(r'\midrule')
+            lines.append(f"{r['window']} & {r['all']:,.0f} & {r['matched']:,.0f} & {r['share']:.3f} & {r['clean_all']:,.0f} & "
+                         f"{r['clean_matched']:,.0f} & {r['clean_share']:.3f} \\\\")
+        lines += [r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_match_coverage.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(out.round(3).to_string())
+        return out
+
+
+    def Shock_Relevance_Type(self, batch, BLS_year_start, bin_len=5, first=1993, last=2017, sfx=''):
+        """""
+        Gut check at the level of the patent type (no industries): does the national type-k shock predict national
+        patenting of type k? Z^k_y = sum over classes s of w^k_s * X_{s,y}, with X the government patenting of class s in
+        year y, or the spillovers received by the type-k technologies of class s (all sources), and w^k_s the national
+        distribution of type-k patents over classes, either from the pre-sample window (1983-1992) or from the same year
+        (contemporaneous, which is mechanically biased upward). The outcome is the number of patents of type k matched to
+        firms, summed over industries. PPML with type effects, annual data, standard errors clustered by year.
+        Government shock: types clean / dirty / general; spillovers: clean / general.
+
+        The shock is also entered lagged by one bin (bin_len years), as in the main specifications.
+
+        Output: Results/Batches/<batch>/shock_relevance_type.csv, table_shock_relevance_type.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        pf = pd.read_pickle(D + 'Pat_Firms.pkl')[['patent_id', 'year', 'BLS_Industry', 'clean', 'dirty']].drop_duplicates()
+        pf['w'] = 1.0 / pf.groupby('patent_id')['BLS_Industry'].transform('count')
+        pf['clean_n'], pf['dirty_n'] = pf['w'] * pf['clean'], pf['w'] * pf['dirty']
+        pf['gen3_n'], pf['gen2_n'] = pf['w'] * (1 - pf['clean']) * (1 - pf['dirty']), pf['w'] * (1 - pf['clean'])
+        out_n = pf.groupby('year')[['clean_n', 'dirty_n', 'gen3_n', 'gen2_n']].sum()
+        years = list(range(first, last + 1))
+        pre = (BLS_year_start - bin_len - 10 + 1, BLS_year_start - bin_len)
+
+        def tech_matrix(tp):
+            "classes x years matrix of patents per type: dict letter -> DataFrame(class x year)"
+            tp = tp.assign(cls=tp['tech'].str[:-2], let=tp['tech'].str[-1])
+            return {l: g.pivot_table(index='cls', columns='year', values='pat_count', aggfunc='sum').fillna(0.0) for l, g in tp.groupby('let')}
+
+        def shock(P, X, contemporaneous):
+            "P: class x year patents of the type; X: class x year shock input; returns Series over years"
+            cls = P.index.intersection(X.index)
+            P, X = P.loc[cls], X.reindex(cls).fillna(0.0)
+            if contemporaneous:
+                share = P / P.sum(axis=0).where(P.sum(axis=0) > 0)
+                return (share.fillna(0.0) * X.reindex(columns=P.columns).fillna(0.0)).sum(axis=0)
+            w = P.loc[:, pre[0]:pre[1]].sum(axis=1)
+            w = w / w.sum()
+            return (X.reindex(columns=P.columns).fillna(0.0).mul(w, axis=0)).sum(axis=0)
+
+        gov = pd.read_pickle(D + f'Gov_CPC{sfx}.pkl').pivot_table(index='cpc_subclass', columns='year', values='gov_pat_count', aggfunc='sum').fillna(0.0)
+        rv = pd.read_pickle(D + f'KS_Recv_cg{sfx}.pkl')
+        rec = {l: rv.pivot_table(index='cpc_subclass', columns='year', values=f'recv_cnt_{t}', aggfunc='sum').fillna(0.0)
+               for l, t in [('c', 'clean'), ('g', 'gen')]}
+        tp2 = tech_matrix(pd.read_pickle(D + f'Tech_Pat_cg{sfx}.pkl'))
+        if '_mg' in sfx:   # six-digit CPC: only the clean / general types exist, also for the government shock
+            gov_types = {'c': ('clean_n', tp2['c'], gov), 'g': ('gen2_n', tp2['g'], gov)}
+        else:
+            tp3 = tech_matrix(pd.read_pickle(D + f'Tech_Pat{sfx}.pkl'))
+            gov_types = {'c': ('clean_n', tp3['c'], gov), 'd': ('dirty_n', tp3['d'], gov), 'g': ('gen3_n', tp3['g'], gov)}
+        specs = [('Government patents', gov_types),
+                 ('Spillovers received', {'c': ('clean_n', tp2['c'], rec['c']), 'g': ('gen2_n', tp2['g'], rec['g'])})]
+        rows = []
+        for name, types in specs:
+            for dist, lag in [(a, b) for b in [0, bin_len] for a in ['pre-sample', 'contemporaneous']]:
+                timing = 'same year' if lag == 0 else 'previous bin'
+                panel = []
+                for l, (ycol, P, X) in types.items():
+                    z = shock(P, X, dist == 'contemporaneous')
+                    d = pd.DataFrame({'year': years, 'type': l, 'y': out_n.loc[years, ycol].to_numpy(),
+                                      'z': np.arcsinh(z.reindex([y - lag for y in years]).to_numpy())})
+                    panel.append(d)
+                d = pd.concat(panel, ignore_index=True)
+                for fe in ['type effects', 'type and year effects', 'type effects and type-specific trends']:
+                    parts = [pd.Series(1.0, index=d.index, name='const'), d['z'].rename('z'), pd.get_dummies(d['type'], prefix='k', drop_first=True, dtype=float)]
+                    if fe == 'type and year effects':
+                        parts.append(pd.get_dummies(d['year'], prefix='y', drop_first=True, dtype=float))
+                    if fe == 'type effects and type-specific trends':
+                        tr = pd.concat([((d['type'] == l) * (d['year'] - first)).rename(f't_{l}') for l in types], axis=1)
+                        parts.append(tr)
+                    X_ = pd.concat(parts, axis=1)
+                    m = sm.GLM(d['y'], X_, family=sm.families.Poisson()).fit(cov_type='cluster', cov_kwds={'groups': d['year'].to_numpy()})
+                    rows.append(dict(shock=name, distribution=dist, timing=timing, fe=fe, coef=m.params['z'], se=m.bse['z'], p=m.pvalues['z'], N=int(m.nobs)))
+        out = pd.DataFrame(rows)
+        out.to_csv(outdir / 'shock_relevance_type.csv', index=False)
+        cols = list(dict.fromkeys(zip(out['shock'], out['distribution'], out['timing'])))
+        lines = [r'\begin{tabular}{l' + 'c' * len(cols) + '}', r'\toprule',
+                 ' & ' + ' & '.join(f'\\multicolumn{{1}}{{c}}{{{a}}}' for a, _, _ in cols) + r' \\',
+                 ' & ' + ' & '.join(b for _, b, _ in cols) + r' \\',
+                 ' & ' + ' & '.join(t for _, _, t in cols) + r' \\', r'\midrule']
+        for fe in list(dict.fromkeys(out['fe'])):
+            cs, ss = [], []
+            for a, b, t in cols:
+                r = out[(out['shock'] == a) & (out['distribution'] == b) & (out['timing'] == t) & (out['fe'] == fe)].iloc[0]
+                cs.append(f"{r.coef:.3f}{gpf.get_stars(r.p)}"); ss.append(f"({r.se:.3f})")
+            lines += [fe.capitalize() + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+        lines += [r'\midrule', 'Observations (first row) & ' + ' & '.join(str(int(out[(out['shock'] == a) & (out['distribution'] == b) & (out['timing'] == t)].iloc[0].N)) for a, b, t in cols) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_shock_relevance_type.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(out.round(3).to_string())
+        return out
+
+
+    def Linkage_Comparison(self, path):
+        """""
+        Before / after table for the extended patent-to-firm crosswalk (union of three sources): coverage of the match and the
+        baseline reduced-form estimates. The 'before' registry and coverage were saved in Results/Batches/diag_linkage/ before
+        the data were rebuilt with the third crosswalk.
+        """""
+        R = self.Directory / 'Results'
+        L = R / 'Batches' / 'diag_linkage'
+        reg0, reg1 = (pd.read_csv(L / 'registry_before.csv').set_index('spec_id'), pd.read_csv(R / 'registry.csv').set_index('spec_id'))
+        cov0 = pd.read_csv(L / 'match_coverage_before.csv')
+        cov1 = pd.read_csv(R / 'Batches' / 'diag_match_coverage' / 'match_coverage.csv')
+        def cov(df, col):
+            r = df.iloc[-1]; return r[col]
+        def est(reg, i):
+            r = reg.loc[i]; return f"{r.coef_net:.2f}{gpf.get_stars(r.p_net)}", f"({r.se_net:.2f})"
+        lines = [r'\begin{tabular}{lcc}', r'\toprule', r' & Two crosswalks & Three crosswalks \\', r'\midrule',
+                 'Patents matched to a firm and industry, 1993--2022 & ' + ' & '.join(f"{cov(c, 'matched'):,.0f}" for c in (cov0, cov1)) + r' \\',
+                 'Share of patents filed & ' + ' & '.join(f"{cov(c, 'share'):.3f}" for c in (cov0, cov1)) + r' \\',
+                 'Share of clean patents filed & ' + ' & '.join(f"{cov(c, 'clean_share'):.3f}" for c in (cov0, cov1)) + r' \\',
+                 'Last bin (2018--2022), share of patents filed & ' + ' & '.join(f"{c.iloc[-2]['share']:.3f}" for c in (cov0, cov1)) + r' \\',
+                 r'\midrule', r'\multicolumn{3}{l}{\textit{Network coefficient, PPML}} \\']
+        for lab, i in [('$G$, counts', 'b0_pat_base'), ('$G$, citations', 'b0_cite_base'), ('$D$, counts', 'b1_pat_base'),
+                       ('$D$, citations', 'b1_cite_base'), ('$G$, counts, direct weights (M3)', 'b0_pat_ds')]:
+            a, b = est(reg0, i), est(reg1, i)
+            lines += [lab + f' & {a[0]} & {b[0]} \\\\', f' & {a[1]} & {b[1]} \\\\']
+        lines += [r'\midrule', 'Industries, $G$ ($D$) baseline & ' + ' & '.join(f"{int(r.loc['b0_pat_base','n_sectors'])} ({int(r.loc['b1_pat_base','n_sectors'])})" for r in (reg0, reg1)) + r' \\',
+                  'Observations, $G$ ($D$) baseline & ' + ' & '.join(f"{int(r.loc['b0_pat_base','N'])} ({int(r.loc['b1_pat_base','N'])})" for r in (reg0, reg1)) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+
+    def Cite5_Summary(self, path):
+        """""
+        Citation-weighted clean share: citations counted over the whole life of the patent (baseline) against citations received
+        within five years of filing (variant c5), for G (batch 0) and D (batch 1); net network coefficient and, for the baseline
+        and c5, the upstream / downstream split.
+        """""
+        reg = pd.read_csv(self.Directory / 'Results' / 'registry.csv').set_index('spec_id')
+        def cell(i, col):
+            if i not in reg.index or pd.isna(reg.loc[i, f'coef_{col}']):
+                return '', ''
+            r = reg.loc[i]
+            return f"{r[f'coef_{col}']:.2f}{gpf.get_stars(r[f'p_{col}'])}", f"({r[f'se_{col}']:.2f})"
+        lines = [r'\begin{tabular}{lcc}', r'\toprule', r' & $G$, citations & $D$, citations \\', r'\midrule']
+        for lab, sp, col in [('Baseline (net)', 'base', 'net'), ('Five-year window (net)', 'c5', 'net'),
+                             ('Baseline, upstream', 'updown', 'up'), ('Baseline, downstream', 'updown', 'down'),
+                             ('Five-year window, upstream', 'c5ud', 'up'), ('Five-year window, downstream', 'c5ud', 'down'),
+                             ('M1 + M2', 'm12', 'net'), ('M1 + M2, five-year window', 'm12c5', 'net'),
+                             ('M1 + M2 + M3', 'm12ds', 'net'), ('M1 + M2 + M3, five-year window', 'm12dsc5', 'net')]:
+            c = [cell(f'b0_cite_{sp}', col), cell(f'b1_cite_{sp}', col)]
+            lines += [lab + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
+        lines += [r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+
+    def New_IV_Variants(self, path, kind):
+        """""
+        Summary of an instrument variant against its baseline (first-stage F of the net instrument, second-stage estimate).
+        kind='diag': spillover instrument with the own-technology term (Batch 4, 4-digit and main groups);
+        kind='type': government instrument with type-specific series (Batch 2).
+        """""
+        reg = pd.read_csv(self.Directory / 'Results' / 'registry.csv').set_index('spec_id')
+        if kind == 'diag':
+            b, rows = 'b4', [('4-digit CPC, term removed (baseline)', 'base'), ('4-digit CPC, term kept', 'diag'),
+                             ('Six-digit CPC, term removed', 'mg'), ('Six-digit CPC, term kept', 'diagmg')]
+        elif kind == 'direct':
+            rows = [('Government patents, 4-digit CPC', 'b2', 'base'), ('Government patents, 4-digit CPC, direct network', 'b2', 'ds'),
+                    ('Government patents, six-digit CPC', 'b2', 'mg'), ('Government patents, six-digit CPC, direct network', 'b2', 'dsmg'),
+                    ('Spillovers, 4-digit CPC', 'b4', 'base'), ('Spillovers, 4-digit CPC, direct network', 'b4', 'ds'),
+                    ('Spillovers, six-digit CPC', 'b4', 'mg'), ('Spillovers, six-digit CPC, direct network', 'b4', 'dsmg')]
+            b = None
+        elif kind == 'gov6':
+            b, rows = 'b2', [('4-digit CPC, baseline', 'base'), ('4-digit CPC, instrument lagged two bins', 'lag2'),
+                             ('Six-digit CPC, baseline', 'mg'), ('Six-digit CPC, instrument lagged two bins', 'mglag2')]
+        else:
+            b, rows = 'b2', [('4-digit CPC, all types (baseline)', 'base'), ('4-digit CPC, recipient type', 'typ'),
+                             ('Six-digit CPC, all types', 'mg'), ('Six-digit CPC, recipient type', 'typmg')]
+        def cell(i):
+            if i not in reg.index:
+                return '', ''
+            r = reg.loc[i]
+            if not r.converged or pd.isna(r.coef_net):
+                return f"{r.fs_F_net:.1f}", 'not conv.'
+            return f"{r.fs_F_net:.1f}", f"{r.coef_net:.1f}{gpf.get_stars(r.p_net)} ({r.se_net:.1f})"
+        lines = [r'\begin{tabular}{lcccc}', r'\toprule', r' & \multicolumn{2}{c}{Patent counts} & \multicolumn{2}{c}{Citations} \\',
+                 r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}', r' & First-stage $F$ & Estimate (SE) & First-stage $F$ & Estimate (SE) \\', r'\midrule']
+        for r_ in rows:
+            lab, s_ = r_[0], r_[-1]
+            bb = r_[1] if kind == 'direct' else b
+            c1, c2 = cell(f'{bb}_pat_{s_}'), cell(f'{bb}_cite_{s_}')
+            lines.append(f'{lab} & {c1[0]} & {c1[1]} & {c2[0]} & {c2[1]} \\\\')
+        lines += [r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+
+    def Shock_Relevance_Summary(self, path, sfx=''):
+        """""
+        Compact table for the "New material" section. The government shock enters lagged one bin (as in the instrumented
+        regressions); the spillover shock enters from the same bin, because its lag is built into the shock. Four panels:
+        industry-type panel and national type-level panel, each with the pre-sample and the contemporaneous class distribution.
+        """""
+        D = self.Directory / 'Results' / 'Batches'
+        a = pd.read_csv(D / f'diag_shock_relevance{sfx}' / 'shock_relevance.csv')
+        ac = pd.read_csv(D / f'diag_shock_relevance_cur{sfx}' / 'shock_relevance.csv')
+        b = pd.read_csv(D / f'diag_shock_relevance_type{sfx}' / 'shock_relevance_type.csv')
+        shocks = ['Government patents (previous bin)', 'Spillovers received (same bin)']
+        gname, sname = 'Government patents', 'Spillovers received'
+        lines = [r'\begin{tabular}{lcc}', r'\toprule', ' & ' + ' & '.join(shocks) + r' \\']
+        def cell(df, mask):
+            r = df[mask]
+            return (f"{r.iloc[0].coef:.3f}{gpf.get_stars(r.iloc[0].p)}", f"({r.iloc[0].se:.3f})") if len(r) else ('', '')
+        ind_rows = [('Shock', 'All types, previous bin', 'All types, same bin'),
+                    ('Shock of another type (placebo)', 'All types, previous-bin shock of another type (placebo)', 'All types, shock of another type (placebo)'),
+                    ('Clean patents only', 'Clean only, previous bin', 'Clean only, same bin')]
+        for title, df in [('Industry-type panel, pre-sample class distribution', a), ('Industry-type panel, contemporaneous class distribution', ac)]:
+            lines += [r'\midrule', r'\multicolumn{3}{l}{\textit{' + title + r'}} \\']
+            for lab, sg, ss in ind_rows:
+                c = [cell(df, (df['shock'] == gname) & (df['spec'] == sg)), cell(df, (df['shock'] == sname) & (df['spec'] == ss))]
+                lines += [lab + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
+        for title, dist in [('Type-level panel (annual), pre-sample class distribution', 'pre-sample'),
+                            ('Type-level panel (annual), contemporaneous class distribution', 'contemporaneous')]:
+            lines += [r'\midrule', r'\multicolumn{3}{l}{\textit{' + title + r'}} \\']
+            for fe in ['type effects', 'type and year effects', 'type effects and type-specific trends']:
+                c = [cell(b, (b['shock'] == gname) & (b['distribution'] == dist) & (b['timing'] == 'previous bin') & (b['fe'] == fe)),
+                     cell(b, (b['shock'] == sname) & (b['distribution'] == dist) & (b['timing'] == 'same year') & (b['fe'] == fe))]
+                lines += [fe.capitalize() + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
+        lines += [r'\bottomrule', r'\end{tabular}']
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
 
 
     def UDG_Summary(self, path, rows, cols):

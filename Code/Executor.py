@@ -40,7 +40,12 @@ API = 0   # set to 1 for a new API download
 #    P.Spillover_Shocks(_s); P.KS_Recv(_s); P.KS_CleanAgg(_s)
 #P.Spillover_Shocks('_cg', asinh_pat=True); P.KS_Recv('_cg', asinh_pat=True); P.KS_CleanAgg('_cg', asinh_pat=True)
 
+#P.Spillover_Shocks('_cg', diag=True); P.KS_Recv('_cg', diag=True); P.Spillover_Shocks('_cg_mg', diag=True)   # own-technology term kept
+#P.Instruments('', spill=False, type_gov=True); P.Instruments('_mg', spill=False, type_gov=True)   # type-specific government series
+#P.Instruments('_mg', spill=False)         # government shock at six-digit CPC (needs the Cleaner's *_mg files)
+#P.Spillover_Shocks('_cg_mg'); P.KS_Recv('_cg_mg')   # spillover shocks and class-level receipts, main groups (sparse)
 #P.IO_Change(Year_start, Year_mid, Year_end)     # input-output change graphs
+#P.Cap_Citations()                                # citation weights capped at the 99th percentile (Ind_Pat_Cap.pkl), from Pat_Firms
 #P.Firm_Entry()                                  # firms' first clean patents (Ind_Pat_Entry.pkl), from Pat_Firms
 
 
@@ -49,6 +54,16 @@ API = 0   # set to 1 for a new API download
 # Specification sets. Each spec overrides Processor.UDG_BASE (see CLAUDE.md for the baseline).
 
 # ----------------------------------------------------------------
+
+# six-digit CPC are used only if the Cleaner files and the shocks have been built (see the build section)
+from pathlib import Path
+DIAG = (P.Directory / 'Clean Data' / 'KS_Shocks_cg_Diag.pkl').exists()   # spillovers with the own-technology term
+TYP = (P.Directory / 'Clean Data' / 'Govt_Shocks_Type.pkl').exists()     # type-specific government series
+MG = all((P.Directory / 'Clean Data' / f).exists() for f in ['Govt_Shocks_mg.pkl', 'KS_Shocks_cg_mg.pkl', 'KS_Recv_cg_mg.pkl'])
+
+
+C5 = (P.Directory / 'Clean Data' / 'Ind_Pat_Cite5.pkl').exists()   # five-year citation weights: needs the Cleaner's Ind_Pat_Cite5.pkl
+
 
 def make_specs(tag, share, extra_offsets=()):
     "Reduced-form (PPML) permutation set around the baseline, for patents and citations."
@@ -96,10 +111,37 @@ def make_specs(tag, share, extra_offsets=()):
         add('fixwmt',   'Fixed weights + network-mass x period controls, net', fixed_w=True, mass_trend=True, panel='H')
         add('freeoff',   'Offset coefficient estimated, net', free_offset=True, panel='I')
         add('freeoffud', 'Offset coefficient estimated, up/down', free_offset=True, direction='updown', panel='I')
+        # J: treatment of partners without patents (M1), last outcome bin (M2), direct IO weights (M3), capped citations (M4)
+        fm = dict(fill_missing=True)
+        m12 = dict(fill_missing=True, max_period=2017)
+        add('m1',       'Partners without patents at the aggregate share (M1), net', panel='J', **fm)
+        add('m1ud',     'Partners without patents at the aggregate share (M1), up/down', direction='updown', panel='J', **fm)
+        add('m2',       'Outcome bins up to 2017 (M2), net', max_period=2017, panel='J')
+        add('m2ud',     'Outcome bins up to 2017 (M2), up/down', max_period=2017, direction='updown', panel='J')
+        add('m12',      'M1 + M2, net', panel='J', **m12)
+        add('m12ud',    'M1 + M2, up/down', direction='updown', panel='J', **m12)
+        add('ds',       'Direct IO coefficients (M3), net', direct_s=True, panel='J')
+        add('dsud',     'Direct IO coefficients (M3), up/down', direct_s=True, direction='updown', panel='J')
+        add('m12ds',    'M1 + M2 + M3, net', direct_s=True, panel='J', **m12)
+        add('m12dsud',  'M1 + M2 + M3, up/down', direct_s=True, direction='updown', panel='J', **m12)
+        add('m12plc',   f'M1 + M2, placebo {plc_lab}, net', rhs=plc, panel='J', **m12)
+        add('m12dsplc', f'M1 + M2 + M3, placebo {plc_lab}, net', rhs=plc, direct_s=True, panel='J', **m12)
+        add('m12drop68',   'M1 + M2, motor vehicles not estimated, net', drop_sectors=(68,), panel='J', **m12)
+        add('m12dsdrop68', 'M1 + M2 + M3, motor vehicles not estimated, net', drop_sectors=(68,), direct_s=True, panel='J', **m12)
+        if m == 'cite' and C5:
+            add('c5',       'Citation weights from the five years after filing, net', clean='cite5', panel='K')
+            add('c5ud',     'Citation weights from the five years after filing, up/down', clean='cite5', direction='updown', panel='K')
+            add('m12c5',    'M1 + M2 + five-year citation weights, net', clean='cite5', panel='K', **m12)
+            add('m12dsc5',  'M1 + M2 + M3 + five-year citation weights, net', clean='cite5', direct_s=True, panel='K', **m12)
+        if m == 'cite':
+            add('cap',       'Citation weights capped at the 99th percentile (M4), net', clean='cap', panel='J')
+            add('capud',     'Citation weights capped (M4), up/down', clean='cap', direction='updown', panel='J')
+            add('m12cap',    'M1 + M2 + M4, net', clean='cap', panel='J', **m12)
+            add('m12dscap',  'M1 + M2 + M3 + M4, net', clean='cap', direct_s=True, panel='J', **m12)
     return specs
 
 
-def make_iv_specs(tag, src, asinh=False, c3=False, extras=()):
+def make_iv_specs(tag, src, asinh=False, c3=False, extras=(), mg=False):
     """IV permutation set around the baseline. The network G is instrumented by the instrument src (see
     Processor.UDG_Instrument). asinh: add the version with patent levels as asinh in the shock; c3: add 3-digit
     classes; extras: names of source-specific specs ('lag' for the government instrument, 'within' for spillovers)."""
@@ -129,6 +171,9 @@ def make_iv_specs(tag, src, asinh=False, c3=False, extras=()):
         if c3:
             add('c3',      'Technology classes at 3 digits, net', iv=f'{src}_c3', panel='D')
             add('c3ud',    'Technology classes at 3 digits, up/down', iv=f'{src}_c3', direction='updown', panel='D')
+        if mg:
+            add('mg',      'Technology classes: six-digit CPC, net', iv=f'{src}_mg', panel='D')
+            add('mgud',    'Technology classes: six-digit CPC, up/down', iv=f'{src}_mg', direction='updown', panel='D')
         if 'lag' in extras:
             add('lag2',    'Instrument lagged two bins, net', iv_lags=(2,), panel='D')
             add('lag2ud',  'Instrument lagged two bins, up/down', iv_lags=(2,), direction='updown', panel='D')
@@ -139,6 +184,28 @@ def make_iv_specs(tag, src, asinh=False, c3=False, extras=()):
             add('wtud',     'Within-type spillovers, up/down', iv='kswt', direction='updown', panel='D')
             add('wtwins',   'Within-type spillovers, winsorised at 5/95, net', iv='kswt', iv_wins=0.05, panel='D')
             add('wtwinsud', 'Within-type spillovers, winsorised at 5/95, up/down', iv='kswt', iv_wins=0.05, direction='updown', panel='D')
+        if 'direct' in extras:   # direct input-output coefficients: first-bin direct network in the instrument, the regressor's network changes by bin
+            add('noivds',  'No instrument, direct input-output coefficients', iv='none', direct_s=True, panel='D')
+            add('ds',      'Direct input-output coefficients, net', direct_s=True, panel='D')
+            add('dsud',    'Direct input-output coefficients, up/down', direct_s=True, direction='updown', panel='D')
+            if mg:
+                add('dsmg',    'Direct input-output coefficients, six-digit CPC, net', iv=f'{src}_mg', direct_s=True, panel='D')
+                add('dsmgud',  'Direct input-output coefficients, six-digit CPC, up/down', iv=f'{src}_mg', direct_s=True, direction='updown', panel='D')
+        if 'lag' in extras and mg:   # six-digit government instrument: the double lag
+            add('mglag2',     'Six-digit CPC, instrument lagged two bins, net', iv=f'{src}_mg', iv_lags=(2,), panel='D')
+            add('mglag2ud',   'Six-digit CPC, instrument lagged two bins, up/down', iv=f'{src}_mg', iv_lags=(2,), direction='updown', panel='D')
+        if 'diag' in extras:
+            add('diag',     'Spillover network with the own-technology term, net', iv=f'{src}_diag', panel='D')
+            add('diagud',   'Spillover network with the own-technology term, up/down', iv=f'{src}_diag', direction='updown', panel='D')
+            if mg:
+                add('diagmg',   'Own-technology term, six-digit CPC, net', iv=f'{src}_mg_diag', panel='D')
+                add('diagmgud', 'Own-technology term, six-digit CPC, up/down', iv=f'{src}_mg_diag', direction='updown', panel='D')
+        if 'type' in extras:
+            add('typ',      'Type-specific government series, net', iv=f'{src}_type', panel='D')
+            add('typud',    'Type-specific government series, up/down', iv=f'{src}_type', direction='updown', panel='D')
+            if mg:
+                add('typmg',    'Type-specific government series, six-digit CPC, net', iv=f'{src}_mg_type', panel='D')
+                add('typmgud',  'Type-specific government series, six-digit CPC, up/down', iv=f'{src}_mg_type', direction='updown', panel='D')
         add('noivmt',   'No instrument, network-mass x period controls', iv='none', mass_trend=True, panel='E')
         add('mtrend',   'Network-mass x period controls, net', mass_trend=True, panel='E')
         add('mtrendud', 'Network-mass x period controls, up/down', mass_trend=True, direction='updown', panel='E')
@@ -224,7 +291,7 @@ P.UDG_Corr(batch, BLS_year_start, Year_end)
 P.UDG_Run('batch1_D', make_specs('b1', 'D', extra_offsets=[('offcd', 'clim_pat')]), BLS_year_start, Year_end)
 
 # Batch 2: instrument = government patents
-P.UDG_Run('batch2_gov', make_iv_specs('b2', 'gov', asinh=True, c3=True, extras=('lag',)), BLS_year_start, Year_end)
+P.UDG_Run('batch2_gov', make_iv_specs('b2', 'gov', asinh=True, c3=True, extras=('lag', 'direct') + (('type',) if TYP else ()), mg=MG), BLS_year_start, Year_end)
 
 # Batch 3: instrument = state R&D prices; zero stage; and on firms with clean patents
 P.UDG_Run('batch3_rd', make_iv_specs('b3', 'rd'), BLS_year_start, Year_end)
@@ -233,14 +300,14 @@ P.RD_ZeroStage('batch3_rd')
 
 # Batch 4: instrument = knowledge spillovers (two patent types: clean and general)
 P.KS_Shares('batch4_ks', BLS_year_start, Year_end, bin_len)
-P.UDG_Run('batch4_ks', make_iv_specs('b4', 'ks', asinh=True, c3=True, extras=('within',)), BLS_year_start, Year_end)
+P.UDG_Run('batch4_ks', make_iv_specs('b4', 'ks', asinh=True, c3=True, extras=('within', 'direct') + (('diag',) if DIAG else ()), mg=MG), BLS_year_start, Year_end)
 
 # Batch 5: asinh(clean patents) on network asinh(clean patents)
 P.UDG_Run('batch5_asinh', make_asinh_specs('b5'), BLS_year_start, Year_end)
 
 # Batch 6: industry class distribution x class-level ratio (government clean / all; spillovers clean / general)
 for batch, src, srcn, tag in [('batch6_govr', 'govr', 'govrn', 'b6g'), ('batch6_ksr', 'ksr', 'ksrn', 'b6k')]:
-    specs = make_iv_specs(tag, src, asinh=(src == 'ksr'), c3=True) + renormalised(tag, srcn)
+    specs = make_iv_specs(tag, src, asinh=(src == 'ksr'), c3=True, mg=MG) + renormalised(tag, srcn)
     P.UDG_Run(batch, specs, BLS_year_start, Year_end)
 
 # Batch 7: aggregate clean shock x sector pre-sample clean share
@@ -260,6 +327,16 @@ P.UDG_Run('batch8_entry', make_entry_specs('b8'), BLS_year_start, Year_end)
 
 P.IO_Validation('diag_io_validation', BLS_year_start, Year_end, bin_len)   # does clean patenting predict changes in input shares?
 P.Old_Benchmark('diag_old_benchmark', BLS_year_start, Year_start, Year_mid, Year_end, bin_len)   # patent regressions of the submitted version (branch Old)
+P.Shock_Relevance('diag_shock_relevance', BLS_year_start, Year_end, bin_len)
+if MG:
+    P.Shock_Relevance('diag_shock_relevance_mg', BLS_year_start, Year_end, bin_len, sfx='_mg')   # does the industry-type shock predict patenting of that type?
+P.Shock_Relevance('diag_shock_relevance_cur', BLS_year_start, Year_end, bin_len, cur=True)   # contemporaneous class distribution
+if MG:
+    P.Shock_Relevance('diag_shock_relevance_cur_mg', BLS_year_start, Year_end, bin_len, sfx='_mg', cur=True)
+P.Match_Coverage('diag_match_coverage', BLS_year_start, Year_end, bin_len)   # share of patents matched to firms
+P.Shock_Relevance_Type('diag_shock_relevance_type', BLS_year_start, bin_len)   # type-level gut check
+if MG:
+    P.Shock_Relevance_Type('diag_shock_relevance_type_mg', BLS_year_start, bin_len, sfx='_mg')   # six-digit CPC
 P.UDG_OwnFirstStage('diag_first_stage', BLS_year_start, Year_end, ['gov', 'rd', 'rdcf', 'ks', 'kswt', 'govr', 'ksr', 'govcl', 'ksagg'])
 
 cols = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat'), ('$D$, citations', 'b1', 'cite')]
@@ -281,6 +358,44 @@ rows = [('Baseline (net)', 'base', 'net'),
         ('\\quad $p$-value: upstream = downstream', 'fixwud', 'eq')]
 (P.Directory / 'Results' / 'Summary').mkdir(parents=True, exist_ok=True)
 P.UDG_Summary(P.Directory / 'Results' / 'Summary' / 'table_ppml_summary.tex', rows, cols)
+rows2 = [('Baseline (net)', 'base', 'net'),
+         ('Partners without patents at the aggregate share (M1)', 'm1', 'net'),
+         ('Outcome bins up to 2017 (M2)', 'm2', 'net'),
+         ('M1 + M2', 'm12', 'net'),
+         ('\\quad up/down: upstream', 'm12ud', 'up'), ('\\quad up/down: downstream', 'm12ud', 'down'),
+         ('\\quad $p$-value: upstream = downstream', 'm12ud', 'eq'),
+         ('Direct IO coefficients (M3)', 'ds', 'net'),
+         ('M1 + M2 + M3', 'm12ds', 'net'),
+         ('\\quad up/down: upstream', 'm12dsud', 'up'), ('\\quad up/down: downstream', 'm12dsud', 'down'),
+         ('\\quad $p$-value: upstream = downstream', 'm12dsud', 'eq'),
+         ('M1 + M2, dirty-share placebo', 'm12plc', 'net'),
+         ('M1 + M2 + M3, dirty-share placebo', 'm12dsplc', 'net'),
+         ('M1 + M2, motor vehicles not estimated', 'm12drop68', 'net'),
+         ('M1 + M2 + M3, motor vehicles not estimated', 'm12dsdrop68', 'net'),
+         ('Capped citation weights (M4)', 'cap', 'net'),
+         ('M1 + M2 + M4', 'm12cap', 'net'),
+         ('M1 + M2 + M3 + M4', 'm12dscap', 'net')]
+P.UDG_Summary(P.Directory / 'Results' / 'Summary' / 'table_ppml_summary_alt.tex', rows2, cols)
+# compact table for the "New material" section of the document: M1-M4 for G (counts, citations) and D (counts)
+cols_n = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat')]
+rows_n = [('Baseline (net)', 'base', 'net'),
+          ('M1: partners without patents at the aggregate share', 'm1', 'net'),
+          ('M2: outcome bins up to 2017', 'm2', 'net'),
+          ('M1 + M2', 'm12', 'net'),
+          ('M3: direct input--output coefficients', 'ds', 'net'),
+          ('M1 + M2 + M3', 'm12ds', 'net'),
+          ('M4: capped citation weights', 'cap', 'net'),
+          ('M1 + M2 + M3 + M4', 'm12dscap', 'net')]
+P.UDG_Summary(P.Directory / 'Results' / 'Summary' / 'table_new_m14.tex', rows_n, cols_n)
+P.Shock_Relevance_Summary(P.Directory / 'Results' / 'Summary' / 'table_new_relevance.tex')
+if MG:
+    P.Shock_Relevance_Summary(P.Directory / 'Results' / 'Summary' / 'table_new_relevance_mg.tex', sfx='_mg')   # six-digit CPC version
+P.Linkage_Comparison(P.Directory / 'Results' / 'Summary' / 'table_new_linkage.tex')   # needs Results/Batches/diag_linkage/ (pre-union registry and coverage)
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_diag.tex', 'diag')
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_type.tex', 'type')
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_gov6.tex', 'gov6')
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_direct.tex', 'direct')
+P.Cite5_Summary(P.Directory / 'Results' / 'Summary' / 'table_new_cite5.tex')
 cols_a = [('asinh clean patents, counts', 'b5', 'pat'), ('asinh clean patents, citations', 'b5', 'cite')]
 rows_a = [('Baseline (net)', 'base', 'net'), ('Up/down: upstream', 'updown', 'up'), ('Up/down: downstream', 'updown', 'down'),
           ('Own lagged level added: network', 'ownlag', 'net'), ('Own lagged level added: own lag', 'ownlag', 'lag'),
