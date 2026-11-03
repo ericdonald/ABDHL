@@ -29,7 +29,7 @@ where `XX` is the user's API key for the relevant data source.
 ### Contained in Raw Data:
 
 - BLS [Input-Output Matrix](https://www.bls.gov/emp/data/input-output-matrix.htm)
-- Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data) and [Arora et al. (2021)](https://zenodo.org/records/13619821)
+- Crosswalks of Patents to Firms from [Kogan et al. (2017)](https://github.com/KPSS2017/Technological-Innovation-Resource-Allocation-and-Growth-Extended-Data), [Autor et al. (2020)](https://www.ddorn.net/data.htm), and [Arora et al. (2021)](https://zenodo.org/records/13619821)
 - State-Level R&D Prices from [Lucking et al. (2019)](https://www.dropbox.com/s/d1nrtacxk6qke0a/spillovers_rep.zip?dl=0)
 
 ### Requires License:
