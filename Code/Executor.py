@@ -42,6 +42,7 @@ API = 0   # set to 1 for a new API download
 
 #P.Spillover_Shocks('_cg', diag=True); P.KS_Recv('_cg', diag=True); P.Spillover_Shocks('_cg_mg', diag=True)   # own-technology term kept
 #P.Instruments('', spill=False, type_gov=True); P.Instruments('_mg', spill=False, type_gov=True)   # type-specific government series
+#P.Instruments_Cur(); P.Instruments_Cur('_mg')   # shocks with the contemporaneous class distribution
 #P.Instruments('_mg', spill=False)         # government shock at six-digit CPC (needs the Cleaner's *_mg files)
 #P.Spillover_Shocks('_cg_mg'); P.KS_Recv('_cg_mg')   # spillover shocks and class-level receipts, main groups (sparse)
 #P.IO_Change(Year_start, Year_mid, Year_end)     # input-output change graphs
@@ -215,6 +216,18 @@ def make_iv_specs(tag, src, asinh=False, c3=False, extras=(), mg=False):
     return specs
 
 
+def make_cur_specs(tag, mg=False):
+    "Instruments built with the industry's contemporaneous class distribution (counts and citations): government and spillovers, 4-digit and six-digit CPC."
+    specs = []
+    for name, src, label in [('gov', 'gov_cur', 'Government patents, contemporaneous distribution'), ('ks', 'ks_cur', 'Spillovers, contemporaneous distribution')] + \
+                             ([('govmg', 'gov_mg_cur', 'Government patents, six-digit CPC, contemporaneous distribution'),
+                               ('ksmg', 'ks_mg_cur', 'Spillovers, six-digit CPC, contemporaneous distribution')] if mg else []):
+        for m in ['pat', 'cite']:
+            specs.append(dict(id=f'{tag}_{m}_{name}', short=name, measure=m, share='G', iv=src, label=label, panel='A'))
+            specs.append(dict(id=f'{tag}_{m}_{name}ds', short=f'{name}ds', measure=m, share='G', iv=src, label=label + ', direct network', panel='B', direct_s=True))
+    return specs
+
+
 def make_asinh_specs(tag):
     "Levels specification: OLS of asinh(clean) on the network sums of winsorised asinh(clean)."
     specs = []
@@ -317,6 +330,8 @@ for batch, src, tag in [('batch7_govcl', 'govcl', 'b7g'), ('batch7_ksagg', 'ksag
 
 # Batch 8: adoption as a firm's first clean patent (entry hazard)
 P.UDG_Run('batch8_entry', make_entry_specs('b8'), BLS_year_start, Year_end)
+if (P.Directory / 'Clean Data' / 'Govt_Shocks_Cur.pkl').exists():
+    P.UDG_Run('batch9_cur', make_cur_specs('b9', mg=MG), BLS_year_start, Year_end)   # contemporaneous class distribution in the instruments
 
 
 # ----------------------------------------------------------------
@@ -335,8 +350,10 @@ if MG:
     P.Shock_Relevance('diag_shock_relevance_cur_mg', BLS_year_start, Year_end, bin_len, sfx='_mg', cur=True)
 P.Match_Coverage('diag_match_coverage', BLS_year_start, Year_end, bin_len)   # share of patents matched to firms
 P.Shock_Relevance_Type('diag_shock_relevance_type', BLS_year_start, bin_len)   # type-level gut check
+P.Shock_Relevance_Class('diag_shock_relevance_class', BLS_year_start, bin_len)   # type = 3-digit CPC class
 if MG:
     P.Shock_Relevance_Type('diag_shock_relevance_type_mg', BLS_year_start, bin_len, sfx='_mg')   # six-digit CPC
+    P.Shock_Relevance_Class('diag_shock_relevance_class_mg', BLS_year_start, bin_len, sfx='_mg')
 P.UDG_OwnFirstStage('diag_first_stage', BLS_year_start, Year_end, ['gov', 'rd', 'rdcf', 'ks', 'kswt', 'govr', 'ksr', 'govcl', 'ksagg'])
 
 cols = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat'), ('$D$, citations', 'b1', 'cite')]
@@ -395,6 +412,8 @@ P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_diag.tex', 'd
 P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_type.tex', 'type')
 P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_gov6.tex', 'gov6')
 P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_direct.tex', 'direct')
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_cur.tex', 'cur')
+P.New_IV_Variants(P.Directory / 'Results' / 'Summary' / 'table_new_curds.tex', 'curds')
 P.Cite5_Summary(P.Directory / 'Results' / 'Summary' / 'table_new_cite5.tex')
 cols_a = [('asinh clean patents, counts', 'b5', 'pat'), ('asinh clean patents, citations', 'b5', 'cite')]
 rows_a = [('Baseline (net)', 'base', 'net'), ('Up/down: upstream', 'updown', 'up'), ('Up/down: downstream', 'updown', 'down'),
@@ -414,3 +433,4 @@ P.UDG_InstrumentSummary(P.Directory / 'Results' / 'Summary' / 'table_iv_summary.
 # ----------------------- #
 packages = ["linearmodels", "matplotlib", "numpy", "openpyxl", "pandas", "scipy", "statsmodels"]
 P.write_package_versions(packages)
+P.Theory_Check()   # which specifications are consistent with the theory (notes under the tables, scorecard)

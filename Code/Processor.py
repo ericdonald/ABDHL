@@ -77,7 +77,7 @@ class Processor:
                 Clean Data/Ind_Pat_Shares_Pre.pkl
                 Clean Data/Spill_Net{,_cg}{,_c3,_mg}_Diag.pkl  (spillover shares with the own-technology term kept)
                 Clean Data/Gov_CPC*.pkl now also hold gov_{dirty,gen,gen2}_{count,cites} (type-specific government series)
-                Clean Data/Ind_Pat_Shares_Cur{,_cg}{,_c3,_mg}.pkl  (industry x year x unit x type shares, contemporaneous; nonzero rows)
+                Clean Data/Ind_Pat_Shares_Cur{,_cg}{,_c3,_mg}.pkl  (industry x year x unit x type patent and citation shares, contemporaneous; nonzero rows)
                 Clean Data/Gov_CPC.pkl
                 Clean Data/Ind_Pat_Y02P.pkl   (clean = Y02P only)
                 Clean Data/Ind_Pat_Cite5.pkl   (citation weights from citations received within five years of the filing year; Pat_Firms.pkl gets norm_cites5)
@@ -842,6 +842,7 @@ class Processor:
             for _unit, _sfx in cpc_levels:
                 _cur = pat_ind_df.merge(cpc_unit_df(_unit), on='patent_id', how='inner')
                 _cur['pw'] = _cur['split_weight'] / _cur.groupby('patent_id')['cpc_unit'].transform('nunique')
+                _cur['cw'] = _cur['pw'] * _cur['norm_cites']
                 _cur_frames = []
                 for ty in (['clean', 'dirty', 'gen', 'all'] if _ts == 'cdg' else ['clean', 'gen']):
                     if ty == 'gen' and _ts == 'cg':
@@ -852,8 +853,10 @@ class Processor:
                         _c = _cur
                     else:
                         _c = _cur[_cur[ty] == 1]
-                    _g = _c.groupby(['BLS_Industry', 'year', 'cpc_unit'])['pw'].sum().rename('cpc_pat_count').reset_index()
+                    _g = (_c.groupby(['BLS_Industry', 'year', 'cpc_unit'])[['pw', 'cw']].sum()
+                            .rename(columns={'pw': 'cpc_pat_count', 'cw': 'cpc_cite_count'}).reset_index())
                     _g['cpc_pat_share'] = _g['cpc_pat_count'] / _g.groupby(['BLS_Industry', 'year'])['cpc_pat_count'].transform('sum')
+                    _g['cpc_cite_share'] = _g['cpc_cite_count'] / _g.groupby(['BLS_Industry', 'year'])['cpc_cite_count'].transform('sum')
                     _g['type'] = ty
                     _cur_frames.append(_g)
                 (pd.concat(_cur_frames, ignore_index=True).rename(columns={'cpc_unit': 'cpc_subclass'})
@@ -2110,7 +2113,8 @@ class Processor:
         src = src.replace('_asinh', '')
         dg = '_Diag' if src.endswith('_diag') else ''   # spillover network that keeps the own-technology term
         tg = '_Type' if src.endswith('_type') else ''   # government series of the recipient's own type
-        src = src[:-5] if dg else src[:-5] if tg else src
+        cu = '_Cur' if src.endswith('_cur') else ''     # contemporaneous class distribution of the industry
+        src = src[:-5] if dg else src[:-5] if tg else src[:-4] if cu else src
         sfx = '_c3' if src.endswith('_c3') else '_mg' if src.endswith('_mg') else ''   # 3-digit class / main-group versions
         src = src[:-3] if sfx else src
         if src in ('govcl', 'ksagg'):
@@ -2173,14 +2177,14 @@ class Processor:
             return pd.DataFrame(out).T.reindex(index=bin_ends)
         c, n = ('cnt', 'pat') if meas == 'pat' else ('cit', 'cite')
         if src == 'gov':
-            df = pd.read_pickle(D + f'Govt_Shocks{sfx}{tg}{lnsfx}.pkl')
+            df = pd.read_pickle(D + f'Govt_Shocks{sfx}{tg}{cu}{lnsfx}.pkl')
             num, den = df[f'{n}_govt_shock_clean'], df[f'{n}_govt_shock_gen']
         elif src == 'ks':
-            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{lnsfx}.pkl')   # clean / general types only
+            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{cu}{lnsfx}.pkl')   # clean / general types only
             num = df[[x for x in df.columns if x.startswith(f'spill_shock_{c}_clean_')]].fillna(0.0).sum(axis=1)
             den = df[[x for x in df.columns if x.startswith(f'spill_shock_{c}_gen_')]].fillna(0.0).sum(axis=1)
         elif src == 'kswt':
-            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{lnsfx}.pkl')
+            df = pd.read_pickle(D + f'KS_Shocks_cg{sfx}{dg}{cu}{lnsfx}.pkl')
             num, den = df[f'spill_shock_{c}_clean_c'].fillna(0.0), df[f'spill_shock_{c}_gen_g'].fillna(0.0)
         elif src in ('rd', 'rdcf'):
             df = pd.read_pickle(D + ('RD_Shocks_cf.pkl' if src == 'rdcf' else 'RD_Shocks.pkl'))
@@ -2344,7 +2348,7 @@ class Processor:
         panels = {}
         rows, models, fulls = [], {}, []
         g_sectors = {}
-        ivs = tuple(sorted({sp['iv'] for sp in specs if str(sp.get('iv')).replace('_c3', '').replace('_mg', '').replace('_asinh', '').replace('_diag', '').replace('_type', '') in ('gov', 'ks', 'kswt', 'rd', 'rdcf', 'govr', 'govrn', 'ksr', 'ksrn', 'govcl', 'ksagg')}))
+        ivs = tuple(sorted({sp['iv'] for sp in specs if str(sp.get('iv')).replace('_c3', '').replace('_mg', '').replace('_asinh', '').replace('_diag', '').replace('_type', '').replace('_cur', '') in ('gov', 'ks', 'kswt', 'rd', 'rdcf', 'govr', 'govrn', 'ksr', 'ksrn', 'govcl', 'ksagg')}))
 
         for sp in specs:
             spec = {**self.UDG_BASE, **sp}
@@ -3155,6 +3159,104 @@ class Processor:
         return out
 
 
+    def Theory_Check(self, alpha=0.10, max_codes=5):
+        """""
+        Which specifications are consistent with the theory: strategic complementarity in clean adoption, upstream and downstream
+        (network coefficients positive and significant), stronger downstream (downstream coefficient larger than upstream).
+        Criteria, on converged specifications whose regressor is the network clean share (G, D or the asinh level):
+          net specifications: coefficient > 0 and p < alpha;
+          up/down specifications: both coefficients > 0 and p < alpha, and downstream > upstream ('confirms' = all three).
+        For instrumented specifications the count of those with first-stage F >= 10 is also given.
+        Output: Results/Batches/<batch>/check_<measure>_<panel>.tex (one boxed line for each table), Results/Batches/diag_old_benchmark/
+                check_old_*.tex, Results/Summary/table_scorecard.tex (one row for each batch and measure).
+        """""
+        R = self.Directory / 'Results'
+        reg = pd.read_csv(R / 'registry.csv')
+        reg = reg[(reg['table'] == 'main') & reg['rhs'].isin(['G', 'D', 'A']) & (reg['converged'].fillna(1) == 1)].copy()
+
+        def stats(d):
+            net = d[d['direction'] == 'net']
+            ud = d[d['direction'] == 'updown']
+            n_ok = net[(net['coef_net'] > 0) & (net['p_net'] < alpha)]
+            both = ud[(ud['coef_up'] > 0) & (ud['p_up'] < alpha) & (ud['coef_down'] > 0) & (ud['p_down'] < alpha)]
+            larger = ud[ud['coef_down'] > ud['coef_up']]
+            larger_sig = larger[larger['p_up_eq_down'] < alpha]
+            conf = both[both['coef_down'] > both['coef_up']]
+            strong_net = n_ok[n_ok['fs_F_net'] >= 10] if 'fs_F_net' in n_ok else n_ok.iloc[0:0]
+            return dict(n_net=len(net), net_ok=n_ok, n_ud=len(ud), both=both, larger=larger, larger_sig=larger_sig, conf=conf,
+                        strong_net=strong_net, iv=net['instrument'].notna().any() or ud['instrument'].notna().any())
+
+        def codes(df):
+            c = [f'\\texttt{{{s}}}'.replace('_', '\\_') for s in df['short']]
+            if not c:
+                return 'none'
+            return ', '.join(c[:max_codes]) + (f' and {len(c) - max_codes} more' if len(c) > max_codes else '')
+
+        def line(s):
+            parts = []
+            if s['n_net']:
+                parts.append(f"net: {len(s['net_ok'])}/{s['n_net']} positive and significant" + (f" ({len(s['strong_net'])} with first-stage $F\\geq10$)" if s['iv'] else '')
+                             + (f" ({codes(s['net_ok'])})" if 0 < len(s['net_ok']) <= max_codes else ''))
+            if s['n_ud']:
+                parts.append(f"up/down: both positive and significant {len(s['both'])}/{s['n_ud']}; downstream larger {len(s['larger'])}/{s['n_ud']}"
+                             f" (significantly {len(s['larger_sig'])})")
+                parts.append(f"all three: {codes(s['conf'])}")
+            return '; '.join(parts)
+
+        def box(text):
+            return ('\\fcolorbox{black!35}{black!4}{\\parbox{\\dimexpr0.97\\linewidth-2\\fboxsep-2\\fboxrule\\relax}{\\footnotesize\\textbf{Theory check} '
+                    '(positive and significant at 10\\%, downstream larger). ' + text + '.}}\n')
+
+        rows = []
+        for (batch, meas, panel), d in reg.groupby(['batch', 'measure', 'panel']):
+            s = stats(d)
+            if s['n_net'] + s['n_ud'] == 0:
+                continue
+            with open(R / 'Batches' / batch / f'check_{meas}_{panel}.tex', 'w') as f:
+                f.write(box(line(s)))
+        for (batch, meas), d in reg.groupby(['batch', 'measure']):
+            s = stats(d)
+            rows.append((batch, meas, s))
+        # previous specifications (OLS, emissions / share outcomes)
+        old = pd.read_csv(R / 'Batches' / 'diag_old_benchmark' / 'old_benchmark.csv')
+        old_rows = []
+        for t in ['net', 'wls', 'lag']:
+            d = old[old['table'] == t]
+            ok = d[(d['coef'] > 0) & (d['p'] < alpha)]
+            with open(R / 'Batches' / 'diag_old_benchmark' / f'check_old_{t}.tex', 'w') as f:
+                f.write(box(f'net: {len(ok)}/{len(d)} positive and significant'))
+            old_rows.append((t, len(ok), len(d)))
+        ud = old[old['table'] == 'updown'].copy()
+        ud['base'] = ud['term'].str.replace('^(up|down)_', '', regex=True)
+        ud['side'] = ud['term'].str.extract('^(up|down)_')[0]
+        pairs = ud.pivot_table(index=['outcome', 'base'], columns='side', values=['coef', 'p'])
+        both = pairs[(pairs[('coef', 'up')] > 0) & (pairs[('p', 'up')] < alpha) & (pairs[('coef', 'down')] > 0) & (pairs[('p', 'down')] < alpha)]
+        larger = pairs[pairs[('coef', 'down')] > pairs[('coef', 'up')]]
+        conf = both[both[('coef', 'down')] > both[('coef', 'up')]]
+        with open(R / 'Batches' / 'diag_old_benchmark' / 'check_old_updown.tex', 'w') as f:
+            f.write(box(f'up/down: both positive and significant {len(both)}/{len(pairs)}; downstream larger {len(larger)}/{len(pairs)}; all three {len(conf)}/{len(pairs)}'))
+        # scorecard
+        names = {'batch0_base': 'Batch 0: $G$, reduced form', 'batch1_D': 'Batch 1: $D$, reduced form', 'batch2_gov': 'Batch 2: government patents (IV)',
+                 'batch3_rd': 'Batch 3: R\\&D prices (IV)', 'batch3_rdcf': 'Batch 3: R\\&D prices, clean firms (IV)', 'batch4_ks': 'Batch 4: spillovers (IV)',
+                 'batch5_asinh': 'Batch 5: asinh levels (OLS)', 'batch6_govr': 'Batch 6: government ratio (IV)', 'batch6_ksr': 'Batch 6: spillover ratio (IV)',
+                 'batch7_govcl': 'Batch 7: aggregate government (IV)', 'batch7_ksagg': 'Batch 7: aggregate spillovers (IV)', 'batch8_entry': 'Batch 8: first clean patents'}
+        lines = [r'\begin{tabular}{lcccc}', r'\toprule',
+                 r' & Net: positive & Up/down: both positive & Downstream & All three \\',
+                 r' & and significant & and significant & larger & \\', r'\midrule']
+        def cellfrac(k, n):
+            return f'{k}/{n}' if n else '--'
+        for batch, meas, s in sorted(rows, key=lambda r: (list(names).index(r[0]) if r[0] in names else 99, r[1] != 'pat')):
+            lab = names.get(batch, batch) + (', counts' if meas == 'pat' else ', citations')
+            net_c = cellfrac(len(s['net_ok']), s['n_net']) + (f" ({len(s['strong_net'])})" if s['iv'] and s['n_net'] else '')
+            lines.append(f"{lab} & {net_c} & {cellfrac(len(s['both']), s['n_ud'])} & {cellfrac(len(s['larger']), s['n_ud'])} & {cellfrac(len(s['conf']), s['n_ud'])} \\\\")
+        lines.append(r'\midrule')
+        lines.append(f"Previous specifications (OLS, Table~\\ref{{tab:oldnet}}) & {sum(k for _, k, _ in old_rows)}/{sum(n for _, _, n in old_rows)} & {len(both)}/{len(pairs)} & {len(larger)}/{len(pairs)} & {len(conf)}/{len(pairs)} \\\\")
+        lines += [r'\bottomrule', r'\end{tabular}']
+        with open(R / 'Summary' / 'table_scorecard.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        return rows
+
+
     def Linkage_Comparison(self, path):
         """""
         Before / after table for the extended patent-to-firm crosswalk (union of three sources): coverage of the match and the
@@ -3228,6 +3330,18 @@ class Processor:
                     ('Spillovers, 4-digit CPC', 'b4', 'base'), ('Spillovers, 4-digit CPC, direct network', 'b4', 'ds'),
                     ('Spillovers, six-digit CPC', 'b4', 'mg'), ('Spillovers, six-digit CPC, direct network', 'b4', 'dsmg')]
             b = None
+        elif kind == 'cur':
+            rows = [('Government patents, 4-digit CPC, pre-sample distribution', 'b2', 'base'), ('Government patents, 4-digit CPC, contemporaneous distribution', 'b9', 'gov'),
+                    ('Government patents, six-digit CPC, pre-sample distribution', 'b2', 'mg'), ('Government patents, six-digit CPC, contemporaneous distribution', 'b9', 'govmg'),
+                    ('Spillovers, 4-digit CPC, pre-sample distribution', 'b4', 'base'), ('Spillovers, 4-digit CPC, contemporaneous distribution', 'b9', 'ks'),
+                    ('Spillovers, six-digit CPC, pre-sample distribution', 'b4', 'mg'), ('Spillovers, six-digit CPC, contemporaneous distribution', 'b9', 'ksmg')]
+            b = None
+        elif kind == 'curds':
+            rows = [('Government patents, 4-digit CPC, pre-sample distribution', 'b2', 'ds'), ('Government patents, 4-digit CPC, contemporaneous distribution', 'b9', 'govds'),
+                    ('Government patents, six-digit CPC, pre-sample distribution', 'b2', 'dsmg'), ('Government patents, six-digit CPC, contemporaneous distribution', 'b9', 'govmgds'),
+                    ('Spillovers, 4-digit CPC, pre-sample distribution', 'b4', 'ds'), ('Spillovers, 4-digit CPC, contemporaneous distribution', 'b9', 'ksds'),
+                    ('Spillovers, six-digit CPC, pre-sample distribution', 'b4', 'dsmg'), ('Spillovers, six-digit CPC, contemporaneous distribution', 'b9', 'ksmgds')]
+            b = None
         elif kind == 'gov6':
             b, rows = 'b2', [('4-digit CPC, baseline', 'base'), ('4-digit CPC, instrument lagged two bins', 'lag2'),
                              ('Six-digit CPC, baseline', 'mg'), ('Six-digit CPC, instrument lagged two bins', 'mglag2')]
@@ -3245,12 +3359,135 @@ class Processor:
                  r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}', r' & First-stage $F$ & Estimate (SE) & First-stage $F$ & Estimate (SE) \\', r'\midrule']
         for r_ in rows:
             lab, s_ = r_[0], r_[-1]
-            bb = r_[1] if kind == 'direct' else b
+            bb = r_[1] if kind in ('direct', 'cur', 'curds') else b
             c1, c2 = cell(f'{bb}_pat_{s_}'), cell(f'{bb}_cite_{s_}')
             lines.append(f'{lab} & {c1[0]} & {c1[1]} & {c2[0]} & {c2[1]} \\\\')
         lines += [r'\bottomrule', r'\end{tabular}']
         with open(path, 'w') as f:
             f.write('\n'.join(lines) + '\n')
+
+
+    def Instruments_Cur(self, sfx=''):
+        """""
+        Government and spillover shocks built with the industry's contemporaneous class distribution (the distribution of its type-k
+        patents in the year of the shock) instead of the pre-sample distribution: Z^k_{iy} = sum_s w^k_{is,y} X^k_{s,y}. This is
+        mechanically related to current patenting and is used only to see whether the shocks predict the clean share when the weights
+        move with the industry's own patenting. Counts only (the contemporaneous citation shares are not saved).
+        sfx: '' = 4-digit subclasses (government: clean / dirty / general types), '_mg' = six-digit CPC (clean / general types).
+
+        Output: Clean Data/Govt_Shocks{sfx}_Cur.pkl, Clean Data/KS_Shocks_cg{sfx}_Cur.pkl
+        """""
+        D = f'{self.Directory}/Clean Data/'
+        gov = pd.read_pickle(D + f'Gov_CPC{sfx}.pkl')[['cpc_subclass', 'year', 'gov_pat_count', 'gov_pat_cites']]
+        sh = pd.read_pickle(D + ('Ind_Pat_Shares_Cur.pkl' if not sfx else f'Ind_Pat_Shares_Cur_cg{sfx}.pkl'))
+        has_cite = 'cpc_cite_share' in sh.columns   # citation shares need the Cleaner version that saves them
+        sh = sh[sh['type'].isin(['clean', 'gen'])].merge(gov, on=['cpc_subclass', 'year'])
+        sh['v'] = sh['cpc_pat_share'] * sh['gov_pat_count']
+        sh['vc'] = sh['cpc_cite_share'] * sh['gov_pat_cites'] if has_cite else np.nan
+        g = sh.groupby(['BLS_Industry', 'year', 'type'])[['v', 'vc']].sum(min_count=1).unstack('type')
+        g.columns = [('pat' if a == 'v' else 'cite') + f'_govt_shock_{t}' for a, t in g.columns]
+        g.reset_index().to_pickle(D + f'Govt_Shocks{sfx}_Cur.pkl')
+        shg = pd.read_pickle(D + f'Ind_Pat_Shares_Cur_cg{sfx}.pkl')
+        rv = pd.read_pickle(D + f'KS_Recv_cg{sfx}.pkl')
+        ks = None
+        for t_ in ['clean', 'gen']:
+            m_ = shg[shg['type'] == t_].merge(rv[['cpc_subclass', 'year', f'recv_cnt_{t_}', f'recv_cit_{t_}']], on=['cpc_subclass', 'year'])
+            m_['z'] = m_['cpc_pat_share'] * m_[f'recv_cnt_{t_}']
+            m_['zc'] = m_['cpc_cite_share'] * m_[f'recv_cit_{t_}'] if 'cpc_cite_share' in m_.columns else np.nan
+            z_ = (m_.groupby(['BLS_Industry', 'year'])[['z', 'zc']].sum(min_count=1).reset_index()
+                    .rename(columns={'z': f'spill_shock_cnt_{t_}_all', 'zc': f'spill_shock_cit_{t_}_all'}))
+            ks = z_ if ks is None else ks.merge(z_, on=['BLS_Industry', 'year'], how='outer')
+        ks.to_pickle(D + f'KS_Shocks_cg{sfx}_Cur.pkl')
+
+
+    def Shock_Relevance_Class(self, batch, BLS_year_start, bin_len=5, first=1993, last=2017, sfx=''):
+        """""
+        Type-level gut check with a finer type: the type is the 3-digit CPC class (about a hundred types instead of clean / general).
+        For a class c, Z^c_y = sum over the units s of c (4-digit subclasses, or six-digit CPC codes with sfx='_mg') of w^c_s * X_{s,y},
+        with X the government patenting of unit s in year y, or the spillovers received by unit s (clean and general recipients added),
+        and w^c_s the national distribution of the class's patents over its units, either from the pre-sample window or from the same year
+        (contemporaneous, biased upward). The outcome is the number of patents of class c matched to firms (summed over industries).
+        PPML with class effects; annual data; standard errors clustered by class. The government shock enters from one bin earlier,
+        the spillover shock from the same year (as in Shock_Relevance_Type).
+
+        Output: Results/Batches/<batch>/shock_relevance_class.csv, table_shock_relevance_class.tex
+        """""
+        outdir = self.Directory / 'Results' / 'Batches' / batch
+        outdir.mkdir(parents=True, exist_ok=True)
+        D = f'{self.Directory}/Clean Data/'
+        cur = pd.read_pickle(D + 'Ind_Pat_Shares_Cur_c3.pkl')
+        cur = cur[cur['type'] == 'all']
+        out_n = cur.groupby(['cpc_subclass', 'year'])['cpc_pat_count'].sum().unstack('year').fillna(0.0)
+        tp = pd.read_pickle(D + f'Tech_Pat_cg{sfx}.pkl')
+        tp = tp.assign(unit=tp['tech'].str[:-2])
+        P = tp.groupby(['unit', 'year'])['pat_count'].sum().unstack('year').fillna(0.0)
+        cls = pd.Series([u[:3] for u in P.index], index=P.index)
+        gov = pd.read_pickle(D + f'Gov_CPC{sfx}.pkl').pivot_table(index='cpc_subclass', columns='year', values='gov_pat_count', aggfunc='sum').fillna(0.0)
+        rv = pd.read_pickle(D + f'KS_Recv_cg{sfx}.pkl')
+        rv = rv.assign(recv=rv['recv_cnt_clean'] + rv['recv_cnt_gen'])
+        rec = rv.pivot_table(index='cpc_subclass', columns='year', values='recv', aggfunc='sum').fillna(0.0)
+        pre = (BLS_year_start - bin_len - 10 + 1, BLS_year_start - bin_len)
+        years = list(range(first, last + 1))
+
+        def shock(X, contemporaneous):
+            Xa = X.reindex(index=P.index, columns=P.columns).fillna(0.0)
+            if contemporaneous:
+                tot = P.groupby(cls).transform('sum')
+                W = (P / tot.where(tot > 0)).fillna(0.0)
+            else:
+                wpre = P.loc[:, pre[0]:pre[1]].sum(axis=1)
+                tot = wpre.groupby(cls).transform('sum')
+                w = (wpre / tot.where(tot > 0)).fillna(0.0)
+                W = pd.DataFrame(np.outer(w.to_numpy(), np.ones(P.shape[1])), index=P.index, columns=P.columns)
+            return (W * Xa).groupby(cls).sum()
+
+        rows = []
+        for name, X, lag_ in [('Government patents', gov, bin_len), ('Spillovers received', rec, 0)]:
+            for dist in ['pre-sample', 'contemporaneous']:
+                Z = shock(X, dist == 'contemporaneous')
+                panel = []
+                for c in Z.index.intersection(out_n.index):
+                    y = out_n.loc[c].reindex(years).fillna(0.0).to_numpy()
+                    if y.sum() <= 0:
+                        continue
+                    z = np.arcsinh(Z.loc[c].reindex([t - lag_ for t in years]).to_numpy())
+                    panel.append(pd.DataFrame({'year': years, 'type': c, 'y': y, 'z': z}))
+                d = pd.concat(panel, ignore_index=True).dropna()
+                for fe in ['type effects', 'type and year effects', 'type effects and type-specific trends']:
+                    parts = [pd.Series(1.0, index=d.index, name='const'), d['z'].rename('z'), pd.get_dummies(d['type'], prefix='k', drop_first=True, dtype=float)]
+                    if fe == 'type and year effects':
+                        parts.append(pd.get_dummies(d['year'], prefix='y', drop_first=True, dtype=float))
+                    if fe == 'type effects and type-specific trends':
+                        tr = pd.get_dummies(d['type'], prefix='t', dtype=float).mul(d['year'] - first, axis=0)
+                        parts.append(tr)
+                    X_ = pd.concat(parts, axis=1)
+                    X_.columns = [str(c) for c in X_.columns]
+                    try:
+                        m = sm.GLM(d['y'], X_, family=sm.families.Poisson()).fit(cov_type='cluster', cov_kwds={'groups': pd.factorize(d['type'])[0]}, maxiter=200)
+                    except ValueError:
+                        start = np.zeros(X_.shape[1]); start[0] = np.log(d['y'].mean())
+                        m = sm.GLM(d['y'], X_, family=sm.families.Poisson()).fit(start_params=start, method='bfgs', maxiter=2000,
+                                                                              cov_type='cluster', cov_kwds={'groups': pd.factorize(d['type'])[0]})
+                    rows.append(dict(shock=name, distribution=dist, timing='previous bin' if lag_ else 'same year', fe=fe,
+                                     coef=m.params['z'], se=m.bse['z'], p=m.pvalues['z'], N=int(m.nobs), n_types=d['type'].nunique()))
+        out = pd.DataFrame(rows)
+        out.to_csv(outdir / 'shock_relevance_class.csv', index=False)
+        cols = list(dict.fromkeys(zip(out['shock'], out['distribution'])))
+        lines = [r'\begin{tabular}{l' + 'c' * len(cols) + '}', r'\toprule',
+                 ' & ' + ' & '.join(a for a, _ in cols) + r' \\', ' & ' + ' & '.join(b for _, b in cols) + r' \\', r'\midrule']
+        for fe in list(dict.fromkeys(out['fe'])):
+            cs, ss = [], []
+            for a, b in cols:
+                r = out[(out['shock'] == a) & (out['distribution'] == b) & (out['fe'] == fe)].iloc[0]
+                cs.append(f"{r.coef:.3f}{gpf.get_stars(r.p)}"); ss.append(f"({r.se:.3f})")
+            lines += [fe.capitalize() + ' & ' + ' & '.join(cs) + r' \\', ' & ' + ' & '.join(ss) + r' \\']
+        lines += [r'\midrule', 'Observations (first row) & ' + ' & '.join(str(int(out[(out['shock'] == a) & (out['distribution'] == b)].iloc[0].N)) for a, b in cols) + r' \\',
+                  'Types (3-digit classes) & ' + ' & '.join(str(int(out[(out['shock'] == a) & (out['distribution'] == b)].iloc[0].n_types)) for a, b in cols) + r' \\',
+                  r'\bottomrule', r'\end{tabular}']
+        with open(outdir / 'table_shock_relevance_class.tex', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        print(out.round(3).to_string())
+        return out
 
 
     def Shock_Relevance_Summary(self, path, sfx=''):
@@ -3283,6 +3520,14 @@ class Processor:
             for fe in ['type effects', 'type and year effects', 'type effects and type-specific trends']:
                 c = [cell(b, (b['shock'] == gname) & (b['distribution'] == dist) & (b['timing'] == 'previous bin') & (b['fe'] == fe)),
                      cell(b, (b['shock'] == sname) & (b['distribution'] == dist) & (b['timing'] == 'same year') & (b['fe'] == fe))]
+                lines += [fe.capitalize() + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
+        bc = pd.read_csv(D / f'diag_shock_relevance_class{sfx}' / 'shock_relevance_class.csv')
+        for title, dist in [('Type = 3-digit CPC class (annual), pre-sample class distribution', 'pre-sample'),
+                            ('Type = 3-digit CPC class (annual), contemporaneous class distribution', 'contemporaneous')]:
+            lines += [r'\midrule', r'\multicolumn{3}{l}{\textit{' + title + r'}} \\']
+            for fe in ['type effects', 'type and year effects', 'type effects and type-specific trends']:
+                c = [cell(bc, (bc['shock'] == gname) & (bc['distribution'] == dist) & (bc['fe'] == fe)),
+                     cell(bc, (bc['shock'] == sname) & (bc['distribution'] == dist) & (bc['fe'] == fe))]
                 lines += [fe.capitalize() + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
         lines += [r'\bottomrule', r'\end{tabular}']
         with open(path, 'w') as f:
