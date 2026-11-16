@@ -10,6 +10,8 @@ To make use of the API commands, the user will need to make a `.keys` file with 
 
 ```
 USPTO_API = XX
+WRDS_USERNAME = XX
+WRDS_PASSWORD = XX
 ```
 
 where `XX` is the user's API key for the relevant data source.
@@ -33,7 +35,9 @@ where `XX` is the user's API key for the relevant data source.
 - State-Level R&D Prices from [Lucking et al. (2019)](https://www.dropbox.com/s/d1nrtacxk6qke0a/spillovers_rep.zip?dl=0)
 
 ### Requires License:
-- [Compustat](https://wrds-www.wharton.upenn.edu/)
+- WRDS
+  - [Compustat](https://wrds-www.wharton.upenn.edu/pages/get-data/compustat-capital-iq-standard-poors/)
+  - [CRSP](https://wrds-www.wharton.upenn.edu/pages/get-data/center-research-security-prices-crsp/)
 
 ## Software Requirements:
 
