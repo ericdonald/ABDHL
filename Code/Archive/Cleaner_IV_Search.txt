@@ -1,0 +1,325 @@
+"""""""""""
+Archive: instrument-only blocks of Processor.Cleaner (tentatively dropped)
+
+Notes: The Cleaner blocks that built the data of the government / R&D-price / spillover instruments (see Archive/Processor_IV_Search.py).
+    Kept as text, in their original order, indented as they were inside Processor.Cleaner; nothing imports this file. They used variables
+    defined earlier in the Cleaner (relevant_df, pat_df, pat_ind_df, citations_df, cpc3_df, cpc4_df, Gov_Pats_df, ...).
+
+    Restore:  git checkout pre-customer-iv-prune -- Code/Processor.py
+              (the Cleaner of that commit is the one before the customer IV and this pruning)
+
+"""""""""""
+
+# ======== six-digit CPC (main group) table ========
+        # CPC main group: the part of the group code before the slash (F23J15 for F23J15/00, A01D2017 for A01D2017/00),
+        # a level finer than the subclass; the number of characters varies with the length of the main-group number
+        cpcmg_df = CPC_df[['patent_id', 'cpc_group']][CPC_df['cpc_section'] != 'Y'].dropna()
+        cpcmg_df['cpc_main'] = cpcmg_df['cpc_group'].str.split('/').str[0]
+        cpcmg_df = cpcmg_df[['patent_id', 'cpc_main']].drop_duplicates()
+
+
+# ======== PatentsView assignee and government / university patents (Gov_Pats_df) ========
+        # -------------------- #
+        # PatentsView Assignee #
+        # -------------------- #
+        if API == 1:
+            PV_assignee_df = gpf.Extract_PatentsView('g_assignee_disambiguated', self.USPTO_API)
+            
+            PV_assignee_df.to_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+        else:
+            PV_assignee_df = pd.read_pickle(f'{self.Directory}/Raw Data/assignee.pkl')
+        
+        Gov_Pats_df = PV_assignee_df[['patent_id']][PV_assignee_df['assignee_type']==6].drop_duplicates()
+        del PV_assignee_df
+        
+        univ_pats_df = pd.read_csv(f'{self.Directory}/Raw Data/patentsview_govt_univ.csv')
+        univ_pats_df['patent_id'] = univ_pats_df['patent_id'].astype(str)
+        
+        Gov_Pats_df = Gov_Pats_df.merge(univ_pats_df[['patent_id']][univ_pats_df['univ_or_gov_nonprofit'] == 1],
+                             on='patent_id',
+                             how='outer')
+
+    
+
+
+# ======== state-level R&D prices (state_rd_price.pkl) ========
+        # ---------------------- #
+        # State-Level R&D Prices #
+        # ---------------------- #
+        state_rdp_df = pd.read_stata(f'{self.Directory}/Raw Data/RDusercost_2017.dta')
+        
+        state_rdp_df = state_rdp_df[['state', 'fips', 'year', 'rho_h']]
+        state_rdp_df = state_rdp_df.rename(columns={"fips": "state_fips"})
+        
+        state_rdp_df.to_pickle(f'{self.Directory}/Clean Data/state_rd_price.pkl')
+        
+        
+
+
+# ======== technology-class levels, patent-type schemes and helpers; spillover network (Spill_Net*, Spill_Clean_Net*) ========
+        # Technology classes at three granularities: 4-digit subclass (baseline files), 3-digit class (files with suffix _c3)
+        # and the CPC main group, the part of cpc_group before the slash (suffix _mg). In the _c3 and _mg files the column
+        # called cpc_subclass holds the class or the main group.
+        cpc_levels = [('cpc_subclass', ''), ('cpc_class', '_c3'), ('cpc_main', '_mg')]
+        def cpc_unit_df(unit):
+            d = {'cpc_subclass': cpc4_df, 'cpc_class': cpc3_df, 'cpc_main': cpcmg_df}[unit]
+            return d.rename(columns={unit: 'cpc_unit'})
+        def unit_universe(unit):
+            "Technology classes that exist at a level (the earlier levels use all codes of CPC_df, as before)."
+            return sorted(cpcmg_df['cpc_main'].unique()) if unit == 'cpc_main' else sorted(CPC_df[unit].unique())
+        # Patent types for the spillover files: 'cdg' = clean / dirty / general (baseline files);
+        # 'cg' = clean / general only, where general means not clean (files with suffix _cg; dirty patents are general).
+        type_schemes = [('cdg', ''), ('cg', '_cg')]
+        def patent_types(clean, dirty, scheme):
+            if scheme == 'cg':
+                return [['c'] if c == 1 else ['g'] for c in clean]
+            return [(['c'] if c == 1 else []) + (['d'] if d == 1 else []) or ['g'] for c, d in zip(clean, dirty)]
+        
+        
+        # ----------------- #
+        # Spillover Network #
+        # ----------------- #
+        for _ts, _tsfx in type_schemes:
+            rel = relevant_df[['patent_id', 'year', 'clean', 'dirty']].copy()
+            rel['types'] = patent_types(rel['clean'], rel['dirty'], _ts)
+            rel = rel[['patent_id', 'year', 'types']]
+    
+            for _unit, _sfx in cpc_levels:
+                if _unit == 'cpc_main' and _ts == 'cdg':
+                    continue   # the main-group level is used with the clean / general types only
+                cpc = cpc_unit_df(_unit)
+                cpc_counts = cpc.groupby('patent_id').size().rename('n_cpc').reset_index()
+    
+                cit = citations_df[['patent_id', 'citation_patent_id']].drop_duplicates()
+                cit = cit.merge(rel.rename(columns={'year': 'citing_year', 'types': 'citing_types'}), on='patent_id', how='inner')
+                cit = cit.merge(rel.rename(columns={'patent_id': 'citation_patent_id', 'year': 'cited_year', 'types': 'cited_types'}), on='citation_patent_id', how='inner')
+                cit = cit.merge(cpc_counts.rename(columns={'patent_id': 'citation_patent_id', 'n_cpc': 'n_cpc_q'}), on='citation_patent_id', how='inner')
+
+                cit = cit[(cit['citing_year'] > BLS_year_start-bin_len-10) 
+                                                      & (cit['citing_year'] <= BLS_year_start-bin_len)]
+                cit['k'] = cit['citing_year'] - cit['cited_year']
+                cit = cit[(cit['k'] >= k_min) & (cit['k'] <= k_max)].copy()
+        
+                cit['n_types_q'] = cit['cited_types'].apply(len)
+                cit['cited_split'] = cit['n_cpc_q'] * cit['n_types_q']
+                citing_cpc = cpc.rename(columns={'cpc_unit': 'cpc_p'})
+                cited_cpc = cpc.rename(columns={'patent_id': 'citation_patent_id', 'cpc_unit': 'cpc_q'})
+                if _ts == 'cg' and _unit != 'cpc_main':
+                    # Spillovers from all clean citing patents (one aggregate recipient): share of their citations, by lag,
+                    # that go to each technology j (class x clean/general), pre-sample window as above.
+                    cc = cit[cit['citing_types'].apply(lambda t: 'c' in t)][['patent_id', 'citation_patent_id', 'k', 'cited_types', 'cited_split']]
+                    cc = cc.merge(cited_cpc, on='citation_patent_id', how='inner').explode('cited_types')
+                    cc['j'] = cc['cpc_q'] + '_' + cc['cited_types']
+                    cc['weight'] = 1.0 / cc['cited_split']
+                    ccn = cc.groupby(['j', 'k'])['weight'].sum().reset_index(name='N_jk')
+                    ccn['S_jk'] = ccn['N_jk'] / ccn.groupby('k')['N_jk'].transform('sum')
+                    ccn[['j', 'k', 'S_jk']].to_pickle(f'{self.Directory}/Clean Data/Spill_Clean_Net{_tsfx}{_sfx}.pkl')
+                    del cc, ccn
+                # at the main-group level the pair table is large, so it is built one citation lag at a time
+                k_list = list(range(k_min, k_max + 1)) if _unit == 'cpc_main' else [None]
+                N_parts = []
+                for _k in k_list:
+                    cit_k = cit if _k is None else cit[cit['k'] == _k]
+                    left = cit_k.merge(citing_cpc, on='patent_id', how='inner')
+                    left = left.explode('citing_types').rename(columns={'citing_types': 'type_p'})
+                    left['i'] = left['cpc_p'] + '_' + left['type_p']
+                    long = left.merge(cited_cpc, on='citation_patent_id', how='inner')
+                    long = long.explode('cited_types').rename(columns={'cited_types': 'type_q'})
+                    long['j'] = long['cpc_q'] + '_' + long['type_q']
+                    long['weight'] = 1.0 / long['cited_split']
+                    N_parts.append(long.groupby(['i', 'j', 'k'])['weight'].sum().reset_index(name='N_ijk'))
+                    del cit_k, left, long
+                N = pd.concat(N_parts, ignore_index=True)
+                del N_parts
+                TotalN = N.groupby(['i', 'k'])['N_ijk'].sum().reset_index(name='TotalN_jk')
+        
+                diag = N[N['i'] == N['j']][['i', 'k', 'N_ijk']].rename(columns={'N_ijk': 'N_iik'})
+
+                out = N.merge(TotalN, on=['i', 'k'], how='left')
+                out = out.merge(diag, on=['i', 'k'], how='left')
+                out['N_iik'] = out['N_iik'].fillna(0.0)
+        
+                # variant with the own-technology term kept in the matrix and in the denominator
+                (out.assign(S_ijk=out['N_ijk'] / out['TotalN_jk'])[['i', 'j', 'k', 'S_ijk']]
+                    .to_pickle(f'{self.Directory}/Clean Data/Spill_Net{_tsfx}{_sfx}_Diag.pkl'))
+
+                out = out[out['i'] != out['j']].copy()
+                out['denom'] = out['TotalN_jk'] - out['N_iik']
+                out['S_ijk'] = np.where(out['denom'] > 0, out['N_ijk'] / out['denom'], np.nan)
+        
+                spill_net_df = out[['i', 'j', 'k', 'S_ijk']]
+                spill_net_df.to_pickle(f'{self.Directory}/Clean Data/Spill_Net{_tsfx}{_sfx}.pkl')
+                del cit, N, TotalN, diag, out, spill_net_df, cpc, cpc_counts, citing_cpc, cited_cpc
+        
+        
+
+
+# ======== Patenting by technology class, all levels and type schemes (Tech_Pat*; only Tech_Pat_cg is kept) ========
+        # ----------------------------- #
+        # Patenting by Technology Class #
+        # ----------------------------- #
+        for _ts, _tsfx in type_schemes:
+            for _unit, _sfx in cpc_levels:
+                if _unit == 'cpc_main' and _ts == 'cdg':
+                    continue   # the main-group level is used with the clean / general types only
+                tech_pat_df = pat_df.merge(cpc_unit_df(_unit),
+                                            on='patent_id',
+                                            how='inner')
+        
+                tech_pat_df['type'] = patent_types(tech_pat_df['clean'], tech_pat_df['dirty'], _ts)
+                tech_pat_df = tech_pat_df.explode('type')
+                tech_pat_df['tech'] = tech_pat_df['cpc_unit'] + '_' + tech_pat_df['type']
+        
+                tech_pat_df = tech_pat_df[['patent_id', 'tech', 'year', 'norm_cites']].drop_duplicates()
+                tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech'].transform('count')
+                tech_pat_df['cite_weight'] = tech_pat_df['split_weight'] * tech_pat_df['norm_cites']
+        
+                tech_pat_df['pat_count'] = tech_pat_df.groupby(['tech', 'year'])['split_weight'].transform('sum')
+                tech_pat_df['pat_cites'] = tech_pat_df.groupby(['tech', 'year'])['cite_weight'].transform('sum')
+        
+                tech_pat_df = tech_pat_df[['tech', 'year', 'pat_count', 'pat_cites']].drop_duplicates()
+                tech_pat_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Pat{_tsfx}{_sfx}.pkl')
+        
+        
+
+
+# ======== CPC shares by sector, contemporaneous distribution, government patent series (Ind_Pre_Clean, Ind_Pat_Shares_*, Gov_CPC*) ========
+        # -------------------- #
+        # CPC Shares by Sector #
+        # -------------------- #
+        # Pre-sample clean share of each sector's patents (used by the aggregate-shock instruments)
+        _pre = pat_ind_df[(pat_ind_df['year'] > BLS_year_start-bin_len-10) & (pat_ind_df['year'] <= BLS_year_start-bin_len)].copy()
+        _pre['w'] = _pre['split_weight']
+        _pre['wc'] = _pre['w'] * _pre['norm_cites']
+        _pre['w_clean'] = _pre['w'] * _pre['clean']
+        _pre['wc_clean'] = _pre['wc'] * _pre['clean']
+        (_pre.groupby('BLS_Industry')[['w', 'wc', 'w_clean', 'wc_clean']].sum()
+             .rename(columns={'w': 'pre_all_pat', 'wc': 'pre_all_cites', 'w_clean': 'pre_clean_pat', 'wc_clean': 'pre_clean_cites'})
+             .reset_index().to_pickle(f'{self.Directory}/Clean Data/Ind_Pre_Clean.pkl'))
+        del _pre
+        
+        for _ts, _tsfx in type_schemes:
+            for _unit, _sfx in cpc_levels:
+                ind_pat_cpc_pre_df = pat_ind_df.merge(cpc_unit_df(_unit),
+                                                    on='patent_id',
+                                                    how='inner')
+        
+        
+                ind_pat_cpc_pre_df = ind_pat_cpc_pre_df[(ind_pat_cpc_pre_df['year'] > BLS_year_start-bin_len-10) 
+                                                              & (ind_pat_cpc_pre_df['year'] <= BLS_year_start-bin_len)]
+                panel_idx = pd.MultiIndex.from_product(
+                    [unit_universe(_unit), sorted(ind_pat_cpc_pre_df['BLS_Industry'].unique())],
+                    names=['cpc_unit', 'BLS_Industry'])
+        
+                frames = []
+                for ty in (['clean', 'dirty', 'gen', 'all'] if _ts == 'cdg' else ['clean', 'gen']):
+                    clim_share = ind_pat_cpc_pre_df.copy()
+                    if ty == 'gen' and _ts == 'cg':
+                        clim_share = clim_share[clim_share['clean'] == 0]
+                    elif ty == 'gen':
+                        clim_share = clim_share[(clim_share['clean'] == 0) & (clim_share['dirty'] == 0)]
+                    elif ty == 'all':
+                        pass
+                    else:
+                        clim_share = clim_share[clim_share[ty] == 1]
+            
+                    clim_share['pat_weight'] = clim_share['split_weight'] / clim_share.groupby('patent_id')['cpc_unit'].transform('nunique')
+                    clim_share['cite_weight'] = clim_share['pat_weight'] * clim_share['norm_cites']
+        
+                    clim_share['cpc_pat_count'] = clim_share.groupby(['BLS_Industry', 'cpc_unit'])['pat_weight'].transform('sum')
+                    clim_share['pat_count'] = clim_share.groupby('BLS_Industry')['pat_weight'].transform('sum')
+                    clim_share['cpc_pat_share'] = clim_share['cpc_pat_count'] / clim_share['pat_count']
+        
+                    clim_share['cpc_pat_cites'] = clim_share.groupby(['BLS_Industry', 'cpc_unit'])['cite_weight'].transform('sum')
+                    clim_share['pat_cites'] = clim_share.groupby('BLS_Industry')['cite_weight'].transform('sum')
+                    clim_share['cpc_cite_share'] = clim_share['cpc_pat_cites'] / clim_share['pat_cites']
+        
+                    clim_share = clim_share[['BLS_Industry', 'cpc_unit', 'cpc_pat_share', 'cpc_cite_share']].drop_duplicates()
+                    clim_share = (clim_share.set_index(['cpc_unit', 'BLS_Industry'])
+                                            .reindex(panel_idx)
+                                            .fillna(0.0)
+                                            .reset_index())
+                    clim_share['type'] = ty
+                    frames.append(clim_share)
+            
+                ind_pat_shares_pre_df = pd.concat(frames, ignore_index=True).rename(columns={'cpc_unit': 'cpc_subclass'})
+                ind_pat_shares_pre_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Pre{_tsfx}{_sfx}.pkl')
+        
+        
+        # Contemporaneous distribution: each industry's share of type-k patents over units in the year of filing
+        # (nonzero rows only; used for the shock-relevance check with contemporaneous weights)
+        for _ts, _tsfx in type_schemes:
+            for _unit, _sfx in cpc_levels:
+                _cur = pat_ind_df.merge(cpc_unit_df(_unit), on='patent_id', how='inner')
+                _cur['pw'] = _cur['split_weight'] / _cur.groupby('patent_id')['cpc_unit'].transform('nunique')
+                _cur['cw'] = _cur['pw'] * _cur['norm_cites']
+                _cur_frames = []
+                for ty in (['clean', 'dirty', 'gen', 'all'] if _ts == 'cdg' else ['clean', 'gen']):
+                    if ty == 'gen' and _ts == 'cg':
+                        _c = _cur[_cur['clean'] == 0]
+                    elif ty == 'gen':
+                        _c = _cur[(_cur['clean'] == 0) & (_cur['dirty'] == 0)]
+                    elif ty == 'all':
+                        _c = _cur
+                    else:
+                        _c = _cur[_cur[ty] == 1]
+                    _g = (_c.groupby(['BLS_Industry', 'year', 'cpc_unit'])[['pw', 'cw']].sum()
+                            .rename(columns={'pw': 'cpc_pat_count', 'cw': 'cpc_cite_count'}).reset_index())
+                    _g['cpc_pat_share'] = _g['cpc_pat_count'] / _g.groupby(['BLS_Industry', 'year'])['cpc_pat_count'].transform('sum')
+                    _g['cpc_cite_share'] = _g['cpc_cite_count'] / _g.groupby(['BLS_Industry', 'year'])['cpc_cite_count'].transform('sum')
+                    _g['type'] = ty
+                    _cur_frames.append(_g)
+                (pd.concat(_cur_frames, ignore_index=True).rename(columns={'cpc_unit': 'cpc_subclass'})
+                   .to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Shares_Cur{_tsfx}{_sfx}.pkl'))
+        del _cur
+
+        # ------------------------ #
+        # Government Patent Series #
+        # ------------------------ #
+        Gov_Pats_df = Gov_Pats_df.merge(pat_df,
+                             on='patent_id',
+                             how='inner')
+        
+        for _unit, _sfx in cpc_levels:
+            gov_cpc_df = Gov_Pats_df.merge(cpc_unit_df(_unit),
+                                 on='patent_id',
+                                 how='inner')
+        
+            gov_cpc_df['pat_weight'] = 1.0 / gov_cpc_df.groupby('patent_id')['cpc_unit'].transform('nunique')
+            gov_cpc_df['cite_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['norm_cites']
+        
+            gov_cpc_df['clean_weight'] = gov_cpc_df['pat_weight'] * gov_cpc_df['clean']
+            gov_cpc_df['clean_cite_weight'] = gov_cpc_df['cite_weight'] * gov_cpc_df['clean']
+        
+            # type-specific series: clean, dirty, general (neither clean nor dirty; 'gen2' = not clean, for the clean / general scheme)
+            for _tn, _ind in [('dirty', gov_cpc_df['dirty']),
+                              ('gen', (1 - gov_cpc_df['clean']) * (1 - gov_cpc_df['dirty'])),
+                              ('gen2', 1 - gov_cpc_df['clean'])]:
+                gov_cpc_df[f'{_tn}_weight'] = gov_cpc_df['pat_weight'] * _ind
+                gov_cpc_df[f'{_tn}_cite_weight'] = gov_cpc_df['cite_weight'] * _ind
+                gov_cpc_df[f'gov_{_tn}_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])[f'{_tn}_weight'].transform('sum')
+                gov_cpc_df[f'gov_{_tn}_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])[f'{_tn}_cite_weight'].transform('sum')
+            gov_cpc_df['gov_pat_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['pat_weight'].transform('sum')
+            gov_cpc_df['gov_pat_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['cite_weight'].transform('sum')
+            gov_cpc_df['gov_clean_count'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['clean_weight'].transform('sum')
+            gov_cpc_df['gov_clean_cites'] = gov_cpc_df.groupby(['cpc_unit', 'year'])['clean_cite_weight'].transform('sum')
+        
+            gov_cpc_df = gov_cpc_df[['cpc_unit', 'year', 'gov_pat_count', 'gov_pat_cites',
+                                     'gov_clean_count', 'gov_clean_cites'] + [f'gov_{t}_{m}' for t in ['dirty', 'gen', 'gen2'] for m in ['count', 'cites']]].drop_duplicates()
+        
+            panel_idx = pd.MultiIndex.from_product(
+                   [unit_universe(_unit), list(range(BLS_year_start-2*bin_len+1, Year_end+1))],
+                   names=['cpc_unit', 'year'])
+            gov_cpc_df = (gov_cpc_df.set_index(['cpc_unit', 'year'])
+                                  .reindex(panel_idx)
+                                  .fillna(0.0)
+                                  .reset_index())
+
+            gov_cpc_df.rename(columns={'cpc_unit': 'cpc_subclass'}).to_pickle(f'{self.Directory}/Clean Data/Gov_CPC{_sfx}.pkl')
+        
+        
+
+
+
+
+
