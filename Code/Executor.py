@@ -52,9 +52,11 @@ P.Firm_Entry()                                  # firms' first clean patents (In
 
 if (P.Directory / 'Clean Data' / 'Cust_Segments.pkl').exists():
     CI = civ.Customer_IV(P)
-    CI.Table_E1()       # customers' greening -> supplier, nine columns
+    CI.Table_E1()       # customers' greening -> supplier (paper Table 2)
     CI.Table_E3()       # suppliers' greening -> customer, nine columns
     CI.Timing()         # both directions at horizons 0-20
+    CI.Robustness_Lambda()   # appendix: shrinkage parameter (Robust_Lambda.tex)
+    CI.Robustness_Other()    # appendix: other choices, GMM, leave-one-sector-out (Robust_Other.tex)
     CT = ctb.Customer_Tables(P)
     CT.Tables()         # tables, macros and Figure E1 for the draft
     CT.Check_Reproduction()   # compare with the reference run of the draft's authors (Specifications/Customer_IV/reference)
