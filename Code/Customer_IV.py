@@ -687,7 +687,7 @@ def rows_out(col, coefs, ses, sd, scale_y=1.0, sd_y=1.0):
             for t in coefs.keys()]
 
 
-def tsls(dl, cl, sd, base):
+def tsls(dl, cl, sd, base, col=5, unit='supplier'):
     dl = dl.reset_index(drop=True)
     w = dl.n.to_numpy(float); sw = np.sqrt(w)
     Fd = pd.get_dummies(dl.gvkey.astype(str), dtype=float).to_numpy()
@@ -715,8 +715,8 @@ def tsls(dl, cl, sd, base):
     ZZi = np.linalg.pinv(Zx.T @ Zx)
     Sf = np.zeros((G, Zx.shape[1])); np.add.at(Sf, cg, Zx * uf[:, None])
     Vf = ZZi @ (Sf.T @ Sf) @ ZZi * G / (G - 1) * (N - 1) / (N - np.linalg.matrix_rank(Zx))
-    rows = rows_out(5, {'x': b[0], 'own': b[1]}, {'x': se[0], 'own': se[1]}, sd, scale_y=100)
-    return dict(column=5, model='2SLS, weighted by patents', dep='green share of patents', se_type='supplier cluster',
+    rows = rows_out(col, {'x': b[0], 'own': b[1]}, {'x': se[0], 'own': se[1]}, sd, scale_y=100)
+    return dict(column=col, model='2SLS, weighted by patents', dep='green share of patents', se_type=f'{unit} cluster',
                 within_r2=1 - np.sum(e ** 2) / np.sum(yd ** 2), F=(bf[0] / np.sqrt(Vf[0, 0])) ** 2,
                 mean_dep=100 * dl.clean.sum() / dl.n.sum(), rows=rows, **base)
 
@@ -751,6 +751,43 @@ def gmm_cluster_se(g, exog, m, z='zz'):
 def poisson_iv(d, exog, z='zz'):
     with contextlib.redirect_stdout(io.StringIO()):
         return es.fit_poisson_iv(d, 'clean_pat_count', 'pat_count_nc', ['down_x_lag'] + exog, ['down_x_lag'], [z])
+
+
+def cf_iv(d, ctrl, v, seed=11, nboot=None):
+    """Control-function Poisson IV with a unit-block bootstrap (resample units with replacement, re-estimate the first stage and the Poisson
+    step; seed 11, IQR / 1.349). d: panel with gvkey (unit), E (year), clean, noncl, x, z and ctrl; v: first-stage residuals. Returns the
+    Poisson fit with the residual, the bootstrap standard errors of (x, own), the number of draws, pseudo R2."""
+    d = d.assign(vhat=v)
+    r, pr2 = fepois_fit(d, ['x', 'vhat'] + ctrl)
+    rng = np.random.default_rng(seed)
+    units = d.gvkey.unique(); grp = {g: ix for g, ix in d.groupby('gvkey').groups.items()}
+    draws = []
+    for _ in range(nboot or NBOOT):
+        pick = rng.choice(units, len(units), replace=True)
+        parts_ = []
+        for k, g in enumerate(pick):
+            p_ = d.loc[grp[g]].copy(); p_['gvkey'] = f'{g}_{k}'; parts_.append(p_)
+        db = trim(pd.concat(parts_, ignore_index=True), 'E')
+        try:
+            Ab = demean(db, ['x', 'z'] + ctrl, 'gvkey', 'E')
+            _, _, vb = ols_cluster(Ab[:, 0], Ab[:, 1:], db.gvkey.to_numpy(), 1)
+            db['vhat'] = vb
+            rb = fp(db, 'clean', ['x', 'vhat'] + ctrl, 'gvkey', 'noncl', 'E')
+            draws.append([rb.at['x', 'coef'], rb.at['own', 'coef']])
+        except Exception:
+            pass
+    q = np.percentile(np.array(draws), [25, 75], axis=0)
+    return r, pd.Series((q[1] - q[0]) / 1.349, index=['x', 'own']), len(draws), pr2
+
+
+def gmm_firm(d, ctrl, sd):
+    """Poisson IV by GMM (Poisson fixed-effects moment conditions) with standard errors clustered by firm; the firm-level analog of the
+    sector-level column 9. Returns coefficient and s.e. of x per within-standard-deviation, and the p-value."""
+    g = d.rename(columns={'gvkey': 'BLS_Industry', 'E': 'period', 'clean': 'clean_pat_count', 'noncl': 'pat_count_nc', 'x': 'down_x_lag', 'z': 'zz'})
+    m = poisson_iv(g, ctrl, 'zz')
+    se, _ = gmm_cluster_se(g, ctrl, m)
+    b, s = m.params['down_x_lag'], se['down_x_lag']
+    return dict(coef=b * sd['x'], se=s * sd['x'], p=2 * (1 - stats.norm.cdf(abs(b / s))), converged=bool(m.converged))
 
 
 def columns_firm(P, x_dep, se_unit):
@@ -808,7 +845,7 @@ def columns_firm(P, x_dep, se_unit):
 
 
 def columns_sector(d, ctrl, x_dep):
-    "Columns 6-9 of the table. d, ctrl: trimmed sector-year panel."
+    "Columns 6-9 (and the linear 2SLS, column 10) of the table. d, ctrl: trimmed sector-year panel."
     sd = within_sd(d, ['x', 'z', 'own'])
     base = dict(level='sector', N=len(d), units=d.gvkey.nunique())
     C, S = [], []
@@ -830,6 +867,18 @@ def columns_sector(d, ctrl, x_dep):
     S.append(dict(column=9, model='Poisson IV (GMM)', dep='green patents', se_type='sector cluster',
                   pseudo_r2=pseudo_r2(d, 'clean', 'noncl', mu), F=(b['z'] / se['z']) ** 2, converged=bool(m.converged),
                   p_x=2 * (1 - stats.norm.cdf(abs(m.params['down_x_lag'] / sec_se['down_x_lag']))), mean_dep=d.clean.mean(), **base))
+    # (11) control-function IV with a sector-block bootstrap (the sector analog of firm column 4)
+    r, bse, nd, pr2 = cf_iv(d, ctrl, v)
+    C += rows_out(11, r.coef[['x', 'own']], bse, sd)
+    S.append(dict(column=11, model='Poisson IV (control function)', dep='green patents', se_type='sector bootstrap', pseudo_r2=pr2, F=(b['z'] / se['z']) ** 2,
+                  boot_draws=nd, p_x=2 * (1 - stats.norm.cdf(abs(r.at['x', 'coef'] / bse['x']))), mean_dep=d.clean.mean(), **base))
+    # (10) linear 2SLS weighted by patents, sector cluster (the sector analog of firm column 5); column 10 so that the numbering 6-9 is unchanged
+    try:
+        dl, cl = prep(d, 'E', ['own'])
+        S.append(tsls(dl, cl, sd, base, col=10, unit='sector'))
+        C += S[-1].pop('rows')
+    except Exception as ex:
+        print(f'sector 2SLS failed: {type(ex).__name__}: {ex}', flush=True)
     return C, S
 
 
@@ -1033,7 +1082,7 @@ def kappa_moments(ctx, min_den=10):
     return float(p * (1 - p) / max(v - samp, 1e-12) - 1), int(ok.sum())
 
 
-def quick_firm(ctx, P):
+def quick_firm(ctx, P, boot=False):
     "Firm-level core of Table E1 for a robustness variant: first stage, reduced form, control-function IV (no bootstrap), 2SLS and AKM0."
     d, ctrl = P['d'], P['ctrl']
     d = trim(d[list(dict.fromkeys(['clean', 'noncl', 'x', 'z', 'gvkey', 'E', 'sector', 'main_cust'] + ctrl))].dropna(), 'E')
@@ -1041,13 +1090,18 @@ def quick_firm(ctx, P):
     b, se, v, _ = first_stage(d, ctrl)
     d = d.assign(vhat=v)
     iv, _ = fepois_fit(d, ['x', 'vhat'] + ctrl)
+    iv_se = iv_p = np.nan
+    if boot:                                                  # supplier bootstrap standard error of the control-function IV (as Table 2, column 2)
+        _, bse, _, _ = cf_iv(d.drop(columns='vhat'), ctrl, v)
+        iv_se = bse['x'] * sd['x']
+        iv_p = 2 * (1 - stats.norm.cdf(abs(iv.at['x', 'coef'] / bse['x'])))
     rf, _ = fepois_fit(d, ['z'] + ctrl)
     dl, cl = prep(P['d'], 'E', ['own'])
     t5 = tsls(dl, cl, sd, dict(level='firm', N=len(d), units=d.gvkey.nunique(), customers=d.main_cust.nunique()))
     lin = [r for r in t5.pop('rows') if r['term'] == 'x'][0]
     akm = e1_akm(ctx, P)
     return dict(N=len(d), units=d.gvkey.nunique(), F=(b['z'] / se['z']) ** 2, rf_p=2 * (1 - stats.norm.cdf(abs(rf.at['z', 'coef'] / rf.at['z', 'se']))),
-                iv=iv.at['x', 'coef'] * sd['x'], lin_pp=lin['coef'], akm0=akm['p_akm0'], akm0_firm=akm['p_akm0_firmclusters'])
+                iv=iv.at['x', 'coef'] * sd['x'], iv_se=iv_se, iv_p=iv_p, lin_pp=lin['coef'], akm0=akm['p_akm0'], akm0_firm=akm['p_akm0_firmclusters'])
 
 
 def outside_counts(ctx):
@@ -1338,7 +1392,7 @@ class Customer_IV:
                                  firm_rf=g(3, 'z', 'coef'), firm_rf_p=g(3, 'z', 'p'), firm_iv=g(4, 'x', 'coef'), firm_iv_se=g(4, 'x', 'se'),
                                  firm_lin_pp=g(5, 'x', 'coef'), firm_lin_F=akm['lin_F'],
                                  akm0_sector=akm['p_akm0'], akm0_firm=akm['p_akm0_firmclusters'],
-                                 sec_F=S.loc[7, 'F'], sec_rf_p=g(8, 'z', 'p'), sec_iv=g(9, 'x', 'coef'), sec_iv_se=g(9, 'x', 'se'), sec_iv_p=g(9, 'x', 'p'),
+                                 sec_F=S.loc[7, 'F'], sec_rf=g(8, 'z', 'coef'), sec_rf_se=g(8, 'z', 'se'), sec_rf_p=g(8, 'z', 'p'), sec_iv=g(11, 'x', 'coef'), sec_iv_se=g(11, 'x', 'se'), sec_iv_p=S.loc[11, 'p_x'],
                                  N_firm=int(S.loc[1, 'N']), N_sec=int(S.loc[6, 'N'])))
                 print(rows[-1], flush=True)
         finally:
@@ -1360,10 +1414,15 @@ class Customer_IV:
             if last is not None:
                 dd = P['d'][P['d'].E <= last]
                 P = dict(P, d=dd, ctrl=[c for c in P['ctrl'] if dd[c].abs().sum() > 0])
-            r = quick_firm(ctx, P); r.update(label=label, group=group)
+            r = quick_firm(ctx, P, boot=True); r.update(label=label, group=group)
             rows.append(r); print(r, flush=True)
             return P
         P0 = run('Baseline (links and class mixes 1990-94)', 'base')
+        # alternative estimator for the Poisson IV: GMM with the Poisson fixed-effects moments, standard errors clustered by firm
+        d0 = trim(P0['d'][list(dict.fromkeys(['clean', 'noncl', 'x', 'z', 'gvkey', 'E', 'sector', 'main_cust'] + P0['ctrl']))].dropna(), 'E')
+        gm = gmm_firm(d0, P0['ctrl'], within_sd(d0, ['x', 'z', 'own']))
+        rg = dict(rows[0]); rg.update(label='Poisson IV by GMM instead of the control function', group='estimator', iv=gm['coef'], iv_se=gm['se'], iv_p=gm['p'], gmm_converged=gm['converged'])
+        rows.append(rg); print(rg, flush=True)
         run('Base period 1985-89', 'base', base=(1985, 1989))
         run('Base period 1990-97', 'base', base=(1990, 1997))
         run('Outcome years to 2014', 'sample', last=2014)
@@ -1377,7 +1436,7 @@ class Customer_IV:
             c2 = context(dict(inp, cy=cy2)); return c2
         def run_ctx(c2, label, group):
             P = base_panel(c2, LO, HI)
-            r = quick_firm(c2, P); r.update(label=label, group=group); rows.append(r); print(r, flush=True)
+            r = quick_firm(c2, P, boot=True); r.update(label=label, group=group); rows.append(r); print(r, flush=True)
         run_ctx(with_cy(cy.groupby(['cpc_subclass', 'year'], as_index=False)[['clean', 'all']].sum().assign(inx=False)),
                 'Shifts from all patents (sample firms included)', 'shifts')
         c3 = context(inp)

@@ -5,7 +5,7 @@ Notes: Builds the tables and figure of the customer-IV draft (Specifications/Cus
     outputs of Customer_IV. No estimation, and no number is typed: every number quoted in the text is a macro (\\civ..., \\tm...,
     \\siv...) written here.
 
-    Table E1  customers' greening -> supplier, nine columns           Results/Tables/Customer_IV.tex, Customer_IV_macros.tex
+    Table E1  customers' greening -> supplier (paper Table 2: Poisson, Poisson IV, first stage, 2SLS; the nine-column version is used for E3)           Results/Tables/Customer_IV.tex, Customer_IV_macros.tex
     Table E3  the same for suppliers' greening -> customer            Specifications/Customer_IV/exploratory/Supplier_IV.tex, Results/Tables/Supplier_IV_macros.tex
     Table E2  timing of both directions (Section 2)                   Specifications/Customer_IV/exploratory/Timing_both.tex, Results/Tables/Timing_macros.tex
     Figure E1 timing of both directions                               Results/Figures/timing_both.pdf
@@ -23,7 +23,7 @@ COLS = range(1, 10)
 HS = [0, 1, 2, 4, 6, 8, 12, 16, 20]
 FMIN = 10.0
 BLUE, ORANGE, INK, INK2, GRID = '#2a78d6', '#eb6834', '#0b0b0b', '#52514e', '#e4e3df'
-FIG_COLS = [('cs', 'Customers\u2019 greening \u2192 supplier\n(travels upstream; Table E1)', BLUE),
+FIG_COLS = [('cs', 'Customers\u2019 greening \u2192 supplier\n(travels upstream; Table 2)', BLUE),
             ('sc', 'Suppliers\u2019 greening \u2192 customer\n(travels downstream)', ORANGE)]
 
 
@@ -49,7 +49,7 @@ def p3(x):
 
 def star(p):
     "Significance stars from the p-value shown in brackets (or from coefficient / s.e. where no p-value is shown)."
-    return '^{***}' if p < 0.01 else ('^{**}' if p < 0.05 else ('^{*}' if p < 0.10 else ''))
+    return '^{***}' if p < 0.01 else ('^{**}' if p < 0.05 else ('^{*}' if p < 0.10 else ('^{\\dagger}' if p < 0.15 else '')))
 
 
 def n(x):
@@ -60,20 +60,22 @@ def g3(x):
     return f'{x:.3g}' if abs(x) < 0.1 else f'{x:.2f}'
 
 
-def tabular(C, S, xlabel, se_row, akm_rows, unit_label, partner_label):
-    "Table E1's nine-column tabular for one direction (C, S: explore39-format coefficient and column tables)."
+def tabular(C, S, xlabel, se_row, akm_rows, unit_label, partner_label, cols=None, short=False):
+    """Tabular for one direction (C, S: explore39-format coefficient and column tables) in the order of cols (estimation columns 1-9; se_row and
+    akm_rows are given in that order). short=True: the paper's Table 2 (Poisson, Poisson IV, OLS first stage, 2SLS; no reduced form, no fixed-effect rows)."""
+    cols = list(cols or COLS)
     def cf(col, term, k='coef'):
         r = C[(C.column == col) & (C.term == term)]
         return float(r[k].iloc[0]) if len(r) else np.nan
 
     def cell_row(label, term, with_p):
         c, se, pp = [], [], []
-        for k in COLS:
+        for k in cols:
             v = cf(k, term)
             if np.isnan(v):
                 c.append(''); se.append(''); pp.append('')
             else:
-                pk = S.at[k, 'p_x'] if (term == 'x' and k in (4, 9)) else cf(k, term, 'p')
+                pk = S.at[k, 'p_x'] if (term == 'x' and k in (4, 9, 11)) else cf(k, term, 'p')
                 if not with_p:                                   # no bracketed p-value: normal p from coefficient / s.e.
                     pk = 2 * (1 - stats.norm.cdf(abs(v / cf(k, term, 'se'))))
                 c.append(f'${v:.3f}{star(pk)}$'); se.append(f'({cf(k, term, "se"):.3f})')
@@ -86,37 +88,51 @@ def tabular(C, S, xlabel, se_row, akm_rows, unit_label, partner_label):
     def line(label, vals):
         return f'{label} & ' + ' & '.join(vals) + ' \\\\'
 
-    firm = [k <= 5 for k in COLS]
+    firm = [k <= 5 for k in cols]
+    nf = sum(firm)
+    DEP = {1: '$P^{g}$', 2: '$X$', 3: '$P^{g}$', 4: '$P^{g}$', 5: '$P^{g}/P$', 6: '$P^{g}$', 7: '$X$', 8: '$P^{g}$', 9: '$P^{g}$', 10: '$P^{g}/P$', 11: '$P^{g}$'}
+    EST = {1: 'Poisson', 2: 'OLS first stage', 3: 'Poisson reduced form', 4: 'Poisson IV', 5: '2SLS', 6: 'Poisson', 7: 'OLS first stage', 8: 'Poisson reduced form', 9: 'Poisson IV', 10: '2SLS', 11: 'Poisson IV'}
     yes = lambda m: ['Yes' if b else 'No' for b in m]
-    L = ['\\begin{tabular}{l*{9}{c}}', '\\toprule',
-         ' & \\multicolumn{5}{c}{Firm level} & \\multicolumn{4}{c}{Sector level} \\\\',
-         '\\cmidrule(lr){2-6}\\cmidrule(lr){7-10}',
-         line('', [f'({k})' for k in COLS]),
-         line('Dependent variable', ['$P^{g}$', '$X$', '$P^{g}$', '$P^{g}$', '$P^{g}/P$', '$P^{g}$', '$X$', '$P^{g}$', '$P^{g}$']),
-         line('Estimator', ['Poisson', 'OLS', 'Poisson', 'Poisson', '2SLS', 'Poisson', 'OLS', 'Poisson', 'Poisson']),
-         line('Role', ['No IV', 'First', 'Reduced', 'IV', 'IV', 'No IV', 'First', 'Reduced', 'IV']),
-         line('', ['', 'stage', 'form', '', '', '', 'stage', 'form', '']),
-         '\\midrule']
+    if short:
+        L = [f'\\begin{{tabular}}{{l*{{{len(cols)}}}{{c}}}}', '\\toprule',
+             *([] if nf == len(cols) else [f' & \\multicolumn{{{nf}}}{{c}}{{Firm level}} & \\multicolumn{{{len(cols) - nf}}}{{c}}{{Sector level}} \\\\',
+                                           f'\\cmidrule(lr){{2-{nf + 1}}}\\cmidrule(lr){{{nf + 2}-{len(cols) + 1}}}']),
+             line('', [f'({m + 1})' for m in range(len(cols))]),
+             line('Dependent variable', [DEP[k] for k in cols]),
+             line('Estimator', [EST[k] for k in cols]),
+             '\\midrule']
+    else:
+        L = ['\\begin{tabular}{l*{9}{c}}', '\\toprule',
+             ' & \\multicolumn{5}{c}{Firm level} & \\multicolumn{4}{c}{Sector level} \\\\',
+             '\\cmidrule(lr){2-6}\\cmidrule(lr){7-10}',
+             line('', [f'({k})' for k in COLS]),
+             line('Dependent variable', [DEP[k] for k in COLS]),
+             line('Estimator', ['Poisson', 'OLS', 'Poisson', 'Poisson', '2SLS', 'Poisson', 'OLS', 'Poisson', 'Poisson']),
+             line('Role', ['No IV', 'First', 'Reduced', 'IV', 'IV', 'No IV', 'First', 'Reduced', 'IV']),
+             line('', ['', 'stage', 'form', '', '', '', 'stage', 'form', '']),
+             '\\midrule']
     L += cell_row(xlabel, 'x', True)
     L += cell_row('Instrument, $Z$', 'z', True)
     L += cell_row('Own predicted green share, $O$', 'own', False)
+    pick = lambda vals_by_k: [vals_by_k.get(k, '') for k in cols]
     L += ['\\midrule',
           line('Standard errors', se_row),
-          *[line(lab, ['', '', '', '', val, '', '', '', '']) for lab, val in akm_rows],
-          line('First-stage F', ['', '', '', f'{S.at[4, "F"]:.1f}', f'{S.at[5, "F"]:.1f}', '', '', '', f'{S.at[9, "F"]:.1f}']),
-          '\\midrule',
-          line('Link intensity $\\times$ period', ['Yes'] * 9),
-          line('Firm effects', yes(firm)),
-          line('Sector effects', yes([not b for b in firm])),
-          line('Year effects', ['Yes'] * 9),
-          line('Sector $\\times$ year effects', ['No'] * 9),
-          '\\midrule',
-          line('Pseudo $R^{2}$', [f'{S.at[k, "pseudo_r2"]:.3f}' if pd.notna(S.at[k, 'pseudo_r2']) else '' for k in COLS]),
-          line('Within $R^{2}$', [f'{S.at[k, "within_r2"]:.3f}' if pd.notna(S.at[k, 'within_r2']) else '' for k in COLS]),
-          line('Mean dep.\\ variable', [g3(S.at[k, 'mean_dep']) for k in COLS]),
-          line('Observations', [n(S.at[k, 'N']) for k in COLS]),
-          line(unit_label, [n(S.at[k, 'units']) for k in COLS]),
-          line(partner_label, [n(S.at[k, 'customers']) if k <= 5 else '' for k in COLS]),
+          *[line(lab, pick({5: val}) if isinstance(val, str) else val) for lab, val in akm_rows],
+          line('First-stage F', pick({4: f'{S.at[4, "F"]:.1f}', 5: f'{S.at[5, "F"]:.1f}'})),
+          '\\midrule']
+    if not short:
+        L += [line('Link intensity $\\times$ period', ['Yes'] * 9),
+              line('Firm effects', yes(firm)),
+              line('Sector effects', yes([not b for b in firm])),
+              line('Year effects', ['Yes'] * 9),
+              line('Sector $\\times$ year effects', ['No'] * 9),
+              '\\midrule']
+    L += [line('Pseudo $R^{2}$', [f'{S.at[k, "pseudo_r2"]:.3f}' if pd.notna(S.at[k, 'pseudo_r2']) else '' for k in cols]),
+          line('Within $R^{2}$', [f'{S.at[k, "within_r2"]:.3f}' if pd.notna(S.at[k, 'within_r2']) else '' for k in cols]),
+          *([] if short else [line('Mean dep.\\ variable', [g3(S.at[k, 'mean_dep']) for k in cols])]),
+          line('Observations', [n(S.at[k, 'N']) for k in cols]),
+          *([] if short else [line(unit_label, [n(S.at[k, 'units']) for k in cols]),
+                              line(partner_label, [n(S.at[k, 'customers']) if k <= 5 else '' for k in cols])]),
           '\\bottomrule', '\\end{tabular}']
     return L
 
@@ -136,11 +152,12 @@ def customer_table(OUT, TAB):
     assert int(a.N) == int(S.at[1, 'N']) == int(x.N) == int(S.at[5, 'N'])
     assert abs(S.at[5, 'F'] - a.lin_F) <= 1e-3 * max(1, abs(a.lin_F)), 'column 5 first-stage F differs from the AKM0 run'
 
-    L = tabular(C, S, "Customers' green share, $X$",
-                ['Supplier', 'Supplier', 'Supplier', 'Bootstrap', 'Supplier', 'Sector', 'Sector', 'Sector', 'Sector'],
-                [('AKM0 p, sector-grouped shocks', p3(a.p_akm0)), ('AKM0 p, customer shocks', p3(a.p_akm0_firmclusters)),
-                 ('Effective no. of shocks', f'{a.eff_clusters:.1f}')],
-                'Suppliers / sectors', 'Main customers')
+    ORDER = [1, 4, 2, 3, 5]                  # firm level only: Poisson, Poisson IV, OLS first stage, Poisson reduced form, 2SLS
+    SE = {1: 'Supplier', 2: 'Supplier', 3: 'Supplier', 4: 'Bootstrap', 5: 'Supplier', 6: 'Sector', 8: 'Sector', 11: 'Bootstrap'}
+    L = tabular(C, S, "Customers' green share, $X$", [SE[k] for k in ORDER],
+                [('AKM0 p, sector-grouped shocks', [p3(a.p_akm0) if k == 5 else '' for k in ORDER]),
+                 ('AKM0 p, customer shocks', [p3(a.p_akm0_firmclusters) if k == 5 else '' for k in ORDER])],
+                'Suppliers / sectors', 'Main customers', cols=ORDER, short=True)
     TAB.mkdir(parents=True, exist_ok=True)
     head = '% Generated by Customer_Tables.customer_table from output/table_e1_*.csv. Do not edit by hand.\n'
     (TAB / 'Customer_IV.tex').write_text(head + '\n'.join(L) + '\n')
@@ -157,10 +174,6 @@ def customer_table(OUT, TAB):
         'civFirmLinPP': f'{cf(5, "x"):.2f}', 'civFirmLinF': f'{S.at[5, "F"]:.1f}',
         'civFirmAKMsec': p3(a.p_akm0), 'civFirmAKMfirm': p3(a.p_akm0_firmclusters), 'civEffShocks': f'{a.eff_clusters:.0f}',
         'civNsup': n(S.at[1, 'units']), 'civNsupyr': n(S.at[1, 'N']), 'civNcust': n(S.at[1, 'customers']),
-        'civSecOLS': f'{cf(6, "x"):.3f}', 'civSecOLSpct': f'{100 * (np.exp(cf(6, "x")) - 1):.1f}',
-        'civSecF': f'{S.at[7, "F"]:.1f}', 'civSecRFp': p3(cf(8, 'z', 'p')),
-        'civSecIV': f'{cf(9, "x"):.3f}', 'civSecIVpct': f'{100 * (np.exp(cf(9, "x")) - 1):.1f}', 'civSecIVp': p3(S.at[9, 'p_x']),
-        'civNsec': n(S.at[6, 'units']), 'civNsecyr': n(S.at[6, 'N']),
     }
     (TAB / 'Customer_IV_macros.tex').write_text(head + '\n'.join(f'\\newcommand{{\\{k}}}{{{v}}}' for k, v in mac.items()) + '\n')
 
@@ -340,7 +353,7 @@ def timing_figure(OUT, FIG, src='timing_both.csv', cols=None, name='timing_both'
         for s_ in ['left', 'bottom']:
             ax.spines[s_].set_color('#c9c8c3')
     axes[0].set_ylabel('2SLS: pp of green share per SD', fontsize=8.8, color=INK2)
-    fig.supxlabel('horizon h: years from the end of the partners’ five-year window to the outcome year' + (' (h = 1 is Table E1)' if vline else ''),
+    fig.supxlabel('horizon h: years from the end of the partners’ five-year window to the outcome year' + (' (h = 1 is Table 2)' if vline else ''),
                   fontsize=8.8, color=INK2)
     fig.tight_layout()
     FIG.mkdir(parents=True, exist_ok=True)
@@ -451,39 +464,48 @@ def runs_text(xs):
     return r[0] if len(r) == 1 else ', '.join(r[:-1]) + '\\text{ and }' + r[-1]
 
 
+def st(p):
+    "Stars for a text-mode table cell."
+    return '' if p != p else ('$^{***}$' if p < 0.01 else ('$^{**}$' if p < 0.05 else ('$^{*}$' if p < 0.10 else ('$^{\\dagger}$' if p < 0.15 else ''))))
+
+
 def robust_tables(OUT, TAB):
     "Appendix tables of robustness checks of the customer IV (firm and sector level), from robust_lambda.csv, robust_other.csv, robust_loo.csv."
     out = []
     if (OUT / 'robust_lambda.csv').exists():
         r = pd.read_csv(OUT / 'robust_lambda.csv').sort_values('lam')
-        L = [r'\begin{tabular}{lccccccc}', r'\toprule',
-             r' & \multicolumn{4}{c}{Firm level} & \multicolumn{3}{c}{Sector level} \\', r'\cmidrule(lr){2-5}\cmidrule(lr){6-8}',
-             r'$\lambda$ & First-stage $F$ & IV & 2SLS (pp) & AKM0 $p$ & First-stage $F$ & IV & $p$ \\', r'\midrule']
+        L = [r'\begin{tabular}{lcccc}', r'\toprule',
+             r'$\lambda$ & First-stage $F$ & IV & 2SLS (pp) & AKM0 $p$ \\', r'\midrule']
         for _, x in r.iterrows():
             lab = f'{x.lam:g}' + (r' (moments)' if x.mom else (r' (baseline)' if x.lam == 20 else ''))
-            L.append(f'{lab} & {x.firm_F:.1f} & {x.firm_iv:.2f} ({x.firm_iv_se:.2f}) & {x.firm_lin_pp:.2f} & {p3(x.akm0_sector)} & '
-                     f'{x.sec_F:.1f} & {x.sec_iv:.3f} ({x.sec_iv_se:.3f}) & {p3(x.sec_iv_p)} \\\\')
+            ivp = 2 * (1 - stats.norm.cdf(abs(x.firm_iv / x.firm_iv_se)))
+            L.append(f'{lab} & {x.firm_F:.1f} & {x.firm_iv:.2f}{st(ivp)} ({x.firm_iv_se:.2f}) & {x.firm_lin_pp:.2f}{st(x.akm0_sector)} & {p3(x.akm0_sector)} \\\\')
         L += [r'\bottomrule', r'\end{tabular}']
         (TAB / 'Robust_Lambda.tex').write_text('\n'.join(L) + '\n')
         mac = {'rlLamMom': f'{r[r.mom].lam.iloc[0]:g}', 'rlIVmin': f'{r.firm_iv.min():.2f}', 'rlIVmax': f'{r.firm_iv.max():.2f}',
                'rlAKMmin': p3(r.akm0_sector.min()), 'rlAKMmax': p3(r.akm0_sector.max()),
-               'rlSecPmax': p3(r.sec_iv_p.max()), 'rlLinMin': f'{r.firm_lin_pp.min():.2f}', 'rlLinMax': f'{r.firm_lin_pp.max():.2f}'}
+                'rlLinMin': f'{r.firm_lin_pp.min():.2f}', 'rlLinMax': f'{r.firm_lin_pp.max():.2f}'}
         out.append(mac)
     if (OUT / 'robust_other.csv').exists():
         r = pd.read_csv(OUT / 'robust_other.csv')
         r = r[r.label != 'Outcome years to 2010']                   # not reported
         L = [r'\begin{tabular}{lcccccc}', r'\toprule',
              r' & Suppliers & Firm-years & First-stage $F$ & IV & 2SLS (pp) & AKM0 $p$ \\', r'\midrule']
-        for grp, title in [('base', 'Base period'), ('sample', 'Outcome years'), ('links', 'Link size'), ('network', 'Network in the regressor'), ('shifts', 'Class shifts in the instrument')]:
+        for grp, title in [('base', 'Base period'), ('estimator', 'Estimator of the Poisson IV'), ('sample', 'Outcome years'), ('links', 'Link size'), ('network', 'Network in the regressor'), ('shifts', 'Class shifts in the instrument')]:
             L.append(r'\multicolumn{7}{l}{\textit{' + title + r'}} \\')
             for _, x in r[r.group == grp].iterrows():
                 lab = x.label.replace('Base period ', '').replace('Outcome years to ', 'Through ').replace('Baseline (links and class mixes 1990-94)', '1990--94 (baseline)')
                 lab = lab.replace('1985-89', '1985--89').replace('1990-97', '1990--97').replace("Links of at least ", 'At least ').replace(" percent of the supplier's sales", r'\% of sales')
-                lab = {'Regressor: links of the window t-5 ... t-1 (instrument: base links)': r'Links of window $t-5,\dots,t-1$ (instrument: 1990--94 links)',
+                lab = {'Poisson IV by GMM instead of the control function': 'GMM instead of control function',
+                       'Regressor: links of the window t-5 ... t-1 (instrument: base links)': r'Links of window $t-5,\dots,t-1$ (instrument: 1990--94 links)',
                        'Shifts from all patents (sample firms included)': 'All patents (sample firms included)',
                        'Shifts measured over t-10 ... t-6': r'Shifts over $t-10,\dots,t-6$',
                        'Three-character CPC classes': 'Three-character CPC classes'}.get(x.label, lab)
-                L.append(f'{lab} & {n(x.units)} & {n(x.N)} & {x.F:.1f} & {x.iv:.2f} & {x.lin_pp:.2f} & {p3(x.akm0)} \\\\')
+                ivs = f'{x.iv:.2f}{st(x.iv_p)} ({x.iv_se:.2f})' if pd.notna(x.get('iv_se', np.nan)) else f'{x.iv:.2f}'
+                L.append(f'{lab} & {n(x.units)} & {n(x.N)} & {x.F:.1f} & {ivs} & {x.lin_pp:.2f}{st(x.akm0)} & {p3(x.akm0)} \\\\')
+        gm = r[r.group == 'estimator']
+        if len(gm):
+            out.append({'rlGmmIV': f'{gm.iv.iloc[0]:.2f}', 'rlGmmSE': f'{gm.iv_se.iloc[0]:.2f}', 'rlGmmP': p3(gm.iv_p.iloc[0])})
         nt = r[r.group == 'network'].iloc[0] if (r.group == 'network').any() else None
         if nt is not None:
             out.append({'rlNetIV': f'{nt.iv:.2f}', 'rlNetLin': f'{nt.lin_pp:.2f}', 'rlNetF': f'{nt.F:.1f}', 'rlNetP': p3(nt.akm0), 'rlNetUnits': n(nt.units), 'rlNetN': n(nt.N)})

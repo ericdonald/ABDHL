@@ -39,7 +39,6 @@ API = 0   # set to 1 for a new API download
 
 
 P.IO_Change(Year_start, Year_mid, Year_end)      # input-output change figures (Results/Figures/IO_Change_*)
-P.Cap_Citations()                                # citation weights capped at the 99th percentile (Ind_Pat_Cap.pkl), from Pat_Firms
 P.Firm_Entry()                                  # firms' first clean patents (Ind_Pat_Entry.pkl), from Pat_Firms
 
 
@@ -70,13 +69,11 @@ if (P.Directory / 'Clean Data' / 'Cust_Segments.pkl').exists():
 from pathlib import Path
 
 
-C5 = (P.Directory / 'Clean Data' / 'Ind_Pat_Cite5.pkl').exists()   # five-year citation weights: needs the Cleaner's Ind_Pat_Cite5.pkl
-
 
 def make_specs(tag, share, extra_offsets=()):
     "Reduced-form (PPML) permutation set around the baseline, for patents and citations."
     specs = []
-    for m in ['pat', 'cite']:
+    for m in ['pat']:
         suf = 'count' if m == 'pat' else 'cites'
         def add(name, label, **kw):
             specs.append(dict(id=f'{tag}_{m}_{name}', short=name, measure=m, share=share, label=label, **kw))
@@ -136,23 +133,13 @@ def make_specs(tag, share, extra_offsets=()):
         add('m12dsplc', f'M1 + M2 + M3, placebo {plc_lab}, net', rhs=plc, direct_s=True, panel='J', **m12)
         add('m12drop68',   'M1 + M2, motor vehicles not estimated, net', drop_sectors=(68,), panel='J', **m12)
         add('m12dsdrop68', 'M1 + M2 + M3, motor vehicles not estimated, net', drop_sectors=(68,), direct_s=True, panel='J', **m12)
-        if m == 'cite' and C5:
-            add('c5',       'Citation weights from the five years after filing, net', clean='cite5', panel='K')
-            add('c5ud',     'Citation weights from the five years after filing, up/down', clean='cite5', direction='updown', panel='K')
-            add('m12c5',    'M1 + M2 + five-year citation weights, net', clean='cite5', panel='K', **m12)
-            add('m12dsc5',  'M1 + M2 + M3 + five-year citation weights, net', clean='cite5', direct_s=True, panel='K', **m12)
-        if m == 'cite':
-            add('cap',       'Citation weights capped at the 99th percentile (M4), net', clean='cap', panel='J')
-            add('capud',     'Citation weights capped (M4), up/down', clean='cap', direction='updown', panel='J')
-            add('m12cap',    'M1 + M2 + M4, net', clean='cap', panel='J', **m12)
-            add('m12dscap',  'M1 + M2 + M3 + M4, net', clean='cap', direct_s=True, panel='J', **m12)
     return specs
 
 
 def make_asinh_specs(tag):
     "Levels specification: OLS of asinh(clean) on the network sums of winsorised asinh(clean)."
     specs = []
-    for m in ['pat', 'cite']:
+    for m in ['pat']:
         def add(name, label, **kw):
             specs.append(dict(id=f'{tag}_{m}_{name}', short=name, measure=m, share='A', label=label, **kw))
         add('base',     'Baseline: no own lag', panel='A')
@@ -198,14 +185,6 @@ def make_entry_specs(tag):
 batch = 'batch0_base'
 specs = make_specs('b0', 'G')
 specs += [
-    dict(id='b0_x_cnt_own',   short='counts~counts', table='diag_cross', measure='pat',  direction='updown'),
-    dict(id='b0_x_cnt_cite',  short='counts~cites',  table='diag_cross', measure='pat',  direction='updown', rhs_meas='cite'),
-    dict(id='b0_x_cite_own',  short='cites~cites',   table='diag_cross', measure='cite', direction='updown'),
-    dict(id='b0_x_cite_cnt',  short='cites~counts',  table='diag_cross', measure='cite', direction='updown', rhs_meas='pat'),
-    dict(id='b0_c_none',  short='none',          table='diag_ctrl', measure='cite', direction='updown'),
-    dict(id='b0_c_tot',   short='+ patents',     table='diag_ctrl', measure='cite', direction='updown', controls=['T_pat']),
-    dict(id='b0_c_cpp',   short='+ cites/patent', table='diag_ctrl', measure='cite', direction='updown', controls=['Q_cite']),
-    dict(id='b0_c_both',  short='+ both',        table='diag_ctrl', measure='cite', direction='updown', controls=['T_pat', 'Q_cite']),
 ]
 P.UDG_Run(batch, specs, BLS_year_start, Year_end)
 P.UDG_Corr(batch, BLS_year_start, Year_end)
@@ -235,12 +214,12 @@ P.UDG_Run('batch8_entry', make_entry_specs('b8'), BLS_year_start, Year_end)
 # ----------------------------------------------------------------
 
 P.CPC_Codes_Table()   # Results/Tables/CPC_Codes.tex (appendix: clean and dirty CPC codes)
-P.Summary_Stats(BLS_year_start, Year_end, bin_len)   # Results/Tables/Summary_Stats.tex, Top_Network_Sectors.tex
+P.Summary_Stats(BLS_year_start, Year_end, bin_len)   # Results/Tables/Top_Network_Sectors.tex
 P.IO_Validation('diag_io_validation', BLS_year_start, Year_end, bin_len)   # does clean patenting predict changes in input shares?
 P.Old_Benchmark('diag_old_benchmark', BLS_year_start, Year_start, Year_mid, Year_end, bin_len)   # patent regressions of the submitted version (branch Old)
 P.Match_Coverage('diag_match_coverage', BLS_year_start, Year_end, bin_len)   # share of patents matched to firms
 
-cols = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat'), ('$D$, citations', 'b1', 'cite')]
+cols = [('$G$, counts', 'b0', 'pat'), ('$D$, counts', 'b1', 'pat')]
 rows = [('Baseline (net)', 'base', 'net'),
         ('Up/down: upstream', 'updown', 'up'), ('Up/down: downstream', 'updown', 'down'),
         ('\\quad $p$-value: upstream = downstream', 'updown', 'eq'),
@@ -272,25 +251,19 @@ rows2 = [('Baseline (net)', 'base', 'net'),
          ('M1 + M2, dirty-share placebo', 'm12plc', 'net'),
          ('M1 + M2 + M3, dirty-share placebo', 'm12dsplc', 'net'),
          ('M1 + M2, motor vehicles not estimated', 'm12drop68', 'net'),
-         ('M1 + M2 + M3, motor vehicles not estimated', 'm12dsdrop68', 'net'),
-         ('Capped citation weights (M4)', 'cap', 'net'),
-         ('M1 + M2 + M4', 'm12cap', 'net'),
-         ('M1 + M2 + M3 + M4', 'm12dscap', 'net')]
+         ('M1 + M2 + M3, motor vehicles not estimated', 'm12dsdrop68', 'net'),]
 P.UDG_Summary(P.Directory / 'Specifications' / 'Summary' / 'table_ppml_summary_alt.tex', rows2, cols)
 # compact table for the "New material" section of the document: M1-M4 for G (counts, citations) and D (counts)
-cols_n = [('$G$, counts', 'b0', 'pat'), ('$G$, citations', 'b0', 'cite'), ('$D$, counts', 'b1', 'pat')]
+cols_n = [('$G$, counts', 'b0', 'pat'), ('$D$, counts', 'b1', 'pat')]
 rows_n = [('Baseline (net)', 'base', 'net'),
           ('M1: partners without patents at the aggregate share', 'm1', 'net'),
           ('M2: outcome bins up to 2017', 'm2', 'net'),
           ('M1 + M2', 'm12', 'net'),
           ('M3: direct input--output coefficients', 'ds', 'net'),
-          ('M1 + M2 + M3', 'm12ds', 'net'),
-          ('M4: capped citation weights', 'cap', 'net'),
-          ('M1 + M2 + M3 + M4', 'm12dscap', 'net')]
+          ('M1 + M2 + M3', 'm12ds', 'net')]
 P.UDG_Summary(P.Directory / 'Specifications' / 'Summary' / 'table_new_m14.tex', rows_n, cols_n)
 P.Linkage_Comparison(P.Directory / 'Specifications' / 'Summary' / 'table_new_linkage.tex')   # needs Specifications/Batches/diag_linkage/ (pre-union registry and coverage)
-P.Cite5_Summary(P.Directory / 'Specifications' / 'Summary' / 'table_new_cite5.tex')
-cols_a = [('asinh clean patents, counts', 'b5', 'pat'), ('asinh clean patents, citations', 'b5', 'cite')]
+cols_a = [('asinh clean patents, counts', 'b5', 'pat')]
 rows_a = [('Baseline (net)', 'base', 'net'), ('Up/down: upstream', 'updown', 'up'), ('Up/down: downstream', 'updown', 'down'),
           ('Own lagged level added: network', 'ownlag', 'net'), ('Own lagged level added: own lag', 'ownlag', 'lag'),
           ('Weight-sum control (net)', 'wsum', 'net'), ('Normalised weights (net)', 'norm', 'net'),

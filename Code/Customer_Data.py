@@ -315,7 +315,6 @@ class Customer_Data:
         xw = xwalk[['patent_id', 'gvkey']].dropna().copy()
         xw['gvkey'] = pd.to_numeric(xw.gvkey).astype(int)
         xw = xw.drop_duplicates()
-        print(f'crosswalk: {xw.patent_id.nunique():,} patents, {xw.gvkey.nunique():,} gvkeys', flush=True)
         cy, cwp = patent_tables(self.Raw, cpc, xw, self.P.CPC_classes['clean'], self.P.ICE_classes)
         xw.to_pickle(self.CleanDir / 'Cust_Xwalk.pkl')
         pd.to_pickle(cwp, self.CleanDir / 'Cust_Patents.pkl')
@@ -328,7 +327,6 @@ class Customer_Data:
         for lo, hi in [(1976, 1989), (1990, 1997), (1998, 2017)]:
             x = cs[cs.fy.between(lo, hi)]
             m = x.cust.notna()
-            print(f'FY{lo}-{hi}: customer sales matched {x.loc[m, "salecs"].sum() / x.salecs.sum():.0%} (rows {m.mean():.0%})', flush=True)
         cs['cust'] = cs.cust.astype('Int64')
         cs[['gvkey', 'fy', 'cnms', 'salecs', 'cust', 'how']].to_pickle(self.CleanDir / 'Cust_Segments.pkl')
         fs[['gvkey', 'fyear', 'sale']].to_pickle(self.CleanDir / 'Cust_Sales.pkl')

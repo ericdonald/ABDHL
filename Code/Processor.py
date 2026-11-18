@@ -66,7 +66,6 @@ class Processor:
                 Clean Data/Ind_CO2_full.pkl
                 Raw Data/CPC.pkl
                 Raw Data/applications.pkl
-                Raw Data/citations.pkl
                 Raw Data/Patent_Inventors.pkl
                 Raw Data/Patent_Locations.pkl
                 Clean Data/Inventor_Locations.pkl
@@ -76,7 +75,6 @@ class Processor:
                 Clean Data/Pat_Firms.pkl
                 Clean Data/Ind_Pat.pkl
                 Clean Data/Ind_Pat_Y02P.pkl   (clean = Y02P only)
-                Clean Data/Ind_Pat_Cite5.pkl   (citation weights from citations received within five years of the filing year; Pat_Firms.pkl gets norm_cites5)
         """""
         
         # ----------------------------------------------------------------
@@ -266,7 +264,6 @@ class Processor:
         total_emissions = EPA_df['CO2e'].sum()
         flagged_emissions = EPA_df[EPA_df['Sector'].isin(flagged_industries)]['CO2e'].sum()
         
-        print(f"Flagged industries account for {flagged_emissions / total_emissions:.1%} of total emissions")
         EPS_full_df = EPA_df.copy()
         EPA_df = EPA_df[~EPA_df['Sector'].isin(flagged_industries)]
         
@@ -330,19 +327,7 @@ class Processor:
             PV_applications_df = pd.read_pickle(f'{self.Directory}/Raw Data/applications.pkl')
             
             
-         # --------------------- #
-         # PatentsView Citations #
-         # --------------------- #
-        if API == 1:
-             citations_df = gpf.Extract_PatentsView('g_us_patent_citation', self.USPTO_API)
-             
-             citations_df['patent_id'] = citations_df['patent_id'].astype(str)
-             citations_df['citation_patent_id'] = citations_df['citation_patent_id'].astype(str)
-             citations_df.to_pickle(f'{self.Directory}/Raw Data/citations.pkl')
-        else:
-             citations_df = pd.read_pickle(f'{self.Directory}/Raw Data/citations.pkl')
-             
-             
+
         # --------------------- #
         # Patentsview Inventors #
         # --------------------- #
@@ -405,46 +390,10 @@ class Processor:
         relevant_df = relevant_df[['patent_id', 'year', 'clean', 'clean_full', 'clean_p', 'dirty']].drop_duplicates()
         
         
-        # ------------------------- #
-        # Patent Citation Weighting #
-        # ------------------------- #
-        # Citations received within five years of the cited patent's filing year (citing filing year minus cited filing year
-        # between 0 and 5); right-truncated for recent filings, which is not adjusted here.
-        _yr = PV_applications_df.drop_duplicates('patent_id').set_index('patent_id')['year']
-        _cy = citations_df['patent_id'].map(_yr)
-        _ky = citations_df['citation_patent_id'].map(_yr)
-        _in5 = ((_cy - _ky) >= 0) & ((_cy - _ky) <= 5)
-        _cites5 = citations_df.loc[_in5, 'citation_patent_id'].value_counts()
-        del _cy, _ky, _in5
-        citations_df['cites'] = citations_df.groupby('citation_patent_id')['citation_patent_id'].transform('count')
-        citations_df['cites5'] = citations_df['citation_patent_id'].map(_cites5)
-        citations_df = citations_df[['citation_patent_id', 'cites', 'cites5']].drop_duplicates()
-        citations_df.rename(columns={'citation_patent_id': 'patent_id'}, inplace=True)
+        # Keep the patents with a non-Y CPC class and a filing year (the sample of the previous citation-weighted build).
+        pat_df = relevant_df[relevant_df['patent_id'].isin(set(cpc3_df['patent_id']) & set(PV_applications_df['patent_id']))].copy()
         
-        citations_df = citations_df.merge(cpc3_df,
-                                            on='patent_id',
-                                            how='right')
-        citations_df = citations_df.merge(PV_applications_df[['patent_id', 'year']],
-                                            on='patent_id',
-                                            how='inner')
-        
-        citations_df['cites'] = citations_df['cites'].fillna(0)
-        citations_df['cites'] = citations_df['cites'] + 1
-        citations_df['cites5'] = citations_df['cites5'].fillna(0) + 1
-        
-        citations_df['cpc_cites'] = citations_df.groupby(['cpc_class', 'year'])['cites'].transform('mean')
-        citations_df['norm_cites'] = citations_df['cites'] / citations_df.groupby('patent_id')['cpc_cites'].transform('mean')
-        citations_df['cpc_cites5'] = citations_df.groupby(['cpc_class', 'year'])['cites5'].transform('mean')
-        citations_df['norm_cites5'] = citations_df['cites5'] / citations_df.groupby('patent_id')['cpc_cites5'].transform('mean')
-        
-        pat_df = pd.merge(
-            citations_df[['patent_id', 'norm_cites', 'norm_cites5']].drop_duplicates(),
-            relevant_df,
-            on='patent_id',
-            how='inner'
-        )
-        
-        del PV_applications_df, relevant_df, citations_df
+        del PV_applications_df, relevant_df
         
         
         # ----------------------------- #
@@ -455,12 +404,10 @@ class Processor:
         tech_pat_df = pat_df.merge(cpc4_df.rename(columns={'cpc_subclass': 'cpc_unit'}), on='patent_id', how='inner')
         tech_pat_df['type'] = np.where(tech_pat_df['clean'] == 1, 'c', 'g')
         tech_pat_df['tech'] = tech_pat_df['cpc_unit'] + '_' + tech_pat_df['type']
-        tech_pat_df = tech_pat_df[['patent_id', 'tech', 'year', 'norm_cites']].drop_duplicates()
+        tech_pat_df = tech_pat_df[['patent_id', 'tech', 'year']].drop_duplicates()
         tech_pat_df['split_weight'] = 1 / tech_pat_df.groupby('patent_id')['tech'].transform('count')
-        tech_pat_df['cite_weight'] = tech_pat_df['split_weight'] * tech_pat_df['norm_cites']
         tech_pat_df['pat_count'] = tech_pat_df.groupby(['tech', 'year'])['split_weight'].transform('sum')
-        tech_pat_df['pat_cites'] = tech_pat_df.groupby(['tech', 'year'])['cite_weight'].transform('sum')
-        tech_pat_df = tech_pat_df[['tech', 'year', 'pat_count', 'pat_cites']].drop_duplicates()
+        tech_pat_df = tech_pat_df[['tech', 'year', 'pat_count']].drop_duplicates()
         tech_pat_df.to_pickle(f'{self.Directory}/Clean Data/Tech_Pat_cg.pkl')
         
         
@@ -514,7 +461,6 @@ class Processor:
         # --------- #
         if API == 1:
             compustat_df = self.WRDS.Compustat()
-            wr.Check_Compustat(compustat_df, self.Directory / 'Raw Data' / 'compustat.csv')   # how the new pull compares with the file it replaces
             compustat_df.to_csv(f'{self.Directory}/Raw Data/compustat.csv', index=False)
         compustat_df = pd.read_csv(f'{self.Directory}/Raw Data/compustat.csv')    # also after a download, so that API = 1 and 0 give the same data types
         
@@ -552,8 +498,8 @@ class Processor:
                             on='naics2022_6',
                             how='inner')
         
-        pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites', 'norm_cites5']].drop_duplicates()
-        pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty', 'norm_cites', 'norm_cites5']].drop_duplicates()
+        pat_firms_df = pat_firms_df[['patent_id', 'year', 'gvkey', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty']].drop_duplicates()
+        pat_ind_df = pat_firms_df[['patent_id', 'year', 'BLS_Industry', 'clean', 'clean_full', 'clean_p', 'dirty']].drop_duplicates()
         
         pat_firms_df['split_weight'] = 1 / pat_firms_df.groupby('patent_id')['gvkey'].transform('count')
         pat_firms_df.to_pickle(f'{self.Directory}/Clean Data/Pat_Firms.pkl')
@@ -568,39 +514,17 @@ class Processor:
         annual_df['clean_w']           = annual_df['split_weight'] * annual_df['clean']
         annual_df['clean_p_w']         = annual_df['split_weight'] * annual_df['clean_p']
         annual_df['dirty_w']           = annual_df['split_weight'] * annual_df['dirty']
-        annual_df['cite_w']            = annual_df['split_weight'] * annual_df['norm_cites']
-        annual_df['clean_cite_w']      = annual_df['clean_w']      * annual_df['norm_cites']
-        annual_df['clean_p_cite_w']    = annual_df['clean_p_w']    * annual_df['norm_cites']
-        annual_df['dirty_cite_w']      = annual_df['dirty_w']      * annual_df['norm_cites']
-        annual_df['cite5_w']           = annual_df['split_weight'] * annual_df['norm_cites5']
-        annual_df['clean_cite5_w']     = annual_df['clean_w']      * annual_df['norm_cites5']
-        annual_df['dirty_cite5_w']     = annual_df['dirty_w']      * annual_df['norm_cites5']
  
         agg_base = dict(clean_pat_count = ('clean_w',      'sum'),
                         dirty_pat_count = ('dirty_w',      'sum'),
-                        pat_count       = ('split_weight', 'sum'),
-                        clean_pat_cites = ('clean_cite_w', 'sum'),
-                        dirty_pat_cites = ('dirty_cite_w', 'sum'),
-                        pat_cites       = ('cite_w',       'sum'))
+                        pat_count       = ('split_weight', 'sum'))
 
-        agg_y02p = dict(clean_pat_count = ('clean_p_w',      'sum'),
-                        dirty_pat_count = ('dirty_w',        'sum'),
-                        pat_count       = ('split_weight',   'sum'),
-                        clean_pat_cites = ('clean_p_cite_w', 'sum'),
-                        dirty_pat_cites = ('dirty_cite_w',   'sum'),
-                        pat_cites       = ('cite_w',         'sum'))
-
-        agg_c5 = dict(clean_pat_count = ('clean_w',        'sum'),
-                      dirty_pat_count = ('dirty_w',        'sum'),
-                      pat_count       = ('split_weight',   'sum'),
-                      clean_pat_cites = ('clean_cite5_w',  'sum'),
-                      dirty_pat_cites = ('dirty_cite5_w',  'sum'),
-                      pat_cites       = ('cite5_w',        'sum'))
+        agg_y02p = dict(clean_pat_count = ('clean_p_w',    'sum'),
+                        dirty_pat_count = ('dirty_w',      'sum'),
+                        pat_count       = ('split_weight', 'sum'))
 
         ind_pat_df = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
                                     .agg(**agg_base))
-        ind_pat_df_c5 = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
-                                    .agg(**agg_c5))
         ind_pat_df_y02p = (annual_df.groupby(['BLS_Industry', 'year'], as_index=False)
                                     .agg(**agg_y02p))
         panel_idx = pd.MultiIndex.from_product(
@@ -615,32 +539,26 @@ class Processor:
                            .reindex(panel_idx)
                            .fillna(0.0)
                            .reset_index())
-        ind_pat_df_c5 = (ind_pat_df_c5.set_index(['BLS_Industry', 'year'])
-                           .reindex(panel_idx)
-                           .fillna(0.0)
-                           .reset_index())
  
         ind_pat_df = ind_pat_df[ind_pat_df['BLS_Industry'] != 71]
         ind_pat_df_y02p = ind_pat_df_y02p[ind_pat_df_y02p['BLS_Industry'] != 71]
-        ind_pat_df_c5 = ind_pat_df_c5[ind_pat_df_c5['BLS_Industry'] != 71]
         
-        for frame in (ind_pat_df, ind_pat_df_y02p, ind_pat_df_c5):
+        for frame in (ind_pat_df, ind_pat_df_y02p):
             frame['pat_count_nc'] = frame['pat_count'] - frame['clean_pat_count']
-            frame['pat_cites_nc'] = frame['pat_cites'] - frame['clean_pat_cites']
             frame['clim_pat_count'] = frame['clean_pat_count'] + frame['dirty_pat_count']
-            frame['clim_pat_cites'] = frame['clean_pat_cites'] + frame['dirty_pat_cites']
  
         ind_pat_df.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat.pkl')
         ind_pat_df_y02p.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Y02P.pkl')
-        ind_pat_df_c5.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Cite5.pkl')
         
         
     def IO_Change(self, Year_start, Year_mid, Year_end):
         """""
         Changes in the input-output network from decarbonization: sectors whose emissions intensity fell (or rose) more
-        change their input requirements more. Six two-panel figures (reduced form | Leontief inverse), kinked at zero:
+        change their input requirements more. Nine two-panel figures (reduced form | Leontief inverse), kinked at zero:
         wls_sqrt (main text), wls_emis (weights = emissions), wls_cube (emissions^(1/3)), ols, wls_sqrt_fe (period effect),
-        wls_sqrt_l2 (Euclidean instead of total-variation distance). Standard errors clustered by sector.
+        wls_sqrt_l2 (Euclidean instead of total-variation distance); and, relative to wls_sqrt, wls_sqrt_noelec (electricity dropped as a supplier
+        like the two fossil-fuel sectors), wls_sqrt_keepfossil (fossil-fuel sectors not dropped), wls_sqrt_wins (EPA sectors with large log jumps kept,
+        dlog emissions intensity winsorized at the 5th and 95th percentiles at the BLS-sector level). Standard errors clustered by sector.
 
         Output: Results/Figures/IO_Change_wls_sqrt.pdf and .png (main text); Specifications/Batches/io_change/figures/IO_Change_<variant>.pdf and .png (others)
                 Results/Tables/IO_Change_Slopes.tex, IO_Change_macros.tex
@@ -658,7 +576,10 @@ class Processor:
         Ind_CO2_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2.pkl')
 
         
-        def IO_panel(Ind_CO2_df, dim):
+        def IO_panel(Ind_CO2_df, dim, fossil=None, wins=None):
+            # fossil: supplier columns dropped (and renormalized) in the reduced-form distance (default: self.fossil_cols)
+            # wins: if set, dlog emissions intensity is winsorized at the wins and 1-wins quantiles (pooled over both windows)
+            fossil = self.fossil_cols if fossil is None else fossil
             # ------------------- #
             # Input-Output Matrix #
             # ------------------- #
@@ -678,7 +599,7 @@ class Processor:
             # Reduced: non-service rows, fossil fuel columns dropped, renormalized
             def drop_and_normalize(IO):
                 IO_manu = IO[manu, :]
-                IO_r = np.delete(IO_manu, self.fossil_cols, axis=1)
+                IO_r = np.delete(IO_manu, fossil, axis=1)
                 num = IO_manu.sum(axis=1, keepdims=True)
                 denom = IO_r.sum(axis=1, keepdims=True)
                 return IO_r * num / denom
@@ -766,6 +687,9 @@ class Processor:
                              'dlog_CO2e_inten', 'dlog_CO2e_inten_LI']
     
             em_df  = pd.concat([em_p1, em_p2], ignore_index=True)
+            if wins:
+                for c_ in ('dlog_CO2e_inten', 'dlog_CO2e_inten_LI'):
+                    em_df[c_] = em_df[c_].clip(em_df[c_].quantile(wins), em_df[c_].quantile(1 - wins))
             reg_df = pd.merge(IO_df[distance_cols].drop_duplicates(),
                               em_df[emission_cols].drop_duplicates(),
                               on=['BLS_Industry', 'period'],
@@ -788,14 +712,21 @@ class Processor:
 
         # ----------------------------------------------------------------
 
-        reg_dfs = {d: IO_panel(Ind_CO2_df, d) for d in (1, 2, 3)}
-        VARIANTS = [   # name, weight root (None = unweighted), time effects, distance
-            ('wls_sqrt',    2,    False, 'TV'),      # main text
-            ('wls_emis',    1,    False, 'TV'),
-            ('wls_cube',    3,    False, 'TV'),
-            ('ols',         None, False, 'TV'),
-            ('wls_sqrt_fe', 2,    True,  'TV'),
-            ('wls_sqrt_l2', 2,    False, 'TV_sq'),
+        Ind_CO2_full_df = pd.read_pickle(f'{self.Directory}/Clean Data/Ind_CO2_full.pkl')   # EPA sectors with large log jumps kept
+        reg_dfs = {('base', d): IO_panel(Ind_CO2_df, d) for d in (1, 2, 3)}
+        reg_dfs[('noelec', 2)]     = IO_panel(Ind_CO2_df, 2, fossil=self.fossil_cols + [12 - 1])   # electricity dropped as a supplier like the two fossil-fuel sectors
+        reg_dfs[('keepfossil', 2)] = IO_panel(Ind_CO2_df, 2, fossil=[])                            # fossil-fuel sectors kept as suppliers
+        reg_dfs[('wins', 2)]       = IO_panel(Ind_CO2_full_df, 2, wins=0.05)                       # no jump exclusion; dlog intensity winsorized at the 5th and 95th percentiles
+        VARIANTS = [   # name, weight root (None = unweighted), time effects, distance, sample
+            ('wls_sqrt',    2,    False, 'TV',    'base'),      # main text
+            ('wls_emis',    1,    False, 'TV',    'base'),
+            ('wls_cube',    3,    False, 'TV',    'base'),
+            ('ols',         None, False, 'TV',    'base'),
+            ('wls_sqrt_fe', 2,    True,  'TV',    'base'),
+            ('wls_sqrt_l2', 2,    False, 'TV_sq', 'base'),
+            ('wls_sqrt_noelec',     2, False, 'TV', 'noelec'),
+            ('wls_sqrt_keepfossil', 2, False, 'TV', 'keepfossil'),
+            ('wls_sqrt_wins',       2, False, 'TV', 'wins'),
         ]
         PANELS = [('Reduced form', 'dlog_CO2e_inten', 'reduced', 'CO2e_Industry_weight'),
                   ('Leontief inverse', 'dlog_CO2e_inten_LI', 'LI', 'CO2e_Industry_LI_weight')]
@@ -813,16 +744,17 @@ class Processor:
             cl = {'cov_type': 'cluster', 'cov_kwds': {'groups': df['BLS_Industry'].to_numpy()}}
             return (sm.OLS(df[y].to_numpy(), X) if w is None else sm.WLS(df[y].to_numpy(), X, w.to_numpy())).fit(**cl)
 
-        for name, root, fe, dist in VARIANTS:
+        for name, root, fe, dist, samp in VARIANTS:
             fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
             for ax, (title, xcol, tag, wcol) in zip(axes, PANELS):
-                df = reg_dfs[root or 2]
+                df = reg_dfs[(samp, root or 2)]
                 ycol = f'{dist}_distance_{tag}'
                 w = df[wcol] if root else None
                 m = fit(df, xcol, ycol, w, fe)
                 x, y = df[xcol].to_numpy(), df[ycol].to_numpy()
                 b, g = m.params[0], (m.params[1] if fe else 0.0)
                 s_n, s_p = m.params[-2], m.params[-1]
+                no_neg = not (df[xcol] < 0).any()          # no sector-window with a rising intensity left (all clipped to zero): slope not identified
                 y_adj = y - g * (df['period'] == Year_end).to_numpy()
                 emis = (df[wcol] ** (root or 2)).to_numpy()
                 size = 400 * emis / emis.max() + 4
@@ -831,12 +763,12 @@ class Processor:
                     ax.scatter(x[k], y_adj[k], s=size[k], alpha=0.6, color=col, label=lab)
                 ax.plot(np.linspace(x.min(), 0, 50), b + s_n * np.linspace(x.min(), 0, 50), color='cyan', lw=2, label='fit, x < 0')
                 ax.plot(np.linspace(0, x.max(), 50), b + s_p * np.linspace(0, x.max(), 50), color='orange', lw=2, label='fit, x >= 0')
-                ax.text(0.03, 0.96, f'slope (x<0) = {s_n:.3f}{gpf.get_stars(m.pvalues[-2])}\nslope (x>=0) = {s_p:.3f}{gpf.get_stars(m.pvalues[-1])}',
+                ax.text(0.03, 0.96, ('slope (x<0): none (no x<0)' if no_neg else f'slope (x<0) = {s_n:.3f}{gpf.get_stars(m.pvalues[-2])}') + f'\nslope (x>=0) = {s_p:.3f}{gpf.get_stars(m.pvalues[-1])}',
                         transform=ax.transAxes, va='top', fontsize=10, bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.8))
                 ax.set_title(title); ax.set_xlabel('Log emissions-intensity reduction')
                 ax.set_ylabel('Distance in input requirements' + (' (adjusted for period)' if fe else '')); ax.grid(alpha=0.3)
                 ax.legend(loc='lower right', fontsize=8)
-                rows.append(dict(variant=name, panel=title, slope_neg=s_n, se_neg=m.bse[-2], p_neg=m.pvalues[-2],
+                rows.append(dict(variant=name, panel=title, slope_neg=np.nan if no_neg else s_n, se_neg=np.nan if no_neg else m.bse[-2], p_neg=np.nan if no_neg else m.pvalues[-2],
                                  slope_pos=s_p, se_pos=m.bse[-1], p_pos=m.pvalues[-1], N=int(m.nobs), sectors=df['BLS_Industry'].nunique()))
             fig.tight_layout()
             od = fig_dir if name == 'wls_sqrt' else alt_dir
@@ -845,24 +777,29 @@ class Processor:
             plt.close(fig)
         pd.DataFrame(rows).to_csv(out_dir / 'io_change_slopes.csv', index=False)
         labs = {'wls_sqrt': 'WLS, square-root weights (main text)', 'wls_emis': 'WLS, emissions weights', 'wls_cube': 'WLS, cube-root weights',
-                'ols': 'OLS', 'wls_sqrt_fe': 'WLS, square-root weights, period effect', 'wls_sqrt_l2': 'WLS, square-root weights, Euclidean distance'}
+                'ols': 'OLS', 'wls_sqrt_fe': 'WLS, square-root weights, period effect', 'wls_sqrt_l2': 'WLS, square-root weights, Euclidean distance',
+                'wls_sqrt_noelec': 'WLS, square-root weights, electricity also dropped as a supplier',
+                'wls_sqrt_keepfossil': 'WLS, square-root weights, fossil-fuel sectors kept as suppliers',
+                'wls_sqrt_wins': 'WLS, square-root weights, no jump exclusion, winsorized at 5 and 95 percent'}
         L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & \multicolumn{2}{c}{Reduced form} & \multicolumn{2}{c}{Leontief inverse} \\', r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}',
              r' & Intensity rose & Intensity fell & Intensity rose & Intensity fell \\', r'\midrule']
         for name in labs:
             rr = {r_['panel']: r_ for r_ in rows if r_['variant'] == name}
             cells = [(rr[pn][f'slope_{sd}'], rr[pn][f'se_{sd}'], rr[pn][f'p_{sd}']) for pn in ('Reduced form', 'Leontief inverse') for sd in ('neg', 'pos')]
-            L.append(labs[name] + ' & ' + ' & '.join(f'{b:.3f}{gpf.get_stars(p_)}' for b, _, p_ in cells) + r' \\')
-            L.append(' & ' + ' & '.join(f'({se:.3f})' for _, se, _ in cells) + r' \\')
-        L += [r'\midrule', f"Sector-windows (sectors) & \\multicolumn{{4}}{{c}}{{{rows[0]['N']} ({rows[0]['sectors']})}} \\\\", r'\bottomrule', r'\end{tabular}']
+            L.append(labs[name] + ' & ' + ' & '.join('--' if np.isnan(b) else f'{b:.3f}{gpf.get_stars(p_)}' for b, _, p_ in cells) + r' \\')
+            L.append(' & ' + ' & '.join('' if np.isnan(se) else f'({se:.3f})' for _, se, _ in cells) + r' \\')
+        L += [r'\bottomrule', r'\end{tabular}']
         (self.Directory / 'Results' / 'Tables' / 'IO_Change_Slopes.tex').write_text('\n'.join(L) + '\n')
-        cam = {'wls_sqrt': 'WlsSqrt', 'wls_emis': 'WlsEmis', 'wls_cube': 'WlsCube', 'ols': 'Ols', 'wls_sqrt_fe': 'WlsSqrtFe', 'wls_sqrt_l2': 'WlsSqrtLtwo'}
+        cam = {'wls_sqrt': 'WlsSqrt', 'wls_emis': 'WlsEmis', 'wls_cube': 'WlsCube', 'ols': 'Ols', 'wls_sqrt_fe': 'WlsSqrtFe', 'wls_sqrt_l2': 'WlsSqrtLtwo',
+               'wls_sqrt_noelec': 'WlsSqrtNoElec', 'wls_sqrt_keepfossil': 'WlsSqrtKeepFossil', 'wls_sqrt_wins': 'WlsSqrtWins'}
         mac = ['% Generated by Processor.IO_Change from io_change_slopes.csv. Do not edit by hand.']
         for r in rows:
             base = 'io' + cam[r['variant']] + ('Red' if r['panel'] == 'Reduced form' else 'Leo')
             for side in ('neg', 'pos'):
                 T = side.capitalize()
-                mac += [f'\\newcommand{{\\{base}{T}Slope}}{{{r["slope_" + side]:.3f}}}', f'\\newcommand{{\\{base}{T}Se}}{{{r["se_" + side]:.3f}}}',
-                        f'\\newcommand{{\\{base}{T}P}}{{{r["p_" + side]:.3f}}}']
+                f3 = lambda v: '--' if np.isnan(v) else f'{v:.3f}'
+                mac += [f'\\newcommand{{\\{base}{T}Slope}}{{{f3(r["slope_" + side])}}}', f'\\newcommand{{\\{base}{T}Se}}{{{f3(r["se_" + side])}}}',
+                        f'\\newcommand{{\\{base}{T}P}}{{{f3(r["p_" + side])}}}']
         mac += [f'\\newcommand{{\\ioN}}{{{rows[0]["N"]}}}', f'\\newcommand{{\\ioSectors}}{{{rows[0]["sectors"]}}}']
         (self.Directory / 'Results' / 'Tables' / 'IO_Change_macros.tex').write_text('\n'.join(mac) + '\n')
         print(pd.DataFrame(rows).round(3).to_string())
@@ -891,7 +828,7 @@ class Processor:
         Summary statistics of the baseline regression panel (sector x five-year bin), and the sectors with the highest
         clean patenting shares of their upstream and downstream partners (lagged network shares G, averaged over bins).
 
-        Output: Results/Tables/Summary_Stats.tex, Results/Tables/Top_Network_Sectors.tex
+        Output: Results/Tables/Top_Network_Sectors.tex (appendix); Specifications/Batches/summary_stats/Summary_Stats.tex (not in the paper)
                 Specifications/Batches/summary_stats/summary_stats.csv, top_network_sectors.csv
         """""
         tab = self.Directory / 'Results' / 'Tables'
@@ -900,11 +837,9 @@ class Processor:
         df, _ = self.UDG_Panel(BLS_year_start, Year_end, bin_len)
         d = df.dropna(subset=['net_G_pat_lag']).copy()
         rows = [('Patents: clean', 'clean_pat_count'), ('Patents: all', 'pat_count'),
-                ('Clean share $G$, patents', 'own_G_pat'), ('Clean share $G$, citations', 'own_G_cite'),
+                ('Clean share $G$, patents', 'own_G_pat'),
                 ('Upstream clean share, patents (lagged)', 'up_G_pat_lag'), ('Downstream clean share, patents (lagged)', 'down_G_pat_lag'),
-                ('Network clean share, patents (lagged)', 'net_G_pat_lag'),
-                ('Upstream clean share, citations (lagged)', 'up_G_cite_lag'), ('Downstream clean share, citations (lagged)', 'down_G_cite_lag'),
-                ('Network clean share, citations (lagged)', 'net_G_cite_lag')]
+                ('Network clean share, patents (lagged)', 'net_G_pat_lag')]
         recs, lines = [], [r'\begin{tabular}{lrrrrr}', r'\toprule', r' & Mean & SD & Min & Max & N \\', r'\midrule']
         for lab, c in rows:
             x = d[c].dropna()
@@ -914,7 +849,7 @@ class Processor:
         lines += [r'\midrule', f'Sectors & \\multicolumn{{5}}{{r}}{{{d.BLS_Industry.nunique()}}} \\\\',
                   f'Bins & \\multicolumn{{5}}{{r}}{{{", ".join(str(int(b)) for b in sorted(d.period.unique()))} (bin ends)}} \\\\',
                   r'\bottomrule', r'\end{tabular}']
-        (tab / 'Summary_Stats.tex').write_text('\n'.join(lines) + '\n')
+        (out / 'Summary_Stats.tex').write_text('\n'.join(lines) + '\n')
         pd.DataFrame(recs).to_csv(out / 'summary_stats.csv', index=False)
 
         names = pd.read_pickle(f'{self.Directory}/Clean Data/BLS_Crosswalk.pkl')[['BLS_Industry', 'Sector Title']].drop_duplicates('BLS_Industry')
@@ -930,7 +865,7 @@ class Processor:
             blocks.append(r'\midrule')
         L = [r'\begin{tabular}{lccc}', r'\toprule', r' & Suppliers & Customers & Own \\', r'\midrule'] + blocks[:-1] + [r'\bottomrule', r'\end{tabular}']
         (tab / 'Top_Network_Sectors.tex').write_text('\n'.join(L) + '\n')
-        print(open(tab / 'Summary_Stats.tex').read()); print(open(tab / 'Top_Network_Sectors.tex').read())
+        print(open(out / 'Summary_Stats.tex').read()); print(open(tab / 'Top_Network_Sectors.tex').read())
 
 
     def UpDown_Table(self, path):
@@ -942,19 +877,23 @@ class Processor:
         Output: Results/Tables/Reduced_Form_UpDown.tex, Reduced_Form_macros.tex
         """""
         reg = pd.read_csv(self.Directory / 'Specifications' / 'registry.csv').set_index('spec_id')
-        cols = [('b0_pat_updown', 'Leontief'), ('b0_pat_dsud', 'Direct'), ('b0_pat_annualud', 'Leontief'), ('b10_pat_annualdsud', 'Direct')]
+        cols = [('b0_pat_updown', 'Leontief', 'No', 'No'), ('b0_pat_dsud', 'Direct', 'No', 'No'),
+                ('b0_pat_wsumud', 'Leontief', 'Yes', 'No'), ('b0_pat_fixwud', 'Leontief', 'No', 'Yes')]
         cell = lambda i, k, f: reg.loc[i, f'{f}_{k}']
-        L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & \multicolumn{2}{c}{Five-year bins} & \multicolumn{2}{c}{Annual} \\', r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}',
-             r' & (1) & (2) & (3) & (4) \\', 'Input--output weights & ' + ' & '.join(c[1] for c in cols) + r' \\', r'\midrule']
+        ids = [c[0] for c in cols]
+        L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & (1) & (2) & (3) & (4) \\',
+             'Input--output weights & ' + ' & '.join(c[1] for c in cols) + r' \\',
+             'Control: sum of weights & ' + ' & '.join(c[2] for c in cols) + r' \\',
+             'Weights fixed at first bin & ' + ' & '.join(c[3] for c in cols) + r' \\', r'\midrule']
         for k, lab in [('up', 'Upstream (suppliers)'), ('down', 'Downstream (customers)')]:
-            L.append(lab + ' & ' + ' & '.join(f"{cell(i, k, 'coef'):.2f}{gpf.get_stars(cell(i, k, 'p'))}" for i, _ in cols) + r' \\')
-            L.append(' & ' + ' & '.join(f"({cell(i, k, 'se'):.2f})" for i, _ in cols) + r' \\')
-        L += [r'\midrule', r'$p$-value: upstream = downstream & ' + ' & '.join(f"{reg.loc[i, 'p_up_eq_down']:.3f}" for i, _ in cols) + r' \\',
-              'Observations & ' + ' & '.join(f"{int(reg.loc[i, 'N']):,}" for i, _ in cols) + r' \\',
-              'Sectors & ' + ' & '.join(f"{int(reg.loc[i, 'n_sectors'])}" for i, _ in cols) + r' \\', r'\bottomrule', r'\end{tabular}']
+            L.append(lab + ' & ' + ' & '.join(f"{cell(i, k, 'coef'):.2f}{gpf.get_stars(cell(i, k, 'p'))}" for i in ids) + r' \\')
+            L.append(' & ' + ' & '.join(f"({cell(i, k, 'se'):.2f})" for i in ids) + r' \\')
+        L += [r'\midrule', 'Observations & ' + ' & '.join(f"{int(reg.loc[i, 'N']):,}" for i in ids) + r' \\',
+              'Sectors & ' + ' & '.join(f"{int(reg.loc[i, 'n_sectors'])}" for i in ids) + r' \\', r'\bottomrule', r'\end{tabular}']
         Path(path).write_text('\n'.join(L) + '\n')
         mac = {}
-        for (i, _), nm in zip(cols, ['BinsL', 'BinsD', 'AnnL', 'AnnD']):
+        for i, nm in [('b0_pat_updown', 'BinsL'), ('b0_pat_dsud', 'BinsD'), ('b0_pat_wsumud', 'BinsW'), ('b0_pat_fixwud', 'BinsF'),
+                      ('b0_pat_annualud', 'AnnL'), ('b10_pat_annualdsud', 'AnnD')]:
             for k, kk in [('up', 'Up'), ('down', 'Down')]:
                 mac[f'rf{nm}{kk}'] = f"{cell(i, k, 'coef'):.2f}"; mac[f'rf{nm}{kk}P'] = f"{cell(i, k, 'p'):.3f}"
         Path(path).with_name('Reduced_Form_macros.tex').write_text('% Generated by Processor.UpDown_Table. Do not edit by hand.\n' + ''.join(f'\\newcommand{{\\{k}}}{{{v}}}\n' for k, v in mac.items()))
@@ -962,17 +901,21 @@ class Processor:
 
     def UpDown_Robust(self, path):
         """""
-        Appendix table: upstream and downstream coefficients (clean patent counts, share G, PPML) under alternative constructions.
-        Reads the registry (Batch 0).
+        Appendix table: upstream and downstream coefficients (clean patent counts, share G, PPML) under alternative constructions, including the
+        annual specifications; the specifications that are columns of Table 1 are marked. Reads the registry (Batch 0, 10).
 
         Output: Results/Tables/Reduced_Form_Robust.tex
         """""
         reg = pd.read_csv(self.Directory / 'Specifications' / 'registry.csv').set_index('spec_id')
-        rows = [('Baseline (Table 1, column 1)', 'b0_pat_updown'), ('Control: sum of weights', 'b0_pat_wsumud'),
+        rows = [('Baseline: five-year bins, Leontief weights [Table 1, column 1]', 'b0_pat_updown'),
+                ('Direct input--output coefficients [Table 1, column 2]', 'b0_pat_dsud'),
+                ('Control: sum of weights [Table 1, column 3]', 'b0_pat_wsumud'),
+                ('Fixed first-bin weights [Table 1, column 4]', 'b0_pat_fixwud'),
                 ('Normalized weights', 'b0_pat_normud'), ('No shrinkage of shares', 'b0_pat_noshrud'),
                 ('Offset: all patents', 'b0_pat_offallud'), ('Network-mass $\\times$ period controls', 'b0_pat_mtrendud'),
-                ('Fixed first-bin weights', 'b0_pat_fixwud'), ('Partners without patents at the aggregate share', 'b0_pat_m1ud'), ('Outcome bins up to 2017', 'b0_pat_m2ud'),
-                ('Direct input--output coefficients', 'b0_pat_dsud'), ('Placebo: dirty share of partners', 'b0_pat_plcud')]
+                ('Partners without patents at the aggregate share', 'b0_pat_m1ud'), ('Outcome bins up to 2017', 'b0_pat_m2ud'),
+                ('Annual outcomes, Leontief weights', 'b0_pat_annualud'), ('Annual outcomes, direct coefficients', 'b10_pat_annualdsud'),
+                ('Placebo: dirty share of partners', 'b0_pat_plcud')]
         L = [r'\begin{tabular}{lccc}', r'\toprule', r' & Upstream & Downstream & Observations \\', r'\midrule']
         for lab, i in rows:
             r = reg.loc[i]
@@ -983,15 +926,15 @@ class Processor:
 
 
     UDG_BASE = dict(share='G',          # G = clean/all patents, D = clean/climate patents
-                    measure='pat',      # pat = counts, cite = citation-weighted
+                    measure='pat',      # pat = counts (citation weights were archived 2026-11-18)
                     bin_len=5,
                     normalise=False,    # partner_avg normalisation of network weights
                     shrink=True,        # kappa shrinkage toward the period mean
                     direction='net',    # net = up + down, updown = separate
                     own_lag=False,      # control for own lagged share
                     rhs=None,           # network variable: None = same as share; P = placebo (dirty/all); E = emissions reduction
-                    rhs_meas=None,      # measure (pat/cite) of the network variable; None = same as measure
-                    controls=(),        # extra network controls, e.g. 'T_pat' (patent share), 'Q_cite' (relative cites/patent)
+                    rhs_meas=None,      # measure of the network variable; None = same as measure
+                    controls=(),        # extra network controls, e.g. 'T_pat' (patent share)
                     annual=False,       # True = single-year outcome/offset, regressor from the rolling window ending bin_len years earlier
                     mass_trend=False,   # control for (sector's fixed network weight sum) x (period effects)
                     fill_missing=False, # partners with undefined share enter at the aggregate share of the bin
@@ -1030,13 +973,12 @@ class Processor:
     def UDG_Panel(self, BLS_year_start, Year_end, bin_len, normalise=False, shrink=True, ivs=(), annual=False, iv_wins=None, clean='all', fixed_w=False, fill_missing=False, direct_s=False):
         """""
         Regression panel for strategic complementarity: for each (share, measure) in
-        {G, D} x {pat, cite} builds the own share, up, down, net network shares, and their lags.
+        {G, D} x {pat} builds the own share, up, down, net network shares, and their lags.
         For each source in ivs ('gov', 'ks', 'rd') it also builds the instrument share Z<src> (clean/gen
         shock ratio, see UDG_Instrument) and its network sums, using the Leontief inverse fixed at the first bin.
         iv_wins: if set, instrument shares are winsorised at [iv_wins, 1-iv_wins] across industries within each period.
         clean: 'all' = baseline clean definition (Y02E, Y02P, Y02T, B60L); 'y02p' = Y02P only (Ind_Pat_Y02P.pkl);
                'entry' = firms' first clean patents over firms at risk (Ind_Pat_Entry.pkl, see Firm_Entry).
-               'cite5' = citation weights from citations received within five years after the filing year (Ind_Pat_Cite5.pkl).
         fill_missing: a partner whose share is undefined (no patents in the bin) enters at the aggregate share of the bin
         (the shrinkage formula at zero patents) instead of contributing zero.
         direct_s: network weights are the direct input-output coefficients (diagonal zeroed) instead of the Leontief inverse.
@@ -1048,7 +990,7 @@ class Processor:
         Returns: reg_df, kappas
         """""
         IO_mats = pd.read_pickle(f'{self.Directory}/Clean Data/IO_Networks.pkl')
-        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{ {'y02p': '_Y02P', 'entry': '_Entry', 'cap': '_Cap', 'cite5': '_Cite5'}.get(clean, '') }.pkl")
+        Ind_Pat_yr_df = pd.read_pickle(f"{self.Directory}/Clean Data/Ind_Pat{ {'y02p': '_Y02P', 'entry': '_Entry'}.get(clean, '') }.pkl")
         manu_idx_all = np.arange(self.manu_cols[0], self.manu_cols[1] + 1)
         if annual:
             bin_ends = sorted(y for y in range(BLS_year_start, Year_end + 1) if y in IO_mats)
@@ -1058,8 +1000,7 @@ class Processor:
         # -------- #
         # Bin Data #
         # -------- #
-        pat_cols = ['clean_pat_count', 'dirty_pat_count', 'clim_pat_count', 'pat_count_nc', 'pat_count',
-                    'clean_pat_cites', 'dirty_pat_cites', 'clim_pat_cites', 'pat_cites_nc', 'pat_cites']
+        pat_cols = ['clean_pat_count', 'dirty_pat_count', 'clim_pat_count', 'pat_count_nc', 'pat_count']
         rel_bins = sorted(set(Ind_Pat_yr_df['year']).intersection(bin_ends))
         frames = []
         for end in rel_bins:
@@ -1112,7 +1053,7 @@ class Processor:
             return r
 
         shares, kappas = {}, {}
-        for meas, suf in [('pat', 'count'), ('cite', 'cites')]:
+        for meas, suf in [('pat', 'count')]:
             cln = wide(f'clean_pat_{suf}')
             for sh, den in [('G', wide(f'pat_{suf}')), ('D', wide(f'clim_pat_{suf}'))]:
                 if shrink:
@@ -1142,15 +1083,13 @@ class Processor:
         shares[('W', 'w')] = pd.DataFrame(1.0, index=bin_ends, columns=manu_idx_all)
         kappas[('W', 'w')] = np.nan
 
-        # Controls: total-patent share and relative citations per patent
-        tot_p, tot_c = wide('pat_count'), wide('pat_cites')
+        # Controls: total-patent share
+        tot_p = wide('pat_count')
         shares[('T', 'pat')] = tot_p.div(tot_p.sum(axis=1), axis=0)
-        cpp = tot_c / tot_p.where(tot_p > 0)
-        shares[('Q', 'cite')] = cpp.div(tot_c.sum(axis=1) / tot_p.sum(axis=1), axis=0)
-        kappas[('T', 'pat')] = kappas[('Q', 'cite')] = np.nan
+        kappas[('T', 'pat')] = np.nan
 
         # Level specification: inverse hyperbolic sine of clean patents, winsorised across industries within period
-        for meas, suf in [('pat', 'count'), ('cite', 'cites')]:
+        for meas, suf in [('pat', 'count')]:
             a = np.arcsinh(wide(f'clean_pat_{suf}').astype(float))
             for t in a.index:
                 v = a.loc[t].to_numpy(dtype=float)
@@ -1166,7 +1105,7 @@ class Processor:
         extra_ends = list(range(min(bin_ends) - bin_len, min(bin_ends), step))
         z_extra = {}
         for src in ivs:
-            for meas in ('pat', 'cite'):
+            for meas in ('pat',):
                 z = self.UDG_Instrument(src, meas, extra_ends + bin_ends, bin_len, manu_idx_all)
                 if iv_wins:
                     for t in z.index:
@@ -1666,12 +1605,9 @@ class Processor:
                    .join(entry.rename('entry'), how='left').fillna({'entry': 0.0}).reset_index())
         out['entry'] = out['entry'].clip(upper=out['at_risk'].clip(lower=0))   # adopters not active before are counted as at risk
         res = pd.DataFrame({'BLS_Industry': out['BLS_Industry'], 'year': out['year'],
-                            'clean_pat_count': out['entry'], 'dirty_pat_count': 0.0, 'pat_count': out['at_risk'],
-                            'clean_pat_cites': out['entry'], 'dirty_pat_cites': 0.0, 'pat_cites': out['at_risk']})
+                            'clean_pat_count': out['entry'], 'dirty_pat_count': 0.0, 'pat_count': out['at_risk']})
         res['pat_count_nc'] = res['pat_count'] - res['clean_pat_count']
-        res['pat_cites_nc'] = res['pat_count_nc']
         res['clim_pat_count'] = res['clean_pat_count']
-        res['clim_pat_cites'] = res['clean_pat_cites']
         res = res[res['BLS_Industry'] != 71]
         res.to_pickle(f'{self.Directory}/Clean Data/Ind_Pat_Entry.pkl')
         return res
@@ -1846,23 +1782,21 @@ class Processor:
         frames = []
         for y in bin_ends:
             w = ann[(ann['year'] > y - bin_len) & (ann['year'] <= y)]
-            g = w.groupby('BLS_Industry')[['clean_pat_count', 'pat_count', 'clean_pat_cites', 'pat_cites']].sum().reindex(wide_full.index)
+            g = w.groupby('BLS_Industry')[['clean_pat_count', 'pat_count']].sum().reindex(wide_full.index)
             g['clean_pat_share'] = g['clean_pat_count'] / g['pat_count'].where(g['pat_count'] > 0)
-            g['clean_cite_share'] = g['clean_pat_cites'] / g['pat_cites'].where(g['pat_cites'] > 0)
             out = g.reset_index()
             out['period'] = y
             in_manu = np.isin(idx_full, manu_idx_all)
-            for col, nm in [('clean_pat_share', 'pat_count'), ('clean_cite_share', 'pat_cite')]:
+            for col, nm in [('clean_pat_share', 'pat_count')]:
                 net = network(manu_IO[y], g[col].to_numpy()[in_manu], idx_full).rename(columns={'up': f'up_{nm}', 'down': f'down_{nm}'})
                 out = out.merge(net, on='BLS_Industry', how='left')
             frames.append(out)
         pat = pd.concat(frames, ignore_index=True)
         reg = pat.merge(em_df, on=['BLS_Industry', 'period'], how='left')
         reg = reg[reg['BLS_Industry'].isin(manu_idx_all)].sort_values(['BLS_Industry', 'period']).copy()
-        for k in ['dlog_em', 'pat_count', 'pat_cite']:
+        for k in ['dlog_em', 'pat_count']:
             reg[f'net_{k}'] = reg[f'up_{k}'] + reg[f'down_{k}']
-        for c in ['net_dlog_em', 'net_pat_count', 'net_pat_cite', 'up_dlog_em', 'down_dlog_em', 'up_pat_count',
-                  'down_pat_count', 'up_pat_cite', 'down_pat_cite']:
+        for c in ['net_dlog_em', 'net_pat_count', 'up_dlog_em', 'down_dlog_em', 'up_pat_count', 'down_pat_count']:
             reg[c + '_lag'] = reg.groupby('BLS_Industry')[c].shift(1)
 
         def wins(d, cols):
@@ -1879,60 +1813,39 @@ class Processor:
             kw = dict(cov_type='cluster', cov_kwds={'groups': d['BLS_Industry']})
             return (sm.OLS(d[y], X) if wcol is None else sm.WLS(d[y], X, d[wcol] ** (1 / dim))).fit(**kw)
 
-        allc = ['up_dlog_em', 'down_dlog_em', 'net_dlog_em', 'up_pat_count', 'down_pat_count', 'net_pat_count',
-                'up_pat_cite', 'down_pat_cite', 'net_pat_cite']
+        allc = ['up_dlog_em', 'down_dlog_em', 'net_dlog_em', 'up_pat_count', 'down_pat_count', 'net_pat_count']
         reg_em = wins(reg.dropna(subset=['dlog_CO2e_inten']), ['dlog_CO2e_inten'] + allc)
         reg_cnt = wins(reg[reg['clean_pat_share'] > 0], ['clean_pat_share', 'up_dlog_em', 'down_dlog_em', 'net_dlog_em',
                                                          'up_pat_count', 'down_pat_count', 'net_pat_count'])
-        reg_cit = wins(reg[reg['clean_cite_share'] > 0], ['clean_cite_share', 'up_dlog_em', 'down_dlog_em', 'net_dlog_em',
-                                                          'up_pat_cite', 'down_pat_cite', 'net_pat_cite'])
         reg_cnt_em = reg_cnt.dropna(subset=['up_dlog_em', 'down_dlog_em'])
-        reg_cit_em = reg_cit.dropna(subset=['up_dlog_em', 'down_dlog_em'])
-        lagc = ['net_dlog_em_lag', 'net_pat_count_lag', 'net_pat_cite_lag', 'up_dlog_em_lag', 'down_dlog_em_lag',
-                'up_pat_count_lag', 'down_pat_count_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']
-        reg_em_lag = wins(reg.dropna(subset=['dlog_CO2e_inten', 'net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag',
-                                             'net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']), ['dlog_CO2e_inten'] + lagc)
+        lagc = ['net_dlog_em_lag', 'net_pat_count_lag', 'up_dlog_em_lag', 'down_dlog_em_lag', 'up_pat_count_lag', 'down_pat_count_lag']
+        reg_em_lag = wins(reg.dropna(subset=['dlog_CO2e_inten', 'net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag']), ['dlog_CO2e_inten'] + lagc)
         reg_cnt_lag = wins(reg[reg['clean_pat_share'] > 0].dropna(subset=['net_pat_count_lag', 'up_pat_count_lag', 'down_pat_count_lag']),
                            ['clean_pat_share'] + lagc)
-        reg_cit_lag = wins(reg[reg['clean_cite_share'] > 0].dropna(subset=['net_pat_cite_lag', 'up_pat_cite_lag', 'down_pat_cite_lag']),
-                           ['clean_cite_share'] + lagc)
         reg_em_em_lag = wins(reg.dropna(subset=['dlog_CO2e_inten', 'net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
                              ['dlog_CO2e_inten'] + lagc)
         reg_cnt_em_lag = wins(reg[reg['clean_pat_share'] > 0].dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
                               ['clean_pat_share'] + lagc)
-        reg_cit_em_lag = wins(reg[reg['clean_cite_share'] > 0].dropna(subset=['net_dlog_em_lag', 'up_dlog_em_lag', 'down_dlog_em_lag']),
-                              ['clean_cite_share'] + lagc)
 
-        # seven columns: emissions reduction on (em, patents, citations); patent share on (em, patents); citation share on (em, citations)
+        # five columns: emissions reduction on (em, patents); patent share on (em, patents)
         def cols_for(kind):
             if kind == 'net':
                 return [(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], None, None), (reg_em, 'dlog_CO2e_inten', ['net_pat_count'], None, None),
-                        (reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], None, None),
-                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], None, None),
-                        (reg_cit, 'clean_cite_share', ['net_dlog_em'], None, reg_cit_em), (reg_cit, 'clean_cite_share', ['net_pat_cite'], None, None)]
+                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], None, None)]
             if kind == 'wls':
                 return [(reg_em, 'dlog_CO2e_inten', ['net_dlog_em'], 'CO2e_Industry', None), (reg_em, 'dlog_CO2e_inten', ['net_pat_count'], 'CO2e_Industry', None),
-                        (reg_em, 'dlog_CO2e_inten', ['net_pat_cite'], 'CO2e_Industry', None),
-                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], 'clean_pat_count', reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], 'clean_pat_count', None),
-                        (reg_cit, 'clean_cite_share', ['net_dlog_em'], 'clean_pat_cites', reg_cit_em), (reg_cit, 'clean_cite_share', ['net_pat_cite'], 'clean_pat_cites', None)]
+                        (reg_cnt, 'clean_pat_share', ['net_dlog_em'], 'clean_pat_count', reg_cnt_em), (reg_cnt, 'clean_pat_share', ['net_pat_count'], 'clean_pat_count', None)]
             if kind == 'lag':
                 return [(reg_em_em_lag, 'dlog_CO2e_inten', ['net_dlog_em_lag'], None, None), (reg_em_lag, 'dlog_CO2e_inten', ['net_pat_count_lag'], None, None),
-                        (reg_em_lag, 'dlog_CO2e_inten', ['net_pat_cite_lag'], None, None),
-                        (reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'], None, reg_cnt_em_lag), (reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'], None, None),
-                        (reg_cit_lag, 'clean_cite_share', ['net_dlog_em_lag'], None, reg_cit_em_lag), (reg_cit_lag, 'clean_cite_share', ['net_pat_cite_lag'], None, None)]
+                        (reg_cnt_lag, 'clean_pat_share', ['net_dlog_em_lag'], None, reg_cnt_em_lag), (reg_cnt_lag, 'clean_pat_share', ['net_pat_count_lag'], None, None)]
             return [(reg_em, 'dlog_CO2e_inten', ['up_dlog_em', 'down_dlog_em'], None, None), (reg_em, 'dlog_CO2e_inten', ['up_pat_count', 'down_pat_count'], None, None),
-                    (reg_em, 'dlog_CO2e_inten', ['up_pat_cite', 'down_pat_cite'], None, None),
-                    (reg_cnt, 'clean_pat_share', ['up_dlog_em', 'down_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], None, None),
-                    (reg_cit, 'clean_cite_share', ['up_dlog_em', 'down_dlog_em'], None, reg_cit_em), (reg_cit, 'clean_cite_share', ['up_pat_cite', 'down_pat_cite'], None, None)]
+                    (reg_cnt, 'clean_pat_share', ['up_dlog_em', 'down_dlog_em'], None, reg_cnt_em), (reg_cnt, 'clean_pat_share', ['up_pat_count', 'down_pat_count'], None, None)]
 
         row_defs = {
-            'net': [('net_dlog_em', 'Network log emissions-intensity reduction'), ('net_pat_count', 'Network clean patent share'),
-                    ('net_pat_cite', 'Network clean citation share')],
-            'lag': [('net_dlog_em_lag', 'Network log emissions-intensity reduction (lag)'), ('net_pat_count_lag', 'Network clean patent share (lag)'),
-                    ('net_pat_cite_lag', 'Network clean citation share (lag)')],
+            'net': [('net_dlog_em', 'Network log emissions-intensity reduction'), ('net_pat_count', 'Network clean patent share')],
+            'lag': [('net_dlog_em_lag', 'Network log emissions-intensity reduction (lag)'), ('net_pat_count_lag', 'Network clean patent share (lag)')],
             'updown': [('up_dlog_em', 'Upstream log emissions-intensity reduction'), ('down_dlog_em', 'Downstream log emissions-intensity reduction'),
-                       ('up_pat_count', 'Upstream clean patent share'), ('down_pat_count', 'Downstream clean patent share'),
-                       ('up_pat_cite', 'Upstream clean citation share'), ('down_pat_cite', 'Downstream clean citation share')]}
+                       ('up_pat_count', 'Upstream clean patent share'), ('down_pat_count', 'Downstream clean patent share')]}
         row_defs['wls'] = row_defs['net']
         all_rows = []
         for kind in ['net', 'wls', 'lag', 'updown']:
@@ -1943,10 +1856,10 @@ class Processor:
                 for x in xs:
                     all_rows.append(dict(table=kind, outcome=y, term=x, coef=m.params[x], se=m.bse[x], p=m.pvalues[x],
                                          N=int(m.nobs), r2=m.rsquared))
-            lines = [r'\begin{tabular}{lccccccc}', r'\toprule',
-                     r' & \multicolumn{3}{c}{Emissions-intensity reduction} & \multicolumn{2}{c}{Clean patent share} & \multicolumn{2}{c}{Clean citation share} \\',
-                     r'\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}',
-                     ' & ' + ' & '.join(f'({i})' for i in range(1, 8)) + r' \\', r'\midrule']
+            lines = [r'\begin{tabular}{lcccc}', r'\toprule',
+                     r' & \multicolumn{2}{c}{Emissions-intensity reduction} & \multicolumn{2}{c}{Clean patent share} \\',
+                     r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}',
+                     ' & ' + ' & '.join(f'({i})' for i in range(1, 5)) + r' \\', r'\midrule']
             for var, lab in row_defs[kind]:
                 cs, ss = [], []
                 for m in models:
@@ -1963,37 +1876,6 @@ class Processor:
         out.to_csv(outdir / 'old_benchmark.csv', index=False)
         print(out.round(3).to_string())
         return out
-
-
-    def Cap_Citations(self, q=0.99):
-        """""
-        Industry-year patent table with citation weights capped at their q-quantile (unweighted, over all patent-industry
-        records), rebuilt from Pat_Firms.pkl with the construction of the Cleaner (patents split equally over their
-        industries). Counts are unchanged. A coauthor suggestion (see the note in the repository discussion).
-
-        Output: Clean Data/Ind_Pat_Cap.pkl in the layout of Ind_Pat.pkl (used by UDG_Panel with clean='cap')
-        """""
-        D = f'{self.Directory}/Clean Data/'
-        pf = pd.read_pickle(D + 'Pat_Firms.pkl')[['patent_id', 'year', 'BLS_Industry', 'clean', 'dirty', 'norm_cites']].drop_duplicates()
-        pf['w'] = 1.0 / pf.groupby('patent_id')['BLS_Industry'].transform('count')
-        cap = pf['norm_cites'].quantile(q)
-        pf['nc'] = pf['norm_cites'].clip(upper=cap)
-        pf['clean_w'], pf['dirty_w'] = pf['w'] * pf['clean'], pf['w'] * pf['dirty']
-        pf['cite_w'], pf['clean_cite_w'], pf['dirty_cite_w'] = pf['w'] * pf['nc'], pf['clean_w'] * pf['nc'], pf['dirty_w'] * pf['nc']
-        g = pf.groupby(['BLS_Industry', 'year'], as_index=False).agg(
-            clean_pat_count=('clean_w', 'sum'), dirty_pat_count=('dirty_w', 'sum'), pat_count=('w', 'sum'),
-            clean_pat_cites=('clean_cite_w', 'sum'), dirty_pat_cites=('dirty_cite_w', 'sum'), pat_cites=('cite_w', 'sum'))
-        ref = pd.read_pickle(D + 'Ind_Pat.pkl')
-        idx = pd.MultiIndex.from_frame(ref[['BLS_Industry', 'year']])
-        g = g.set_index(['BLS_Industry', 'year']).reindex(idx).fillna(0.0).reset_index()
-        g['pat_count_nc'] = g['pat_count'] - g['clean_pat_count']
-        g['pat_cites_nc'] = g['pat_cites'] - g['clean_pat_cites']
-        g['clim_pat_count'] = g['clean_pat_count'] + g['dirty_pat_count']
-        g['clim_pat_cites'] = g['clean_pat_cites'] + g['dirty_pat_cites']
-        g.to_pickle(D + 'Ind_Pat_Cap.pkl')
-        chk = ref.merge(g, on=['BLS_Industry', 'year'], suffixes=('', '_c'))
-        print(f'cap = {cap:.2f}; max |count difference| vs Ind_Pat: {(chk.clean_pat_count - chk.clean_pat_count_c).abs().max():.2e}')
-        return g
 
 
     def Match_Coverage(self, batch, BLS_year_start, Year_end, bin_len=5):
@@ -2119,7 +2001,7 @@ class Processor:
         names = {'batch0_base': 'Batch 0: $G$, reduced form', 'batch1_D': 'Batch 1: $D$, reduced form', 'batch2_gov': 'Batch 2: government patents (IV)',
                  'batch3_rd': 'Batch 3: R\\&D prices (IV)', 'batch3_rdcf': 'Batch 3: R\\&D prices, clean firms (IV)', 'batch4_ks': 'Batch 4: spillovers (IV)',
                  'batch5_asinh': 'Batch 5: asinh levels (OLS)', 'batch6_govr': 'Batch 6: government ratio (IV)', 'batch6_ksr': 'Batch 6: spillover ratio (IV)',
-                 'batch7_govcl': 'Batch 7: aggregate government (IV)', 'batch7_ksagg': 'Batch 7: aggregate spillovers (IV)', 'batch8_entry': 'Batch 8: first clean patents'}
+                 'batch7_govcl': 'Batch 7: aggregate government (IV)', 'batch7_ksagg': 'Batch 7: aggregate spillovers (IV)', 'batch8_entry': 'Batch 8: first clean patents', 'batch9_cur': 'Batch 9: contemporaneous class distribution (IV)', 'batch10_annual': 'Batch 10: annual outcomes, direct weights'}
         lines = [r'\begin{tabular}{lcccc}', r'\toprule',
                  r' & Net: positive & Up/down: both positive & Downstream & All three \\',
                  r' & and significant & and significant & larger & \\', r'\midrule']
@@ -2158,38 +2040,12 @@ class Processor:
                  'Share of clean patents filed & ' + ' & '.join(f"{cov(c, 'clean_share'):.3f}" for c in (cov0, cov1)) + r' \\',
                  'Last bin (2018--2022), share of patents filed & ' + ' & '.join(f"{c.iloc[-2]['share']:.3f}" for c in (cov0, cov1)) + r' \\',
                  r'\midrule', r'\multicolumn{3}{l}{\textit{Network coefficient, PPML}} \\']
-        for lab, i in [('$G$, counts', 'b0_pat_base'), ('$G$, citations', 'b0_cite_base'), ('$D$, counts', 'b1_pat_base'),
-                       ('$D$, citations', 'b1_cite_base'), ('$G$, counts, direct weights (M3)', 'b0_pat_ds')]:
+        for lab, i in [('$G$, counts', 'b0_pat_base'), ('$D$, counts', 'b1_pat_base'), ('$G$, counts, direct weights (M3)', 'b0_pat_ds')]:
             a, b = est(reg0, i), est(reg1, i)
             lines += [lab + f' & {a[0]} & {b[0]} \\\\', f' & {a[1]} & {b[1]} \\\\']
         lines += [r'\midrule', 'Industries, $G$ ($D$) baseline & ' + ' & '.join(f"{int(r.loc['b0_pat_base','n_sectors'])} ({int(r.loc['b1_pat_base','n_sectors'])})" for r in (reg0, reg1)) + r' \\',
                   'Observations, $G$ ($D$) baseline & ' + ' & '.join(f"{int(r.loc['b0_pat_base','N'])} ({int(r.loc['b1_pat_base','N'])})" for r in (reg0, reg1)) + r' \\',
                   r'\bottomrule', r'\end{tabular}']
-        with open(path, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
-
-
-    def Cite5_Summary(self, path):
-        """""
-        Citation-weighted clean share: citations counted over the whole life of the patent (baseline) against citations received
-        within five years of filing (variant c5), for G (batch 0) and D (batch 1); net network coefficient and, for the baseline
-        and c5, the upstream / downstream split.
-        """""
-        reg = pd.read_csv(self.Directory / 'Specifications' / 'registry.csv').set_index('spec_id')
-        def cell(i, col):
-            if i not in reg.index or pd.isna(reg.loc[i, f'coef_{col}']):
-                return '', ''
-            r = reg.loc[i]
-            return f"{r[f'coef_{col}']:.2f}{gpf.get_stars(r[f'p_{col}'])}", f"({r[f'se_{col}']:.2f})"
-        lines = [r'\begin{tabular}{lcc}', r'\toprule', r' & $G$, citations & $D$, citations \\', r'\midrule']
-        for lab, sp, col in [('Baseline (net)', 'base', 'net'), ('Five-year window (net)', 'c5', 'net'),
-                             ('Baseline, upstream', 'updown', 'up'), ('Baseline, downstream', 'updown', 'down'),
-                             ('Five-year window, upstream', 'c5ud', 'up'), ('Five-year window, downstream', 'c5ud', 'down'),
-                             ('M1 + M2', 'm12', 'net'), ('M1 + M2, five-year window', 'm12c5', 'net'),
-                             ('M1 + M2 + M3', 'm12ds', 'net'), ('M1 + M2 + M3, five-year window', 'm12dsc5', 'net')]:
-            c = [cell(f'b0_cite_{sp}', col), cell(f'b1_cite_{sp}', col)]
-            lines += [lab + ' & ' + ' & '.join(x[0] for x in c) + r' \\', ' & ' + ' & '.join(x[1] for x in c) + r' \\']
-        lines += [r'\bottomrule', r'\end{tabular}']
         with open(path, 'w') as f:
             f.write('\n'.join(lines) + '\n')
 
@@ -2347,7 +2203,7 @@ class Processor:
 
     def UDG_Corr(self, batch, BLS_year_start, Year_end, bin_len=5):
         """""
-        Correlations among the lagged up/down clean shares (patents and citations).
+        Correlations among the lagged up/down clean shares (patents).
         Panel A: raw. Panel B: after removing sector and period means.
 
         Output: Specifications/Batches/<batch>/table_corr.tex
@@ -2355,8 +2211,8 @@ class Processor:
         outdir = self.Directory / 'Specifications' / 'Batches' / batch
         outdir.mkdir(parents=True, exist_ok=True)
         reg_df, _ = self.UDG_Panel(BLS_year_start, Year_end, bin_len)
-        vs = ['up_G_pat_lag', 'down_G_pat_lag', 'up_G_cite_lag', 'down_G_cite_lag']
-        names = ['Up (patents)', 'Down (patents)', 'Up (citations)', 'Down (citations)']
+        vs = ['up_G_pat_lag', 'down_G_pat_lag']
+        names = ['Up (patents)', 'Down (patents)']
         d = reg_df.dropna(subset=vs)[['BLS_Industry', 'period'] + vs].copy()
         within = d.copy()
         for _ in range(100):
@@ -2365,11 +2221,11 @@ class Processor:
 
         def panel(c, title):
             c = c.to_numpy()
-            out = [r'\multicolumn{5}{l}{\textit{' + title + r'}} \\']
+            out = [r'\multicolumn{3}{l}{\textit{' + title + r'}} \\']
             for i, nm in enumerate(names):
-                out.append(nm + ' & ' + ' & '.join(f'{c[i, j]:.3f}' if j <= i else '' for j in range(4)) + r' \\')
+                out.append(nm + ' & ' + ' & '.join(f'{c[i, j]:.3f}' if j <= i else '' for j in range(2)) + r' \\')
             return out
-        lines = [r'\begin{tabular}{lcccc}', r'\toprule', ' & ' + ' & '.join(names) + r' \\', r'\midrule']
+        lines = [r'\begin{tabular}{lcc}', r'\toprule', ' & ' + ' & '.join(names) + r' \\', r'\midrule']
         lines += panel(d[vs].corr(), f'Panel A: raw (N = {len(d)})') + [r'\midrule']
         lines += panel(within[vs].corr(), 'Panel B: sector and period means removed') + [r'\bottomrule', r'\end{tabular}']
         with open(outdir / 'table_corr.tex', 'w') as f:

@@ -83,6 +83,6 @@ Run `Code/Executor.py`; it writes every exhibit below to `Results/Tables` and `R
 | Appendix: IO-change slopes | `Tables/IO_Change_Slopes` | `Processor.IO_Change` |
 | Appendix: reduced-form robustness | `Tables/Reduced_Form_Robust` | `Processor.UpDown_Robust` |
 | Appendix: clean and dirty CPC codes | `Tables/CPC_Codes` | `Processor.CPC_Codes_Table` |
-| Appendix: summary statistics, top network sectors | `Tables/Summary_Stats`, `Tables/Top_Network_Sectors` | `Processor.Summary_Stats` |
+| Appendix: sectors with the highest clean partner shares | `Tables/Top_Network_Sectors` | `Processor.Summary_Stats` |
 | Appendix: match coverage | `Tables/Match_Coverage` | `Processor.Match_Coverage` |
 | Appendix: shrinkage and other customer-IV choices | `Tables/Robust_Lambda`, `Tables/Robust_Other` | `Customer_Tables.Tables` |
