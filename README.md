@@ -50,6 +50,10 @@ All of the replication codes run on Python `3.12.11`. Prior to running the codes
 | openpyxl | 3.1.5 |
 | pandas | 3.0.0 |
 | statsmodels | 0.14.6 |
+| scipy | 1.18.1 |
+| linearmodels | 7.0 |
+| rapidfuzz | 3.14.6 (customer-name matching) |
+| psycopg2 | 2.9.12 (WRDS connection; do not install the `wrds` package, it downgrades pandas) |
 
 ## Description of Code:
 
@@ -68,3 +72,18 @@ Results/Figures/
 Download the [raw data](https://github.com/ericdonald/ABDHL/releases/download/v1.0.0/Raw.Data.zip), unzip, and place the file(s) directly in `Raw Data/`.
 
 ## List of Tables and Figures:
+
+Run `Code/Executor.py`; it writes every exhibit below to `Results/Tables` and `Results/Figures`. The draft `Results/empirical_draft.tex` inputs them.
+
+| Exhibit | File | Function |
+|---------|------|----------|
+| Figure 1: input-output change vs. emissions-intensity reduction | `Figures/IO_Change_wls_sqrt` | `Processor.IO_Change` |
+| Table 1: reduced form, upstream and downstream | `Tables/Reduced_Form_UpDown` | `Processor.UpDown_Table` |
+| Table 2: customer IV | `Tables/Customer_IV` | `Customer_Tables.Tables` |
+| Figure 2: timing of both directions | `Figures/timing_both` | `Customer_Tables.Tables` |
+| Appendix: IO-change slopes | `Tables/IO_Change_Slopes` | `Processor.IO_Change` |
+| Appendix: reduced-form robustness | `Tables/Reduced_Form_Robust` | `Processor.UpDown_Robust` |
+| Appendix: clean and dirty CPC codes | `Tables/CPC_Codes` | `Processor.CPC_Codes_Table` |
+| Appendix: summary statistics, top network sectors | `Tables/Summary_Stats`, `Tables/Top_Network_Sectors` | `Processor.Summary_Stats` |
+| Appendix: match coverage | `Tables/Match_Coverage` | `Processor.Match_Coverage` |
+| Appendix: shrinkage and other customer-IV choices | `Tables/Robust_Lambda`, `Tables/Robust_Other` | `Customer_Tables.Tables` |

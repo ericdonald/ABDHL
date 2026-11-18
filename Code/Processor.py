@@ -642,7 +642,8 @@ class Processor:
         wls_sqrt (main text), wls_emis (weights = emissions), wls_cube (emissions^(1/3)), ols, wls_sqrt_fe (period effect),
         wls_sqrt_l2 (Euclidean instead of total-variation distance). Standard errors clustered by sector.
 
-        Output: Results/Figures/IO_Change_<variant>.pdf and .png
+        Output: Results/Figures/IO_Change_wls_sqrt.pdf and .png (main text); Specifications/Batches/io_change/figures/IO_Change_<variant>.pdf and .png (others)
+                Results/Tables/IO_Change_Slopes.tex, IO_Change_macros.tex
                 Specifications/Batches/io_change/io_change_slopes.csv
         """""
 
@@ -798,7 +799,9 @@ class Processor:
         ]
         PANELS = [('Reduced form', 'dlog_CO2e_inten', 'reduced', 'CO2e_Industry_weight'),
                   ('Leontief inverse', 'dlog_CO2e_inten_LI', 'LI', 'CO2e_Industry_LI_weight')]
-        fig_dir = Path(f'{self.Directory}/Results/Figures')
+        fig_dir = Path(f'{self.Directory}/Results/Figures')                       # the main-text variant (wls_sqrt)
+        alt_dir = self.Directory / 'Specifications' / 'Batches' / 'io_change' / 'figures'   # the other variants (appendix slopes table)
+        alt_dir.mkdir(parents=True, exist_ok=True)
         out_dir = self.Directory / 'Specifications' / 'Batches' / 'io_change'
         out_dir.mkdir(parents=True, exist_ok=True)
         rows = []
@@ -836,8 +839,9 @@ class Processor:
                 rows.append(dict(variant=name, panel=title, slope_neg=s_n, se_neg=m.bse[-2], p_neg=m.pvalues[-2],
                                  slope_pos=s_p, se_pos=m.bse[-1], p_pos=m.pvalues[-1], N=int(m.nobs), sectors=df['BLS_Industry'].nunique()))
             fig.tight_layout()
-            fig.savefig(fig_dir / f'IO_Change_{name}.pdf')
-            fig.savefig(fig_dir / f'IO_Change_{name}.png', dpi=150)
+            od = fig_dir if name == 'wls_sqrt' else alt_dir
+            fig.savefig(od / f'IO_Change_{name}.pdf')
+            fig.savefig(od / f'IO_Change_{name}.png', dpi=150)
             plt.close(fig)
         pd.DataFrame(rows).to_csv(out_dir / 'io_change_slopes.csv', index=False)
         labs = {'wls_sqrt': 'WLS, square-root weights (main text)', 'wls_emis': 'WLS, emissions weights', 'wls_cube': 'WLS, cube-root weights',
@@ -862,6 +866,24 @@ class Processor:
         mac += [f'\\newcommand{{\\ioN}}{{{rows[0]["N"]}}}', f'\\newcommand{{\\ioSectors}}{{{rows[0]["sectors"]}}}']
         (self.Directory / 'Results' / 'Tables' / 'IO_Change_macros.tex').write_text('\n'.join(mac) + '\n')
         print(pd.DataFrame(rows).round(3).to_string())
+
+
+    def CPC_Codes_Table(self):
+        """""
+        Lists the CPC codes that define clean patents (excluding the internal-combustion groups) and dirty patents (placebo).
+        Written from self.CPC_classes and self.ICE_classes, so the appendix cannot drift from the classification used in the Cleaner.
+
+        Output: Results/Tables/CPC_Codes.tex
+        """""
+        def tt(codes):
+            return ', '.join('\\texttt{%s}' % c for c in codes)
+        clean, dirty, ice = self.CPC_classes['clean'], self.CPC_classes['dirty'], self.ICE_classes
+        lines = ['\\begin{tabular}{lp{10.5cm}}', '\\toprule',
+                 'Type & CPC codes \\\\', '\\midrule',
+                 'Clean (main outcome) & %s, except patents with a group in %s \\\\' % (tt(clean), tt(ice)),
+                 'Dirty (placebo) & %s \\\\' % tt(dirty),
+                 '\\bottomrule', '\\end{tabular}']
+        (self.Directory / 'Results' / 'Tables' / 'CPC_Codes.tex').write_text('\n'.join(lines) + '\n')
 
 
     def Summary_Stats(self, BLS_year_start, Year_end, bin_len=5, top_n=8):

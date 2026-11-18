@@ -931,6 +931,52 @@ def panel(ctx, h):
     return base_panel(c, LO, HI)
 
 
+def reverse_panel(ctx, lo, hi):
+    """Customer-year panel from the same Compustat segment links, inverted: the unit is a customer k that is named by suppliers with patents,
+    its exposure is the green share of those recorded suppliers, weighted by their sales to k relative to k's sales (the analog of the
+    sector-level matrix of the sector panel). Instrument: the suppliers' predicted shares (1990-94 class mixes x outside class shifts)."""
+    Fc, Fa, cs, fs = ctx['Fc'], ctx['Fa'], ctx['cs'], ctx['fs']
+    cm = mixmat(ctx, lo, hi)
+    partners = cm.index.to_numpy()
+    pi = {f: k for k, f in enumerate(partners)}
+    l = cs[cs.fy.between(lo, hi) & cs.gvkey.isin(partners) & cs.cust.notna() & (cs.cust != cs.gvkey)].copy()
+    l = l.groupby(['cust', 'gvkey']).salecs.sum().reset_index()
+    units = np.sort(l.cust.unique())
+    ui = {u: k for k, u in enumerate(units)}
+    W = np.zeros((len(units), len(partners)))
+    W[l.cust.map(ui).to_numpy(), l.gvkey.map(pi).to_numpy()] = l.salecs.to_numpy()
+    sale = fs[fs.fyear.between(lo, hi)].groupby('gvkey').sale.mean()
+    W = W / sale.reindex(units).to_numpy()[:, None]
+    ok = np.isfinite(W).all(1) & (W.sum(1) > 0)
+    units, W = units[ok], W[ok]
+    ty = YEARS[YEARS > hi]
+    Zk = cm.to_numpy() @ ctx['gprev'][ty].to_numpy()
+    Gk = ctx['Gprev'].reindex(index=partners, columns=ty)
+    Gk = Gk.fillna(Gk.mean()).to_numpy()
+    om = mixmat(ctx, lo, hi).reindex(units)
+    om = om.fillna(mixmat(ctx, 1976, hi).reindex(units)).fillna(0)
+    own = om.to_numpy() @ ctx['gcurr'][ty].to_numpy()
+    has_own = om.sum(1).to_numpy() > 0
+    d = pd.DataFrame({'gvkey': np.repeat(units, len(ty)), 'E': np.tile(ty, len(units)), 'x': (W @ Gk).ravel(), 'z': (W @ Zk).ravel(),
+                      'own': own.ravel(), 'mass': np.repeat(W.sum(1), len(ty)), 'main_cust': np.repeat(partners[W.argmax(1)], len(ty))})
+    d = d[np.repeat(has_own, len(ty))]
+    d['clean'] = [Fc.at[g, t] if g in Fc.index else 0.0 for g, t in zip(d.gvkey, d.E)]
+    d['noncl'] = [Fa.at[g, t] - Fc.at[g, t] if g in Fa.index else 0.0 for g, t in zip(d.gvkey, d.E)]
+    d['sector'] = d.gvkey.map(ctx['sec'])
+    d = d[d.noncl > 0].dropna(subset=['sector']).reset_index(drop=True)
+    ctrl = ['own']
+    for b in sorted({(t - 1998) // 5 for t in ty})[1:]:
+        d[f'mass_b{b}'] = d.mass * (((d.E - 1998) // 5) == b)
+        ctrl.append(f'mass_b{b}')
+    return dict(d=d, ctrl=ctrl, sup=units, si={u: k for k, u in enumerate(units)}, W=W, Zk=Zk, ty=ty, custs=partners)
+
+
+def panel_reverse(ctx, h):
+    c = dict(ctx)
+    c['Gprev'], c['gprev'] = window_tables(ctx, h)
+    return reverse_panel(c, LO, HI)
+
+
 def years_for(h):
     "Outcome years whose partner window lies inside 1976-2017, after the base period."
     return (max(YEARS[0] + h + 4, HI + 1), min(YEARS[-1], YEARS[-1] + h))
@@ -1127,7 +1173,10 @@ def timing_job(job):
     restrict = len(job) > 3 and job[3]
     G = _STATE['G']; ctx = G['ctx']; allsec = ctx['allsec']
     sector_level = direction in ('sci', 'ssi')
-    if sector_level:                       # sector-level units, sector-level input-output network in both directions
+    if direction == 'cr':                  # suppliers' greening -> customer from the inverted Compustat segment links
+        P, Q = panel_reverse(ctx, h), other(panel(ctx, h))
+        clus = np.array([allsec.get(int(c), -int(c)) for c in P['custs']])       # suppliers' shocks grouped by supplier sector
+    elif sector_level:                       # sector-level units, sector-level input-output network in both directions
         P = sector_io_panel(G, h, down=(direction == 'sci'), net=net)
         Q = other(sector_io_panel(G, h, down=(direction == 'ssi'), net=net))
         clus = P['custs']
@@ -1421,6 +1470,20 @@ class Customer_IV:
             with get_context('fork').Pool(nw) as pool:
                 rows = pool.map(timing_job, jobs, chunksize=1)
             pd.DataFrame(rows).to_csv(self.Out / f'timing_sector_{net}.csv', index=False)
+
+    def Timing_Reverse(self):
+        """
+        Suppliers' greening -> customer with the Compustat segment links inverted: the customer's exposure is the green share of the suppliers
+        that name it as a customer. Same horizons, instrument construction, controls and inference as Timing.
+
+        Output: Specifications/Customer_IV/output/timing_reverse.csv
+        """
+        _STATE['G'] = self.G()
+        nw = int(os.environ.get('NW', 7))
+        jobs = [('cr', h) for h in HS]
+        with get_context('fork').Pool(nw) as pool:
+            rows = pool.map(timing_job, jobs, chunksize=1)
+        pd.DataFrame(rows).to_csv(self.Out / 'timing_reverse.csv', index=False)
 
     def Timing(self):
         """

@@ -234,6 +234,7 @@ P.UDG_Run('batch8_entry', make_entry_specs('b8'), BLS_year_start, Year_end)
 
 # ----------------------------------------------------------------
 
+P.CPC_Codes_Table()   # Results/Tables/CPC_Codes.tex (appendix: clean and dirty CPC codes)
 P.Summary_Stats(BLS_year_start, Year_end, bin_len)   # Results/Tables/Summary_Stats.tex, Top_Network_Sectors.tex
 P.IO_Validation('diag_io_validation', BLS_year_start, Year_end, bin_len)   # does clean patenting predict changes in input shares?
 P.Old_Benchmark('diag_old_benchmark', BLS_year_start, Year_start, Year_mid, Year_end, bin_len)   # patent regressions of the submitted version (branch Old)
