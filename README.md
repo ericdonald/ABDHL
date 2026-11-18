@@ -23,7 +23,6 @@ where `XX` is the user's API key for the relevant data source.
 - PatentsView
   - [CPC Codes](https://patentsview.org/download/data-download-tables)
   - [Applications](https://patentsview.org/download/data-download-tables)
-  - [Citations](https://patentsview.org/download/data-download-tables)
   - [Inventors](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
   - [Location Crosswalk](https://data.uspto.gov/bulkdata/datasets/pvgpatdis)
 
