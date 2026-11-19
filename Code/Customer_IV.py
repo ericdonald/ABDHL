@@ -387,13 +387,19 @@ def resid_w(M, Cw):
     return M - Cw @ coef
 
 
-def prep(d, tcol, ctrl, poisson_sample=True):
+def prep(d, tcol, ctrl, poisson_sample=True, period_mass=True):
+    "Linear-model panel. Link intensity is interacted with five-year period dummies, as in the Poisson columns (period_mass=False: year dummies)."
     d = d.copy()
     if poisson_sample:                       # same sample as the Poisson specification
         d = trim(d.dropna(subset=ctrl + ['x', 'z']), 'E')
     d['t'] = d[tcol]
     d['n'] = d.clean + d.noncl
     d['y'] = d.clean / d.n
+    if period_mass:
+        bins = sorted({(t - 1998) // 5 for t in d.t.unique()})[1:]
+        for b in bins:
+            d[f'mass_b{b}'] = d.mass * (((d.t - 1998) // 5) == b)
+        return d, ctrl + [f'mass_b{b}' for b in bins]
     for t in sorted(d.t.unique())[1:]:
         d[f'mt_{t}'] = d.mass * (d.t == t)
     return d, ctrl + [f'mt_{t}' for t in sorted(d.t.unique())[1:]]
@@ -837,7 +843,7 @@ def columns_firm(P, x_dep, se_unit):
                   pseudo_r2=pr2, F=(b['z'] / se['z']) ** 2, boot_draws=len(draws),
                   p_x=2 * (1 - stats.norm.cdf(abs(r.at['x', 'coef'] / bse[0]))), mean_dep=d.clean.mean(), **base))
     # (5) linear 2SLS weighted by patents, supplier cluster (the AKM0 model); same sample as the Poisson columns
-    dl, cl = prep(P['d'], 'E', ['own'])
+    dl, cl = prep(P['d'], 'E', ['own'], period_mass=True)
     assert len(dl) == len(d)
     S.append(tsls(dl, cl, sd, base))
     C += S[-1].pop('rows')
@@ -874,7 +880,7 @@ def columns_sector(d, ctrl, x_dep):
                   boot_draws=nd, p_x=2 * (1 - stats.norm.cdf(abs(r.at['x', 'coef'] / bse['x']))), mean_dep=d.clean.mean(), **base))
     # (10) linear 2SLS weighted by patents, sector cluster (the sector analog of firm column 5); column 10 so that the numbering 6-9 is unchanged
     try:
-        dl, cl = prep(d, 'E', ['own'])
+        dl, cl = prep(d, 'E', ['own'], period_mass=True)
         S.append(tsls(dl, cl, sd, base, col=10, unit='sector'))
         C += S[-1].pop('rows')
     except Exception as ex:
@@ -893,7 +899,7 @@ def e1_akm(ctx, P):
     "AKM0 for column 5 with customers' shocks grouped by customer firm and by customer sector (GM, Ford and Chrysler count as one)."
     links = {t: (P['sup'], P['W']) for t in P['ty']}
     shocks = {t: P['Zk'][:, j] for j, t in enumerate(P['ty'])}
-    dl, cl = prep(P['d'], 'E', ['own'])
+    dl, cl = prep(P['d'], 'E', ['own'], period_mass=True)
     clus = np.array([ctx['allsec'].get(int(c), -int(c)) for c in P['custs']])
     a_f = akm_general(dl, cl, links, shocks, tfe='t')
     a_s = akm_general(dl, cl, links, shocks, tfe='t', clus=clus)
@@ -1082,10 +1088,13 @@ def kappa_moments(ctx, min_den=10):
     return float(p * (1 - p) / max(v - samp, 1e-12) - 1), int(ok.sum())
 
 
-def quick_firm(ctx, P, boot=False):
-    "Firm-level core of Table E1 for a robustness variant: first stage, reduced form, control-function IV (no bootstrap), 2SLS and AKM0."
+def quick_firm(ctx, P, boot=False, offset_all=False):
+    """Firm-level core of Table E1 for a robustness variant: first stage, reduced form, control-function IV (no bootstrap), 2SLS and AKM0.
+    offset_all: the Poisson steps use log of all patents as the offset instead of log non-green patents (the linear 2SLS and AKM0 do not use an offset)."""
     d, ctrl = P['d'], P['ctrl']
     d = trim(d[list(dict.fromkeys(['clean', 'noncl', 'x', 'z', 'gvkey', 'E', 'sector', 'main_cust'] + ctrl))].dropna(), 'E')
+    if offset_all:
+        d = d.assign(noncl=d.clean + d.noncl)
     sd = within_sd(d, ['x', 'z', 'own'])
     b, se, v, _ = first_stage(d, ctrl)
     d = d.assign(vhat=v)
@@ -1096,7 +1105,7 @@ def quick_firm(ctx, P, boot=False):
         iv_se = bse['x'] * sd['x']
         iv_p = 2 * (1 - stats.norm.cdf(abs(iv.at['x', 'coef'] / bse['x'])))
     rf, _ = fepois_fit(d, ['z'] + ctrl)
-    dl, cl = prep(P['d'], 'E', ['own'])
+    dl, cl = prep(P['d'], 'E', ['own'], period_mass=True)
     t5 = tsls(dl, cl, sd, dict(level='firm', N=len(d), units=d.gvkey.nunique(), customers=d.main_cust.nunique()))
     lin = [r for r in t5.pop('rows') if r['term'] == 'x'][0]
     akm = e1_akm(ctx, P)
@@ -1252,10 +1261,11 @@ def timing_job(job):
         d = d[d.gvkey.isin(set(base_panel(ctx, LO, HI)['sup']))]
     d = d[d.E.between(lo, hi)].merge(own_window_sector(ctx, G, P['sup'], h) if sector_level else own_window(ctx, P['sup'], h), on=['gvkey', 'E'], how='left').reset_index(drop=True)
     r = dict(direction=direction, h=h, net=net, restricted=bool(restrict), years=f'{lo}-{hi}')
-    dl, cl = prep(d, 'E', ['own', 'own_w', 'z_oth'])
-    for t in sorted(dl.t.unique())[1:]:
-        dl[f'mot_{t}'] = dl.mass_oth * (dl.t == t)
-    cl = cl + [f'mot_{t}' for t in sorted(dl.t.unique())[1:] if dl[f'mot_{t}'].abs().sum() > 0]
+    dl, cl = prep(d, 'E', ['own', 'own_w', 'z_oth'], period_mass=True)
+    pb = sorted({(t - 1998) // 5 for t in dl.t.unique()})[1:]
+    for b in pb:
+        dl[f'mot_b{b}'] = dl.mass_oth * (((dl.t - 1998) // 5) == b)
+    cl = cl + [f'mot_b{b}' for b in pb if dl[f'mot_b{b}'].abs().sum() > 0]
     r.update(bands(dl, cl, P, clus))
     r.update(N_lin=len(dl), units_lin=dl.gvkey.nunique(), share_firms_with_oth=float(dl.groupby('gvkey').has_oth.first().mean()))
     print(f"[{direction}{net if len(job) > 2 else ''} h={h:2d}] N {r['N_lin']} firms {r['units_lin']} | 2SLS {r['lin_pp']:7.2f} AKM0 p {r['p_akm0']:.3f} "
@@ -1423,6 +1433,8 @@ class Customer_IV:
         gm = gmm_firm(d0, P0['ctrl'], within_sd(d0, ['x', 'z', 'own']))
         rg = dict(rows[0]); rg.update(label='Poisson IV by GMM instead of the control function', group='estimator', iv=gm['coef'], iv_se=gm['se'], iv_p=gm['p'], gmm_converged=gm['converged'])
         rows.append(rg); print(rg, flush=True)
+        ro = quick_firm(ctx, P0, boot=True, offset_all=True)          # all patents as the Poisson offset (linear columns unaffected)
+        ro.update(label='Offset: all patents', group='offset'); rows.append(ro); print(ro, flush=True)
         run('Base period 1985-89', 'base', base=(1985, 1989))
         run('Base period 1990-97', 'base', base=(1990, 1997))
         run('Outcome years to 2014', 'sample', last=2014)

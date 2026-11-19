@@ -705,9 +705,9 @@ class Processor:
 
         # ----------------------------------------------------------------
 
-        # Regressions and figures: one two-panel figure (reduced form | Leontief inverse) per variant.
+        # Regressions and figures: one two-panel figure (direct weights | Leontief inverse) per variant.
         # x = log emissions-intensity reduction, y = TV distance of the input-requirement rows, kink at zero
-        # (separate slopes for x < 0 and x >= 0). Weights: emissions^(1/dim) (reduced form: own emissions;
+        # (separate slopes for x < 0 and x >= 0). Weights: emissions^(1/dim) (direct weights: own emissions;
         # Leontief: emissions embodied through the Leontief inverse); marker area is proportional to emissions.
 
         # ----------------------------------------------------------------
@@ -728,7 +728,7 @@ class Processor:
             ('wls_sqrt_keepfossil', 2, False, 'TV', 'keepfossil'),
             ('wls_sqrt_wins',       2, False, 'TV', 'wins'),
         ]
-        PANELS = [('Reduced form', 'dlog_CO2e_inten', 'reduced', 'CO2e_Industry_weight'),
+        PANELS = [('Direct weights', 'dlog_CO2e_inten', 'reduced', 'CO2e_Industry_weight'),
                   ('Leontief inverse', 'dlog_CO2e_inten_LI', 'LI', 'CO2e_Industry_LI_weight')]
         fig_dir = Path(f'{self.Directory}/Results/Figures')                       # the main-text variant (wls_sqrt)
         alt_dir = self.Directory / 'Specifications' / 'Batches' / 'io_change' / 'figures'   # the other variants (appendix slopes table)
@@ -761,12 +761,12 @@ class Processor:
                 for per, col, lab in [(Year_mid, 'purple', f'{Year_start}-{Year_mid}'), (Year_end, 'blue', f'{Year_mid}-{Year_end}')]:
                     k = (df['period'] == per).to_numpy()
                     ax.scatter(x[k], y_adj[k], s=size[k], alpha=0.6, color=col, label=lab)
-                ax.plot(np.linspace(x.min(), 0, 50), b + s_n * np.linspace(x.min(), 0, 50), color='cyan', lw=2, label='fit, x < 0')
-                ax.plot(np.linspace(0, x.max(), 50), b + s_p * np.linspace(0, x.max(), 50), color='orange', lw=2, label='fit, x >= 0')
-                ax.text(0.03, 0.96, ('slope (x<0): none (no x<0)' if no_neg else f'slope (x<0) = {s_n:.3f}{gpf.get_stars(m.pvalues[-2])}') + f'\nslope (x>=0) = {s_p:.3f}{gpf.get_stars(m.pvalues[-1])}',
+                ax.plot(np.linspace(x.min(), 0, 50), b + s_n * np.linspace(x.min(), 0, 50), color='cyan', lw=2, label=r'fit, $x < 0$')
+                ax.plot(np.linspace(0, x.max(), 50), b + s_p * np.linspace(0, x.max(), 50), color='orange', lw=2, label=r'fit, $x \geq 0$')
+                ax.text(0.03, 0.96, (r'slope ($x<0$): none (no $x<0$)' if no_neg else rf'slope ($x<0$) = {s_n:.3f}{gpf.get_stars(m.pvalues[-2])}') + '\n' + rf'slope ($x\geq 0$) = {s_p:.3f}{gpf.get_stars(m.pvalues[-1])}',
                         transform=ax.transAxes, va='top', fontsize=10, bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='green', alpha=0.8))
                 ax.set_title(title); ax.set_xlabel('Log emissions-intensity reduction')
-                ax.set_ylabel('Distance in input requirements' + (' (adjusted for period)' if fe else '')); ax.grid(alpha=0.3)
+                ax.set_ylabel('Change in input share' + (' (adjusted for period)' if fe else '')); ax.grid(alpha=0.3)
                 ax.legend(loc='lower right', fontsize=8)
                 rows.append(dict(variant=name, panel=title, slope_neg=np.nan if no_neg else s_n, se_neg=np.nan if no_neg else m.bse[-2], p_neg=np.nan if no_neg else m.pvalues[-2],
                                  slope_pos=s_p, se_pos=m.bse[-1], p_pos=m.pvalues[-1], N=int(m.nobs), sectors=df['BLS_Industry'].nunique()))
@@ -781,11 +781,11 @@ class Processor:
                 'wls_sqrt_noelec': 'WLS, square-root weights, electricity also dropped as a supplier',
                 'wls_sqrt_keepfossil': 'WLS, square-root weights, fossil-fuel sectors kept as suppliers',
                 'wls_sqrt_wins': 'WLS, square-root weights, no jump exclusion, winsorized at 5 and 95 percent'}
-        L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & \multicolumn{2}{c}{Reduced form} & \multicolumn{2}{c}{Leontief inverse} \\', r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}',
+        L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & \multicolumn{2}{c}{Direct weights} & \multicolumn{2}{c}{Leontief inverse} \\', r'\cmidrule(lr){2-3}\cmidrule(lr){4-5}',
              r' & Intensity rose & Intensity fell & Intensity rose & Intensity fell \\', r'\midrule']
         for name in labs:
             rr = {r_['panel']: r_ for r_ in rows if r_['variant'] == name}
-            cells = [(rr[pn][f'slope_{sd}'], rr[pn][f'se_{sd}'], rr[pn][f'p_{sd}']) for pn in ('Reduced form', 'Leontief inverse') for sd in ('neg', 'pos')]
+            cells = [(rr[pn][f'slope_{sd}'], rr[pn][f'se_{sd}'], rr[pn][f'p_{sd}']) for pn in ('Direct weights', 'Leontief inverse') for sd in ('neg', 'pos')]
             L.append(labs[name] + ' & ' + ' & '.join('--' if np.isnan(b) else f'{b:.3f}{gpf.get_stars(p_)}' for b, _, p_ in cells) + r' \\')
             L.append(' & ' + ' & '.join('' if np.isnan(se) else f'({se:.3f})' for _, se, _ in cells) + r' \\')
         L += [r'\bottomrule', r'\end{tabular}']
@@ -794,7 +794,7 @@ class Processor:
                'wls_sqrt_noelec': 'WlsSqrtNoElec', 'wls_sqrt_keepfossil': 'WlsSqrtKeepFossil', 'wls_sqrt_wins': 'WlsSqrtWins'}
         mac = ['% Generated by Processor.IO_Change from io_change_slopes.csv. Do not edit by hand.']
         for r in rows:
-            base = 'io' + cam[r['variant']] + ('Red' if r['panel'] == 'Reduced form' else 'Leo')
+            base = 'io' + cam[r['variant']] + ('Red' if r['panel'] == 'Direct weights' else 'Leo')
             for side in ('neg', 'pos'):
                 T = side.capitalize()
                 f3 = lambda v: '--' if np.isnan(v) else f'{v:.3f}'
@@ -879,15 +879,15 @@ class Processor:
         reg = pd.read_csv(self.Directory / 'Specifications' / 'registry.csv').set_index('spec_id')
         cols = [('b0_pat_updown', 'Leontief', 'No', 'No'), ('b0_pat_dsud', 'Direct', 'No', 'No'),
                 ('b0_pat_wsumud', 'Leontief', 'Yes', 'No'), ('b0_pat_fixwud', 'Leontief', 'No', 'Yes')]
-        cell = lambda i, k, f: reg.loc[i, f'{f}_{k}']
+        cell = lambda i, k, f: reg.loc[i, f'{f}_{k}'] * (reg.loc[i, f'sd_{k}'] if f in ('coef', 'se') else 1.0)   # log points per within-SD of the regressor
         ids = [c[0] for c in cols]
         L = [r'\begin{tabular}{lcccc}', r'\toprule', r' & (1) & (2) & (3) & (4) \\',
              'Input--output weights & ' + ' & '.join(c[1] for c in cols) + r' \\',
              'Control: sum of weights & ' + ' & '.join(c[2] for c in cols) + r' \\',
              'Weights fixed at first bin & ' + ' & '.join(c[3] for c in cols) + r' \\', r'\midrule']
         for k, lab in [('up', 'Upstream (suppliers)'), ('down', 'Downstream (customers)')]:
-            L.append(lab + ' & ' + ' & '.join(f"{cell(i, k, 'coef'):.2f}{gpf.get_stars(cell(i, k, 'p'))}" for i in ids) + r' \\')
-            L.append(' & ' + ' & '.join(f"({cell(i, k, 'se'):.2f})" for i in ids) + r' \\')
+            L.append(lab + ' & ' + ' & '.join(f"{cell(i, k, 'coef'):.3f}{gpf.get_stars(cell(i, k, 'p'))}" for i in ids) + r' \\')
+            L.append(' & ' + ' & '.join(f"({cell(i, k, 'se'):.3f})" for i in ids) + r' \\')
         L += [r'\midrule', 'Observations & ' + ' & '.join(f"{int(reg.loc[i, 'N']):,}" for i in ids) + r' \\',
               'Sectors & ' + ' & '.join(f"{int(reg.loc[i, 'n_sectors'])}" for i in ids) + r' \\', r'\bottomrule', r'\end{tabular}']
         Path(path).write_text('\n'.join(L) + '\n')
@@ -895,7 +895,7 @@ class Processor:
         for i, nm in [('b0_pat_updown', 'BinsL'), ('b0_pat_dsud', 'BinsD'), ('b0_pat_wsumud', 'BinsW'), ('b0_pat_fixwud', 'BinsF'),
                       ('b0_pat_annualud', 'AnnL'), ('b10_pat_annualdsud', 'AnnD')]:
             for k, kk in [('up', 'Up'), ('down', 'Down')]:
-                mac[f'rf{nm}{kk}'] = f"{cell(i, k, 'coef'):.2f}"; mac[f'rf{nm}{kk}P'] = f"{cell(i, k, 'p'):.3f}"
+                mac[f'rf{nm}{kk}'] = f"{cell(i, k, 'coef'):.3f}"; mac[f'rf{nm}{kk}P'] = f"{cell(i, k, 'p'):.3f}"
         Path(path).with_name('Reduced_Form_macros.tex').write_text('% Generated by Processor.UpDown_Table. Do not edit by hand.\n' + ''.join(f'\\newcommand{{\\{k}}}{{{v}}}\n' for k, v in mac.items()))
 
 
@@ -907,20 +907,20 @@ class Processor:
         Output: Results/Tables/Reduced_Form_Robust.tex
         """""
         reg = pd.read_csv(self.Directory / 'Specifications' / 'registry.csv').set_index('spec_id')
-        rows = [('Baseline: five-year bins, Leontief weights [Table 1, column 1]', 'b0_pat_updown'),
-                ('Direct input--output coefficients [Table 1, column 2]', 'b0_pat_dsud'),
+        rows = [('Leontief weights [Table 1, column 1]', 'b0_pat_updown'),
+                ('Direct weights [Table 1, column 2]', 'b0_pat_dsud'),
                 ('Control: sum of weights [Table 1, column 3]', 'b0_pat_wsumud'),
                 ('Fixed first-bin weights [Table 1, column 4]', 'b0_pat_fixwud'),
                 ('Normalized weights', 'b0_pat_normud'), ('No shrinkage of shares', 'b0_pat_noshrud'),
                 ('Offset: all patents', 'b0_pat_offallud'), ('Network-mass $\\times$ period controls', 'b0_pat_mtrendud'),
                 ('Partners without patents at the aggregate share', 'b0_pat_m1ud'), ('Outcome bins up to 2017', 'b0_pat_m2ud'),
-                ('Annual outcomes, Leontief weights', 'b0_pat_annualud'), ('Annual outcomes, direct coefficients', 'b10_pat_annualdsud'),
+                ('Annual outcomes, Leontief weights', 'b0_pat_annualud'), ('Annual outcomes, direct weights', 'b10_pat_annualdsud'),
                 ('Placebo: dirty share of partners', 'b0_pat_plcud')]
         L = [r'\begin{tabular}{lccc}', r'\toprule', r' & Upstream & Downstream & Observations \\', r'\midrule']
         for lab, i in rows:
             r = reg.loc[i]
-            L.append(lab + f" & {r.coef_up:.2f}{gpf.get_stars(r.p_up)} & {r.coef_down:.2f}{gpf.get_stars(r.p_down)} & {int(r.N):,} \\\\")
-            L.append(f" & ({r.se_up:.2f}) & ({r.se_down:.2f}) & \\\\")
+            L.append(lab + f" & {r.coef_up * r.sd_up:.3f}{gpf.get_stars(r.p_up)} & {r.coef_down * r.sd_down:.3f}{gpf.get_stars(r.p_down)} & {int(r.N):,} \\\\")
+            L.append(f" & ({r.se_up * r.sd_up:.3f}) & ({r.se_down * r.sd_down:.3f}) & \\\\")
         L += [r'\bottomrule', r'\end{tabular}']
         Path(path).write_text('\n'.join(L) + '\n')
 
@@ -935,7 +935,7 @@ class Processor:
                     rhs=None,           # network variable: None = same as share; P = placebo (dirty/all); E = emissions reduction
                     rhs_meas=None,      # measure of the network variable; None = same as measure
                     controls=(),        # extra network controls, e.g. 'T_pat' (patent share)
-                    annual=False,       # True = single-year outcome/offset, regressor from the rolling window ending bin_len years earlier
+                    annual=False,       # True = single-year outcome/offset, regressor from the rolling window of the bin_len preceding years
                     mass_trend=False,   # control for (sector's fixed network weight sum) x (period effects)
                     fill_missing=False, # partners with undefined share enter at the aggregate share of the bin
                     direct_s=False,     # direct input-output coefficients instead of the Leontief inverse
@@ -985,7 +985,8 @@ class Processor:
         fixed_w: all network sums (regressors and controls, not only the instruments) use the Leontief inverse of the first
         bin instead of the inverse of each bin, so that changes in the network cannot drive the regressors.
         annual: regressors are built from rolling bin_len-year windows ending in every year (so the regressor for
-        year y is the window ending y - bin_len), and the outcome and offset are single-year counts.
+        year y is the window of the bin_len years preceding it, y-bin_len,...,y-1, with the table of year y-1), and the
+        outcome and offset are single-year counts.
 
         Returns: reg_df, kappas
         """""
@@ -1184,14 +1185,15 @@ class Processor:
         # ---- #
         lag_cols = [c for c in net_df.columns if c not in ('BLS_Industry', 'period')]
         lagged = net_df[['BLS_Industry', 'period'] + lag_cols].copy()
-        lagged['period'] = lagged['period'] + bin_len
+        lstep = 1 if annual else bin_len      # annual: the regressor of year y is the window of the five years y-5,...,y-1 (table of year y-1)
+        lagged['period'] = lagged['period'] + lstep
         lagged = lagged.rename(columns={c: f'{c}_lag' for c in lag_cols})
         reg_df = reg_df.merge(lagged, on=['BLS_Industry', 'period'], how='left')
         z_cols = [c for c in lag_cols if '_Z' in c]
         if z_cols:
             lagged2 = pd.concat([net_df[['BLS_Industry', 'period'] + z_cols]] + [f[['BLS_Industry', 'period'] + z_cols] for f in extra_frames],
                                 ignore_index=True)
-            lagged2['period'] = lagged2['period'] + 2 * bin_len
+            lagged2['period'] = lagged2['period'] + 2 * lstep
             lagged2 = lagged2.rename(columns={c: f'{c}_lag2' for c in z_cols})
             reg_df = reg_df.merge(lagged2, on=['BLS_Industry', 'period'], how='left')
         return reg_df, kappas
@@ -1504,8 +1506,23 @@ class Processor:
                    'pseudo_r2': m.rsquared,
                    'converged': m.converged if iv and sh != 'A' else getattr(m.glm, 'converged', np.nan),
                    'run_date': datetime.now().strftime('%Y-%m-%d')}
+            # within-standard-deviation of each regressor (sector and period means removed) in the estimation sample, so that
+            # coefficients can be read per within-SD as in the customer IV (coef_* x sd_* = log points per within-SD)
+            try:
+                dd = reg_df.dropna(subset=[y_col, offset] + x_cols)
+                dd = dd[dd[offset] > 0]
+                dd = dd[dd.groupby('BLS_Industry')[y_col].transform('sum') > 0] if sh != 'A' else dd
+                Xw = dd[[c for c in x_cols if not c.startswith('mass_x_per')]].astype(float)
+                for _ in range(200):
+                    for g_ in ('BLS_Industry', 'period'):
+                        Xw = Xw - Xw.groupby(dd[g_]).transform('mean')
+                sdw, n_sd = Xw.std(ddof=0), len(dd)
+            except Exception:
+                sdw, n_sd = pd.Series(dtype=float), np.nan
+            row['N_sd_sample'] = n_sd
             for slot, var in [('net', f'net_{rk}_lag'), ('up', f'up_{rk}_lag'),
                               ('down', f'down_{rk}_lag'), ('lag', f'own_{sh}_{meas}_lag')]:
+                row[f'sd_{slot}'] = float(sdw[var]) if var in sdw.index else np.nan
                 if var in m.params.index:
                     row[f'coef_{slot}'], row[f'se_{slot}'], row[f'p_{slot}'] = m.params[var], m.bse[var], m.pvalues[var]
                 else:

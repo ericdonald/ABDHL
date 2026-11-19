@@ -107,8 +107,8 @@ def make_specs(tag, share, extra_offsets=()):
         add('em',       'Emissions reduction, net', rhs='E', entity_fe=False, panel='D')
         add('emud',     'Emissions reduction, up/down', rhs='E', entity_fe=False, direction='updown', panel='D')
         # E: annual outcome; F: narrow clean definition; G: network-mass controls; H: fixed network weights
-        add('annual',   'Annual outcome, regressor from bin ending 5 years earlier, net', annual=True, panel='E')
-        add('annualud', 'Annual outcome, regressor from bin ending 5 years earlier, up/down', annual=True, direction='updown', panel='E')
+        add('annual',   'Annual outcome, regressor from the five preceding years, net', annual=True, panel='E')
+        add('annualud', 'Annual outcome, regressor from the five preceding years, up/down', annual=True, direction='updown', panel='E')
         add('y02p',     'Narrow clean definition (Y02P only), net', clean='y02p', panel='F')
         add('y02pud',   'Narrow clean definition (Y02P only), up/down', clean='y02p', direction='updown', panel='F')
         add('mtrend',   'Network-mass x period controls, net', mass_trend=True, panel='G')

@@ -62,7 +62,7 @@ def g3(x):
 
 def tabular(C, S, xlabel, se_row, akm_rows, unit_label, partner_label, cols=None, short=False):
     """Tabular for one direction (C, S: explore39-format coefficient and column tables) in the order of cols (estimation columns 1-9; se_row and
-    akm_rows are given in that order). short=True: the paper's Table 2 (Poisson, Poisson IV, OLS first stage, 2SLS; no reduced form, no fixed-effect rows)."""
+    akm_rows are given in that order). short=True: the paper's Table 2 (Poisson, Poisson IV, Poisson reduced form, OLS first stage, 2SLS; no reduced form, no fixed-effect rows)."""
     cols = list(cols or COLS)
     def cf(col, term, k='coef'):
         r = C[(C.column == col) & (C.term == term)]
@@ -152,7 +152,7 @@ def customer_table(OUT, TAB):
     assert int(a.N) == int(S.at[1, 'N']) == int(x.N) == int(S.at[5, 'N'])
     assert abs(S.at[5, 'F'] - a.lin_F) <= 1e-3 * max(1, abs(a.lin_F)), 'column 5 first-stage F differs from the AKM0 run'
 
-    ORDER = [1, 4, 2, 3, 5]                  # firm level only: Poisson, Poisson IV, OLS first stage, Poisson reduced form, 2SLS
+    ORDER = [1, 4, 3, 2, 5]                  # firm level only: Poisson, Poisson IV, Poisson reduced form | OLS first stage, 2SLS
     SE = {1: 'Supplier', 2: 'Supplier', 3: 'Supplier', 4: 'Bootstrap', 5: 'Supplier', 6: 'Sector', 8: 'Sector', 11: 'Bootstrap'}
     L = tabular(C, S, "Customers' green share, $X$", [SE[k] for k in ORDER],
                 [('AKM0 p, sector-grouped shocks', [p3(a.p_akm0) if k == 5 else '' for k in ORDER]),
@@ -289,12 +289,12 @@ def timing_table(OUT, TAB, EXP=None):
     claim(lambda: sc_blank == list(range(0, max(sc_blank) + 1)), f'supplier side: horizons without a usable first stage are not one run from h = 0: {sc_blank}')
     claim(lambda: all(cs.loc[h, 'fs'] > 0 for h in cs_blank), 'customer side: hidden horizons are not only those with a weak first stage')
     claim(lambda: set(sc_neg) | set(sc_weak) == set(sc_blank), 'supplier side: hidden horizons are not only negative or weak first stages')
-    sgn = [sc.loc[h, 'lin_pp'] < 0 for h in sc_shown]
-    sc_neg_hi = max(h for h in sc_shown if sc.loc[h, 'lin_pp'] < 0)
-    # text: supplier side negative from the first reported horizon to sc_neg_hi, rising toward zero, positive after
-    claim(lambda: sgn == [h <= sc_neg_hi for h in sc_shown] and np.all(np.diff(sc.loc[min(sc_shown):sc_neg_hi, 'lin_pp']) > 0), 'supplier side: estimates are not negative then rising toward zero then positive')
-    # text: where AKM0 rejects zero on the supplier side, its 90% set is two rays, so it contains both signs
-    claim(lambda: all(sc.loc[h, 'lin_kind90'] == 'two rays' for h in sc_akm), 'supplier side: where AKM0 rejects zero its 90% set is not always two rays')
+    sc_pos = [h for h in sc_shown if sc.loc[h, 'lin_pp'] > 0]
+    sc_akm_bounded = [h for h in sc_akm if sc.loc[h, 'lin_kind90'] == 'bounded']
+    sc_akm_rays = [h for h in sc_akm if sc.loc[h, 'lin_kind90'] == 'two rays']
+    # text: the supplier-side estimates are negative at the horizons where AKM0 rejects zero, and at most of the others
+    claim(lambda: all(sc.loc[h, 'lin_pp'] < 0 for h in sc_akm) and len(sc_pos) < len(sc_shown) / 2, 'supplier side: estimates are not negative where AKM0 rejects zero and at most horizons')
+    claim(lambda: set(sc_akm_bounded) | set(sc_akm_rays) == set(sc_akm), 'supplier side: a 90% AKM0 set is neither bounded nor two rays')
     def runs(xs):                                                        # e.g. [5, 18, 19] -> 5 and 18--19 (math mode)
         if not xs:
             return 'none'
@@ -312,7 +312,7 @@ def timing_table(OUT, TAB, EXP=None):
         'tmCSFone': f"{cs.loc[1, 'lin_F_firm']:.1f}", 'tmCSshockT': f"{cs.loc[1, 'lin_F_shock']:.1f}",
         'tmCSfirms': str(int(cs.loc[1, 'units_lin'])), 'tmSCfirms': str(int(sc.loc[1, 'units_lin'])),
         'tmSCblank': rng(sc_blank), 'tmSCneg': rng(sc_neg), 'tmSCweak': rng(sc_weak), 'tmSCshownLo': str(min(sc_shown)),
-        'tmSCakmSig': runs(sc_akm), 'tmSCsig': runs(sc_sig), 'tmSCnegHi': str(sc_neg_hi),
+        'tmSCakmSig': runs(sc_akm), 'tmSCakmBounded': runs(sc_akm_bounded), 'tmSCakmRays': runs(sc_akm_rays), 'tmSCpos': runs(sc_pos), 'tmSCsig': runs(sc_sig),
         'tmSClinSixteen': f"{sc.loc[16, 'lin_pp']:.2f}", 'tmSCseSixteen': f"{sc.loc[16, 'lin_se_akm']:.2f}",
         'tmSCpSixteen': f"{sc.loc[16, 'p_akm0']:.3f}",
         'tmCovSales': f'{100 * round(float(cov.median_sales_share), 4):.2f}', 'tmCovInputs': f'{cov.median_pct_inputs:.1f}',
@@ -361,8 +361,8 @@ def timing_figure(OUT, FIG, src='timing_both.csv', cols=None, name='timing_both'
     fig.savefig(FIG / f'{name}.pdf')
 
 
-IO_COLS = {'A': [('ci', 'Customers\u2019 greening \u2192 supplier\n(input-output table, direct coefficients)', BLUE),
-                 ('si', 'Suppliers\u2019 greening \u2192 customer\n(input-output table, direct coefficients)', ORANGE)],
+IO_COLS = {'A': [('ci', 'Customers\u2019 greening \u2192 supplier\n(input-output table, direct weights)', BLUE),
+                 ('si', 'Suppliers\u2019 greening \u2192 customer\n(input-output table, direct weights)', ORANGE)],
            'Ac': [('ci', 'Customers\u2019 greening \u2192 supplier\n(input-output table of the outcome year, direct)', BLUE),
                   ('si', 'Suppliers\u2019 greening \u2192 customer\n(input-output table of the outcome year, direct)', ORANGE)],
            'L': [('ci', 'Customers\u2019 greening \u2192 supplier\n(input-output table, Leontief inverse)', BLUE),
@@ -376,7 +376,7 @@ def io_timing(OUT, TAB, FIG):
         f = OUT / f'timing_io_{net}{suf}.csv'
         if not f.exists():
             continue
-        cols = IO_COLS[net] if not suf else [(dr, t.replace('(input-output table, direct coefficients)', '(input-output table, direct coefficients;\nsuppliers with Compustat customer links only)'), c) for dr, t, c in IO_COLS[net]]
+        cols = IO_COLS[net] if not suf else [(dr, t.replace('(input-output table, direct weights)', '(input-output table, direct weights;\nsuppliers with Compustat customer links only)'), c) for dr, t, c in IO_COLS[net]]
         timing_figure(OUT, FIG, src=f.name, cols=cols, name=f'timing_io_{net}{suf}', vline=None)
         net = net + ('lk' if suf else '')
         d = pd.read_csv(f)
@@ -407,7 +407,7 @@ def io_timing(OUT, TAB, FIG):
 def sector_timing(OUT, TAB, FIG):
     "Timing of both directions with sectors as the units and the sector-level input-output network (timing_sector_{A,L}.csv): figures and macros."
     mac = {}
-    for net, nm in (('A', 'direct coefficients'), ('L', 'Leontief inverse')):
+    for net, nm in (('A', 'direct weights'), ('L', 'Leontief inverse')):
         f = OUT / f'timing_sector_{net}.csv'
         if not f.exists():
             continue
@@ -491,7 +491,7 @@ def robust_tables(OUT, TAB):
         r = r[r.label != 'Outcome years to 2010']                   # not reported
         L = [r'\begin{tabular}{lcccccc}', r'\toprule',
              r' & Suppliers & Firm-years & First-stage $F$ & IV & 2SLS (pp) & AKM0 $p$ \\', r'\midrule']
-        for grp, title in [('base', 'Base period'), ('estimator', 'Estimator of the Poisson IV'), ('sample', 'Outcome years'), ('links', 'Link size'), ('network', 'Network in the regressor'), ('shifts', 'Class shifts in the instrument')]:
+        for grp, title in [('base', 'Base period'), ('estimator', 'Estimator of the Poisson IV'), ('offset', 'Offset of the Poisson'), ('sample', 'Outcome years'), ('links', 'Link size'), ('network', 'Network in the regressor'), ('shifts', 'Class shifts in the instrument')]:
             L.append(r'\multicolumn{7}{l}{\textit{' + title + r'}} \\')
             for _, x in r[r.group == grp].iterrows():
                 lab = x.label.replace('Base period ', '').replace('Outcome years to ', 'Through ').replace('Baseline (links and class mixes 1990-94)', '1990--94 (baseline)')
@@ -500,12 +500,16 @@ def robust_tables(OUT, TAB):
                        'Regressor: links of the window t-5 ... t-1 (instrument: base links)': r'Links of window $t-5,\dots,t-1$ (instrument: 1990--94 links)',
                        'Shifts from all patents (sample firms included)': 'All patents (sample firms included)',
                        'Shifts measured over t-10 ... t-6': r'Shifts over $t-10,\dots,t-6$',
-                       'Three-character CPC classes': 'Three-character CPC classes'}.get(x.label, lab)
+                       'Offset: all patents': 'All patents instead of non-green patents', 'Three-character CPC classes': '3-digit CPC classes'}.get(x.label, lab)
                 ivs = f'{x.iv:.2f}{st(x.iv_p)} ({x.iv_se:.2f})' if pd.notna(x.get('iv_se', np.nan)) else f'{x.iv:.2f}'
-                L.append(f'{lab} & {n(x.units)} & {n(x.N)} & {x.F:.1f} & {ivs} & {x.lin_pp:.2f}{st(x.akm0)} & {p3(x.akm0)} \\\\')
+                lin = '-- & --' if x.group in ('offset', 'estimator') else f'{x.lin_pp:.2f}{st(x.akm0)} & {p3(x.akm0)}'   # the linear columns do not depend on the Poisson offset or estimator
+                L.append(f'{lab} & {n(x.units)} & {n(x.N)} & {x.F:.1f} & {ivs} & {lin} \\\\')
         gm = r[r.group == 'estimator']
         if len(gm):
             out.append({'rlGmmIV': f'{gm.iv.iloc[0]:.2f}', 'rlGmmSE': f'{gm.iv_se.iloc[0]:.2f}', 'rlGmmP': p3(gm.iv_p.iloc[0])})
+        of = r[r.group == 'offset']
+        if len(of):
+            out.append({'rlOffIV': f'{of.iv.iloc[0]:.2f}', 'rlOffSE': f'{of.iv_se.iloc[0]:.2f}', 'rlOffP': p3(of.iv_p.iloc[0]), 'rlOffF': f'{of.F.iloc[0]:.1f}'})
         nt = r[r.group == 'network'].iloc[0] if (r.group == 'network').any() else None
         if nt is not None:
             out.append({'rlNetIV': f'{nt.iv:.2f}', 'rlNetLin': f'{nt.lin_pp:.2f}', 'rlNetF': f'{nt.F:.1f}', 'rlNetP': p3(nt.akm0), 'rlNetUnits': n(nt.units), 'rlNetN': n(nt.N)})
